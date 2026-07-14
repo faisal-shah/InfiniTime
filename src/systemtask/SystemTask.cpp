@@ -41,6 +41,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Controllers::DateTime& dateTimeController,
                        Controllers::StopWatchController& stopWatchController,
                        Controllers::AlarmController& alarmController,
+                       Controllers::ScheduleController& scheduleController,
                        Drivers::Watchdog& watchdog,
                        Pinetime::Controllers::NotificationManager& notificationManager,
                        Pinetime::Drivers::Hrs3300& heartRateSensor,
@@ -62,6 +63,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
     dateTimeController {dateTimeController},
     stopWatchController {stopWatchController},
     alarmController {alarmController},
+    scheduleController {scheduleController},
     watchdog {watchdog},
     notificationManager {notificationManager},
     heartRateSensor {heartRateSensor},
@@ -130,6 +132,7 @@ void SystemTask::Work() {
   batteryController.Register(this);
   motionSensor.SoftReset();
   alarmController.Init(this);
+  scheduleController.Init(this);
 
   // Reset the TWI device because the motion sensor chip most probably crashed it...
   twiMaster.Sleep();
@@ -222,6 +225,7 @@ void SystemTask::Work() {
           if (alarmController.IsEnabled()) {
             alarmController.ScheduleAlarm();
           }
+          scheduleController.Reschedule();
           break;
         case Messages::OnNewNotification:
           if (settingsController.GetNotificationStatus() == Pinetime::Controllers::Settings::Notification::On) {
@@ -234,6 +238,18 @@ void SystemTask::Work() {
         case Messages::SetOffAlarm:
           GoToRunning();
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::AlarmTriggered);
+          break;
+        case Messages::SetOffScheduleReminder:
+          // An alerting alarm owns the screen and the motor; retry shortly after.
+          if (alarmController.IsAlerting()) {
+            scheduleController.DeferReminder(30);
+            break;
+          }
+          GoToRunning();
+          displayApp.PushMessage(Pinetime::Applications::Display::Messages::ScheduleReminderTriggered);
+          break;
+        case Messages::ScheduleSyncReceived:
+          scheduleController.CommitStaged();
           break;
         case Messages::BleConnected:
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::NotifyDeviceActivity);
