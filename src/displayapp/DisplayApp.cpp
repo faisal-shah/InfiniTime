@@ -46,6 +46,11 @@
 #include "displayapp/screens/settings/SettingWatchFace.h"
 #include "displayapp/screens/settings/SettingTimeFormat.h"
 #include "displayapp/screens/settings/SettingWeatherFormat.h"
+#include "displayapp/screens/settings/SettingPrayer.h"
+#include "displayapp/screens/settings/SettingPrayerMethod.h"
+#include "displayapp/screens/settings/SettingPrayerAsr.h"
+#include "displayapp/screens/settings/SettingPrayerAlerts.h"
+#include "displayapp/screens/settings/SettingPrayerLocation.h"
 #include "displayapp/screens/settings/SettingWakeUp.h"
 #include "displayapp/screens/settings/SettingDisplay.h"
 #include "displayapp/screens/settings/SettingSteps.h"
@@ -641,6 +646,21 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
     } break;
     case Apps::SettingTimeFormat:
       currentScreen = std::make_unique<Screens::SettingTimeFormat>(settingsController);
+      break;
+    case Apps::SettingPrayer:
+      currentScreen = std::make_unique<Screens::SettingPrayer>(this, settingsController);
+      break;
+    case Apps::SettingPrayerMethod:
+      currentScreen = std::make_unique<Screens::SettingPrayerMethod>(this, prayerController);
+      break;
+    case Apps::SettingPrayerAsr:
+      currentScreen = std::make_unique<Screens::SettingPrayerAsr>(prayerController);
+      break;
+    case Apps::SettingPrayerAlerts:
+      currentScreen = std::make_unique<Screens::SettingPrayerAlerts>(prayerController);
+      break;
+    case Apps::SettingPrayerLocation:
+      currentScreen = std::make_unique<Screens::SettingPrayerLocation>(this, prayerController);
       break;
     case Apps::SettingWeatherFormat:
       currentScreen = std::make_unique<Screens::SettingWeatherFormat>(settingsController);

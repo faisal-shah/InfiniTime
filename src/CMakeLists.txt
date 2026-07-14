@@ -398,6 +398,12 @@ list(APPEND SOURCE_FILES
         displayapp/screens/Alarm.cpp
         displayapp/screens/ScheduleReminder.cpp
         displayapp/screens/PrayerAlert.cpp
+        displayapp/screens/PrayerTimes.cpp
+        displayapp/screens/settings/SettingPrayer.cpp
+        displayapp/screens/settings/SettingPrayerMethod.cpp
+        displayapp/screens/settings/SettingPrayerAsr.cpp
+        displayapp/screens/settings/SettingPrayerAlerts.cpp
+        displayapp/screens/settings/SettingPrayerLocation.cpp
         displayapp/screens/ScheduleList.cpp
         displayapp/screens/Styles.cpp
         displayapp/screens/WeatherSymbols.cpp
