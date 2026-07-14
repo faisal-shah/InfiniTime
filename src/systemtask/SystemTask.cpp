@@ -42,6 +42,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Controllers::StopWatchController& stopWatchController,
                        Controllers::AlarmController& alarmController,
                        Controllers::ScheduleController& scheduleController,
+                       Controllers::PrayerController& prayerController,
                        Drivers::Watchdog& watchdog,
                        Pinetime::Controllers::NotificationManager& notificationManager,
                        Pinetime::Drivers::Hrs3300& heartRateSensor,
@@ -64,6 +65,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
     stopWatchController {stopWatchController},
     alarmController {alarmController},
     scheduleController {scheduleController},
+    prayerController {prayerController},
     watchdog {watchdog},
     notificationManager {notificationManager},
     heartRateSensor {heartRateSensor},
@@ -134,6 +136,7 @@ void SystemTask::Work() {
   motionSensor.SoftReset();
   alarmController.Init(this);
   scheduleController.Init(this);
+  prayerController.Init(this);
 
   // Reset the TWI device because the motion sensor chip most probably crashed it...
   twiMaster.Sleep();
@@ -231,23 +234,13 @@ void SystemTask::Work() {
           // just the flash for the scan; GoToRunning() would light the screen
           // on every time sync.
           {
-            const bool flashWasAsleep = state == SystemTaskState::Sleeping || state == SystemTaskState::AODSleeping;
-            if (flashWasAsleep) {
-              if (state == SystemTaskState::Sleeping) {
-                spi.Wakeup();
-              }
-              spiNorFlash.Wakeup();
-            }
+            const bool flashWasAsleep = WakeFlashForWork();
             scheduleController.Reschedule();
-            if (flashWasAsleep) {
-              if (BootloaderVersion::IsValid()) {
-                spiNorFlash.Sleep();
-              }
-              if (state == SystemTaskState::Sleeping) {
-                spi.Sleep();
-              }
-            }
+            RestoreFlashAfterWork(flashWasAsleep);
           }
+          // The prayer alert recomputes from RAM settings and pure math; no
+          // flash needed.
+          prayerController.Reschedule();
           break;
         case Messages::OnNewNotification:
           if (settingsController.GetNotificationStatus() == Pinetime::Controllers::Settings::Notification::On) {
@@ -262,8 +255,9 @@ void SystemTask::Work() {
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::AlarmTriggered);
           break;
         case Messages::SetOffScheduleReminder:
-          // An alerting alarm owns the screen and the motor; retry shortly after.
-          if (alarmController.IsAlerting()) {
+          // An alerting alarm or prayer alert owns the screen and the motor;
+          // retry shortly after.
+          if (alarmController.IsAlerting() || prayerController.IsAlerting()) {
             scheduleController.DeferReminder(30);
             break;
           }
@@ -277,6 +271,24 @@ void SystemTask::Work() {
         case Messages::ScheduleSyncReceived:
           scheduleController.CommitStaged();
           break;
+        case Messages::SetOffPrayerAlert:
+          // The alarm and the schedule reminder both outrank the prayer alert.
+          if (alarmController.IsAlerting() || scheduleController.IsAlerting()) {
+            prayerController.DeferAlert(30);
+            break;
+          }
+          GoToRunning();
+          displayApp.PushMessage(Pinetime::Applications::Display::Messages::PrayerAlertTriggered);
+          break;
+        case Messages::PrayerSettingsReceived: {
+          // Committing writes the settings file; a BLE write can arrive while
+          // sleeping with the flash powered down. Wake just the flash; a
+          // silent settings push should not light the screen.
+          const bool flashWasAsleep = WakeFlashForWork();
+          prayerController.CommitStaged();
+          RestoreFlashAfterWork(flashWasAsleep);
+          break;
+        }
         case Messages::BleConnected:
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::NotifyDeviceActivity);
           isBleDiscoveryTimerRunning = true;
@@ -441,6 +453,31 @@ void SystemTask::Work() {
     }
   }
 #pragma clang diagnostic pop
+}
+
+bool SystemTask::WakeFlashForWork() {
+  const bool flashWasAsleep = state == SystemTaskState::Sleeping || state == SystemTaskState::AODSleeping;
+  if (flashWasAsleep) {
+    if (state == SystemTaskState::Sleeping) {
+      spi.Wakeup();
+    }
+    spiNorFlash.Wakeup();
+  }
+  return flashWasAsleep;
+}
+
+void SystemTask::RestoreFlashAfterWork(bool wasAsleep) {
+  // Mirror the sleep path's conditions, including the old-bootloader guard
+  // (early bootloaders cannot reinitialize a slept flash chip).
+  if (!wasAsleep) {
+    return;
+  }
+  if (BootloaderVersion::IsValid()) {
+    spiNorFlash.Sleep();
+  }
+  if (state == SystemTaskState::Sleeping) {
+    spi.Sleep();
+  }
 }
 
 void SystemTask::GoToRunning() {

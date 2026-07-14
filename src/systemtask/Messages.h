@@ -27,6 +27,8 @@ namespace Pinetime {
       SetOffAlarm,
       SetOffScheduleReminder,
       ScheduleSyncReceived,
+      SetOffPrayerAlert,
+      PrayerSettingsReceived,
       MeasureBatteryTimerExpired,
       BatteryPercentageUpdated,
       StartFileTransfer,

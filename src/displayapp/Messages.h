@@ -23,6 +23,7 @@ namespace Pinetime {
         ShowPairingKey,
         AlarmTriggered,
         ScheduleReminderTriggered,
+        PrayerAlertTriggered,
         Chime,
         BleRadioEnableToggle,
       };
