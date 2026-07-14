@@ -31,6 +31,7 @@
 #include "displayapp/screens/Weather.h"
 #include "displayapp/screens/PassKey.h"
 #include "displayapp/screens/ScheduleReminder.h"
+#include "displayapp/screens/PrayerAlert.h"
 #include "displayapp/screens/Error.h"
 #include "displayapp/screens/Calculator.h"
 
@@ -91,6 +92,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                        Pinetime::Controllers::StopWatchController& stopWatchController,
                        Pinetime::Controllers::AlarmController& alarmController,
                        Pinetime::Controllers::ScheduleController& scheduleController,
+                       Pinetime::Controllers::PrayerController& prayerController,
                        Pinetime::Controllers::BrightnessController& brightnessController,
                        Pinetime::Controllers::TouchHandler& touchHandler,
                        Pinetime::Controllers::FS& filesystem,
@@ -109,6 +111,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
     stopWatchController {stopWatchController},
     alarmController {alarmController},
     scheduleController {scheduleController},
+    prayerController {prayerController},
     brightnessController {brightnessController},
     touchHandler {touchHandler},
     filesystem {filesystem},
@@ -126,6 +129,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  stopWatchController,
                  alarmController,
                  scheduleController,
+                 prayerController,
                  brightnessController,
                  nullptr,
                  filesystem,
@@ -404,6 +408,14 @@ void DisplayApp::Refresh() {
           LoadNewScreen(Apps::Alarm, DisplayApp::FullRefreshDirections::None);
         }
         break;
+      case Messages::PrayerAlertTriggered:
+        if (currentApp == Apps::PrayerAlert) {
+          auto* alert = static_cast<Screens::PrayerAlert*>(currentScreen.get());
+          alert->SetAlerting();
+        } else {
+          LoadNewScreen(Apps::PrayerAlert, DisplayApp::FullRefreshDirections::None);
+        }
+        break;
       case Messages::ScheduleReminderTriggered:
         if (currentApp == Apps::ScheduleReminder) {
           auto* reminder = static_cast<Screens::ScheduleReminder*>(currentScreen.get());
@@ -581,6 +593,9 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
 
     case Apps::PassKey:
       currentScreen = std::make_unique<Screens::PassKey>(bleController.GetPairingKey());
+      break;
+    case Apps::PrayerAlert:
+      currentScreen = std::make_unique<Screens::PrayerAlert>(this, prayerController, *systemTask, motorController);
       break;
     case Apps::ScheduleReminder:
       currentScreen = std::make_unique<Screens::ScheduleReminder>(this, scheduleController, *systemTask, motorController);

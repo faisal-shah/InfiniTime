@@ -397,6 +397,7 @@ list(APPEND SOURCE_FILES
         displayapp/screens/Error.cpp
         displayapp/screens/Alarm.cpp
         displayapp/screens/ScheduleReminder.cpp
+        displayapp/screens/PrayerAlert.cpp
         displayapp/screens/ScheduleList.cpp
         displayapp/screens/Styles.cpp
         displayapp/screens/WeatherSymbols.cpp
@@ -476,6 +477,7 @@ list(APPEND SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/alarm/AlarmController.cpp
         components/schedule/ScheduleController.cpp
+        components/prayer/PrayerController.cpp
         components/fs/FS.cpp
         drivers/Cst816s.cpp
         FreeRTOS/port.c
@@ -548,6 +550,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/alarm/AlarmController.cpp
         components/schedule/ScheduleController.cpp
+        components/prayer/PrayerController.cpp
         drivers/Cst816s.cpp
         FreeRTOS/port.c
         FreeRTOS/port_cmsis_systick.c

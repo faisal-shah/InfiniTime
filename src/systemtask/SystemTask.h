@@ -18,6 +18,7 @@
 #include "components/stopwatch/StopWatchController.h"
 #include "components/alarm/AlarmController.h"
 #include "components/schedule/ScheduleController.h"
+#include "components/prayer/PrayerController.h"
 #include "components/fs/FS.h"
 #include "touchhandler/TouchHandler.h"
 #include "buttonhandler/ButtonHandler.h"
@@ -65,6 +66,7 @@ namespace Pinetime {
                  Controllers::StopWatchController& stopWatchController,
                  Controllers::AlarmController& alarmController,
                  Controllers::ScheduleController& scheduleController,
+                 Controllers::PrayerController& prayerController,
                  Drivers::Watchdog& watchdog,
                  Pinetime::Controllers::NotificationManager& notificationManager,
                  Pinetime::Drivers::Hrs3300& heartRateSensor,
@@ -115,6 +117,7 @@ namespace Pinetime {
       Pinetime::Controllers::StopWatchController& stopWatchController;
       Pinetime::Controllers::AlarmController& alarmController;
       Pinetime::Controllers::ScheduleController& scheduleController;
+      Pinetime::Controllers::PrayerController& prayerController;
       QueueHandle_t systemTasksMsgQueue;
       Pinetime::Drivers::Watchdog& watchdog;
       Pinetime::Controllers::NotificationManager& notificationManager;
@@ -144,6 +147,10 @@ namespace Pinetime {
 
       void GoToRunning();
       void GoToSleep();
+      // Wake just the SPI flash (not the screen) for filesystem work while
+      // sleeping; returns whether it was asleep so Restore can re-sleep it.
+      bool WakeFlashForWork();
+      void RestoreFlashAfterWork(bool wasAsleep);
       void UpdateMotion();
       static constexpr TickType_t batteryMeasurementPeriod = pdMS_TO_TICKS(10 * 60 * 1000);
 
