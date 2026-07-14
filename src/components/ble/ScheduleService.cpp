@@ -19,6 +19,10 @@ ScheduleService::ScheduleService(Pinetime::System::SystemTask& systemTask, Sched
                                .access_cb = ScheduleServiceCallback,
                                .arg = this,
                                .flags = BLE_GATT_CHR_F_READ},
+                              {.uuid = &eventReadCharUuid.u,
+                               .access_cb = ScheduleServiceCallback,
+                               .arg = this,
+                               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE},
                               {0}},
     serviceDefinition {{.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &scheduleUuid.u, .characteristics = characteristicDefinition}, {0}},
     systemTask {systemTask},
@@ -37,6 +41,9 @@ int ScheduleService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {
   if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && ble_uuid_cmp(ctxt->chr->uuid, &digestCharUuid.u) == 0) {
     return OnDigestRead(ctxt);
   }
+  if (ble_uuid_cmp(ctxt->chr->uuid, &eventReadCharUuid.u) == 0) {
+    return OnEventReadAccess(ctxt);
+  }
   return BLE_ATT_ERR_UNLIKELY;
 }
 
@@ -50,7 +57,7 @@ int ScheduleService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
   if (os_mbuf_copydata(ctxt->om, 0, len, buffer) != 0) {
     return BLE_ATT_ERR_UNLIKELY;
   }
-  if (buffer[1] != messageVersion) {
+  if (static_cast<MessageType>(buffer[0]) != MessageType::EventRecord && buffer[1] != messageVersion) {
     return BLE_ATT_ERR_UNLIKELY;
   }
 
@@ -70,6 +77,9 @@ int ScheduleService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
     }
 
     case MessageType::EventRecord: {
+      if (buffer[1] != eventRecordVersion) {
+        return BLE_ATT_ERR_UNLIKELY;
+      }
       if (len != 3 + sizeof(ScheduleController::Event)) {
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
       }
@@ -109,6 +119,30 @@ int ScheduleService::OnDigestRead(struct ble_gatt_access_ctxt* ctxt) {
   const uint32_t version = scheduleController.GetVersion();
   std::memcpy(&digest[3], &version, sizeof(version));
   const int res = os_mbuf_append(ctxt->om, digest, sizeof(digest));
+  return res == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
+// Pull half of multi-companion sync: write an index to select, read to fetch
+// that event's record. The BLE connection is exclusive, so select+read pairs
+// cannot interleave between companions.
+int ScheduleService::OnEventReadAccess(struct ble_gatt_access_ctxt* ctxt) {
+  if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+    uint8_t index;
+    if (OS_MBUF_PKTLEN(ctxt->om) != 1 || os_mbuf_copydata(ctxt->om, 0, 1, &index) != 0) {
+      return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    if (index >= scheduleController.GetCount()) {
+      return BLE_ATT_ERR_UNLIKELY;
+    }
+    selectedReadIndex = index;
+    return 0;
+  }
+
+  if (selectedReadIndex >= scheduleController.GetCount()) {
+    return BLE_ATT_ERR_UNLIKELY;
+  }
+  const ScheduleController::Event& event = scheduleController.GetEvent(selectedReadIndex);
+  const int res = os_mbuf_append(ctxt->om, &event, sizeof(event));
   return res == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 

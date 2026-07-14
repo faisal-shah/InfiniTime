@@ -201,17 +201,29 @@ void ScheduleController::LoadFromFile() {
 
   FileHeader header {};
   if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&header), sizeof(header)) != sizeof(header) ||
-      header.version != scheduleFormatVersion || header.count > MaxEvents) {
+      (header.version != scheduleFormatVersion && header.version != legacyFormatVersion) || header.count > MaxEvents) {
     NRF_LOG_WARNING("[ScheduleController] Invalid schedule file, discarding");
     fs.FileClose(&file);
     return;
   }
 
-  const uint32_t recordBytes = header.count * sizeof(Event);
-  if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(events.data()), recordBytes) != static_cast<int>(recordBytes)) {
-    NRF_LOG_WARNING("[ScheduleController] Truncated schedule file, discarding");
-    fs.FileClose(&file);
-    return;
+  if (header.version == legacyFormatVersion) {
+    // 35-byte records without lastModified: read each and zero the new field.
+    for (uint8_t i = 0; i < header.count; i++) {
+      if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&events[i]), legacyEventSize) != static_cast<int>(legacyEventSize)) {
+        NRF_LOG_WARNING("[ScheduleController] Truncated legacy schedule file, discarding");
+        fs.FileClose(&file);
+        return;
+      }
+      events[i].lastModified = 0;
+    }
+  } else {
+    const uint32_t recordBytes = header.count * sizeof(Event);
+    if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(events.data()), recordBytes) != static_cast<int>(recordBytes)) {
+      NRF_LOG_WARNING("[ScheduleController] Truncated schedule file, discarding");
+      fs.FileClose(&file);
+      return;
+    }
   }
   fs.FileClose(&file);
 
