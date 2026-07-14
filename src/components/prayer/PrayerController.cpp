@@ -104,8 +104,10 @@ uint8_t PrayerController::DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_
       continue;
     }
     time_t t = dayStart + static_cast<time_t>(times.minutes[p]) * 60;
-    if (times.minutes[p] < times.minutes[PrayerRules::Dhuhr]) {
-      t += 24 * 60 * 60; // wrapped past midnight
+    // Only the post-noon prayers can genuinely wrap past midnight (near-polar
+    // summer maghrib/isha); fajr is always before dhuhr on the same civil day.
+    if (p > PrayerRules::Dhuhr && times.minutes[p] < times.minutes[PrayerRules::Dhuhr]) {
+      t += 24 * 60 * 60;
     }
     due[n] = t;
     prayer[n] = p;
@@ -128,24 +130,31 @@ void PrayerController::Reschedule() {
   time_t due[5];
   uint8_t prayer[5];
   // Today, then tomorrow (after Isha the next alert is tomorrow's Fajr).
+  // Select the earliest eligible due; the array is not assumed ordered (a
+  // wrapped isha lands on the next day).
   for (int dayOffset = 0; dayOffset < 2 && !hasNext; dayOffset++) {
     const uint8_t n = DueTimesFor(now + dayOffset * 24 * 60 * 60, due, prayer);
     for (uint8_t i = 0; i < n; i++) {
-      if (due[i] > threshold) {
+      if (due[i] > threshold && (!hasNext || due[i] < nextDueTime)) {
         hasNext = true;
         nextDueTime = due[i];
         nextPrayer = prayer[i];
-        break;
       }
     }
   }
 
   if (!hasNext) {
+    NRF_LOG_INFO("[PrayerController] Reschedule: nothing to arm");
     return;
   }
   tm dueLocal = *std::localtime(&nextDueTime);
   nextHour = static_cast<uint8_t>(dueLocal.tm_hour);
   nextMinute = static_cast<uint8_t>(dueLocal.tm_min);
+  NRF_LOG_INFO("[PrayerController] Next alert: prayer %u at %02u:%02u (in %d s)",
+               nextPrayer,
+               nextHour,
+               nextMinute,
+               static_cast<int>(nextDueTime - now));
   ArmTimer(nextDueTime - now);
 }
 
