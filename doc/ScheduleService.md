@@ -31,7 +31,7 @@ companion must negotiate an ATT MTU of at least 48 before syncing (e.g. request 
 
  - [0] : Message type = `0`
  - [1] : Message version = `0`
- - [2] : Event count that will follow (0 .. capacity; see Digest — currently 16)
+ - [2] : Event count that will follow (0 .. capacity; see Digest — currently 64)
  - [3][4][5][6] : Schedule version (uint32 LE) — an opaque value chosen by the companion,
    reported back in the Digest after commit. `0` means "never synced"; companions should
    start at 1 and increase on every schedule change.
@@ -204,9 +204,9 @@ lastModified 0:
 
     03 00
 
-**Digest** after the commit above (protocol 1, capacity 16, 3 events, version 7):
+**Digest** after the commit above (protocol 1, capacity 64, 3 events, version 7):
 
-    01 10 03 07 00 00 00
+    01 40 03 07 00 00 00
 
 ## Security
 
@@ -224,4 +224,19 @@ Note this is stricter than InfiniTime's built-in services (Current Time, Alert N
 Simple Weather, DFU), which remain open to any central by upstream default. Locking those
 down is a separate, watch-wide change.
 
-The watch persists the active schedule and its version to flash; both survive reboots.
+## Storage
+
+Events live in littlefs, not RAM. The active schedule is `/.system/schedule.dat`
+(`[version u8 = 1][count u8][scheduleVersion u32 LE]` + `count` x 39-byte records); RAM
+holds only the digest fields and a cache of the next occurrence, so capacity is bounded
+by flash, not RAM. During a sync, records are staged into `/.system/schedule.stg` and
+CommitSync atomically renames it over the active file (littlefs renames are atomic), so
+a power loss at any instant - mid-staging or mid-commit - leaves the previous schedule
+intact. A leftover staging file is deleted at boot. Both the schedule and its version
+survive reboots.
+
+Because staging writes flash from the BLE task and the SPI flash sleeps with the watch,
+BeginSync takes a wake lock (the FSService `StartFileTransfer` mechanism) held until
+Commit/Abort/disconnect; event-read accesses bracket themselves the same way. A companion
+that opens a sync and then goes silent without disconnecting keeps the watch awake until
+the BLE supervision timeout drops the link.

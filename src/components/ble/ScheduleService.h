@@ -20,8 +20,10 @@ namespace Pinetime {
     class ScheduleController;
 
     // Schedule Service: companion-driven full-replace sync of recurrence rules.
-    // Protocol: doc/ScheduleService.md. Runs on the BLE task; only stages data
-    // and notifies SystemTask, which commits/persists/re-arms.
+    // Protocol: doc/ScheduleService.md. Runs on the BLE task. Staging records
+    // go straight to the flash staging file (FS is mutex-protected), so
+    // BeginSync first takes a wake lock via StartFileTransfer to keep the SPI
+    // flash powered for the whole transaction; SystemTask does the commit.
     class ScheduleService {
     public:
       ScheduleService(System::SystemTask& systemTask, ScheduleController& scheduleController);
@@ -38,6 +40,9 @@ namespace Pinetime {
       int OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt);
       int OnDigestRead(struct ble_gatt_access_ctxt* ctxt);
       int OnEventReadAccess(struct ble_gatt_access_ctxt* ctxt);
+      bool WaitUntilAwake();
+      bool AcquireSyncWakeLock();
+      void ReleaseSyncWakeLock();
 
       // 0006yyxx-78fc-48fe-8e23-433b3a1942d0
       static constexpr ble_uuid128_t CharUuid(uint8_t x, uint8_t y) {
@@ -56,6 +61,7 @@ namespace Pinetime {
       System::SystemTask& systemTask;
       ScheduleController& scheduleController;
       uint8_t selectedReadIndex = 0;
+      bool syncWakeLockHeld = false;
     };
   }
 }
