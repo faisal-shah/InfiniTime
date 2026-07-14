@@ -22,6 +22,7 @@
 #include "components/ble/ServiceDiscovery.h"
 #include "components/ble/MotionService.h"
 #include "components/ble/SimpleWeatherService.h"
+#include "components/ble/ScheduleService.h"
 #include "components/fs/FS.h"
 
 namespace Pinetime {
@@ -49,7 +50,8 @@ namespace Pinetime {
                        Pinetime::Drivers::SpiNorFlash& spiNorFlash,
                        HeartRateController& heartRateController,
                        MotionController& motionController,
-                       FS& fs);
+                       FS& fs,
+                       ScheduleController& scheduleController);
       void Init();
       void StartAdvertising();
       int OnGAPEvent(ble_gap_event* event);
@@ -69,6 +71,10 @@ namespace Pinetime {
 
       Pinetime::Controllers::SimpleWeatherService& weather() {
         return weatherService;
+      };
+
+      Pinetime::Controllers::ScheduleService& schedule() {
+        return scheduleService;
       };
 
       uint16_t connHandle();
@@ -100,6 +106,7 @@ namespace Pinetime {
       CurrentTimeService currentTimeService;
       MusicService musicService;
       SimpleWeatherService weatherService;
+      ScheduleService scheduleService;
       NavigationService navService;
       BatteryInformationService batteryInformationService;
       ImmediateAlertService immediateAlertService;

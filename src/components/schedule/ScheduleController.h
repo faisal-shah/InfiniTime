@@ -43,6 +43,10 @@ namespace Pinetime {
       bool StagingComplete() const;
       void DiscardStaging();
 
+      uint8_t GetStagedCount() const {
+        return stagingOpen ? stagedCount : 0xFF; // 0xFF: no transaction open
+      }
+
       // Must only be called from the SystemTask (writes flash, re-arms the timer).
       void CommitStaged();
 
@@ -118,12 +122,13 @@ namespace Pinetime {
       bool isAlerting = false;
       time_t nextDueTime = 0;
       int16_t nextIndex = -1;
-      // Dismissed occurrences must not re-fire within the grace window, but a
-      // same-time occurrence of a *later* event index still must.
+      // Everything at or before this instant has already alerted; only strictly
+      // later occurrences may fire. Events due at the same second alert together
+      // (their titles are combined), so no per-index tie-breaking is needed.
       time_t lastFiredDue = 0;
-      int16_t lastFiredIndex = -1;
 
-      std::array<char, TitleSize> firingTitle {};
+      // Up to three same-second titles joined by newlines.
+      std::array<char, 3 * TitleSize> firingTitle {};
       uint8_t firingHour = 0;
       uint8_t firingMinute = 0;
     };
