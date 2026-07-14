@@ -33,7 +33,8 @@ PrayerAlert::PrayerAlert(DisplayApp* app,
   lv_obj_align(timeLabel, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 0, 15);
 
   nameLabel = lv_label_create(lv_scr_act(), nullptr);
-  lv_obj_set_style_local_text_font(nameLabel, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_42);
+  // Default font: jetbrains_mono_42 carries digits only (it is the clock
+  // face subset) and would render the prayer name blank.
   lv_label_set_align(nameLabel, LV_LABEL_ALIGN_CENTER);
   lv_label_set_text_static(nameLabel, prayerController.FiringPrayerName());
   lv_obj_align(nameLabel, lv_scr_act(), LV_ALIGN_CENTER, 0, -15);

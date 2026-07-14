@@ -87,7 +87,8 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                      heartRateController,
                      motionController,
                      fs,
-                     scheduleController) {
+                     scheduleController,
+                     prayerController) {
 }
 
 void SystemTask::Start() {

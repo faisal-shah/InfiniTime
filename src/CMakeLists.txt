@@ -463,6 +463,7 @@ list(APPEND SOURCE_FILES
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
+        components/ble/PrayerService.cpp
         components/ble/NavigationService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
@@ -537,6 +538,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
+        components/ble/PrayerService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
         components/ble/ImmediateAlertService.cpp
