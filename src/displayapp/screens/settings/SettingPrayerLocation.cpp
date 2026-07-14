@@ -50,6 +50,13 @@ namespace {
       degrees->SetValue(magnitude / 100);
       lv_obj_align(degrees->GetObject(), nullptr, LV_ALIGN_CENTER, -6, -6);
 
+      // Decimal point between the whole degrees and the hundredths, so the two
+      // counters read unambiguously as e.g. "40.71" (0.01 deg ~ 1.1 km).
+      lv_obj_t* dot = lv_label_create(lv_scr_act(), nullptr);
+      lv_obj_set_style_local_text_font(dot, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
+      lv_label_set_text_static(dot, ".");
+      lv_obj_align(dot, degrees->GetObject(), LV_ALIGN_OUT_RIGHT_MID, 6, 8);
+
       hundredths = std::make_unique<Widgets::Counter>(0, 99, jetbrains_mono_bold_20);
       hundredths->Create();
       hundredths->SetValue(magnitude % 100);
