@@ -226,7 +226,28 @@ void SystemTask::Work() {
           if (alarmController.IsEnabled()) {
             alarmController.ScheduleAlarm();
           }
-          scheduleController.Reschedule();
+          // Reschedule() scans the schedule file, but a companion time-set
+          // arrives even while sleeping with the SPI flash powered down. Wake
+          // just the flash for the scan; GoToRunning() would light the screen
+          // on every time sync.
+          {
+            const bool flashWasAsleep = state == SystemTaskState::Sleeping || state == SystemTaskState::AODSleeping;
+            if (flashWasAsleep) {
+              if (state == SystemTaskState::Sleeping) {
+                spi.Wakeup();
+              }
+              spiNorFlash.Wakeup();
+            }
+            scheduleController.Reschedule();
+            if (flashWasAsleep) {
+              if (BootloaderVersion::IsValid()) {
+                spiNorFlash.Sleep();
+              }
+              if (state == SystemTaskState::Sleeping) {
+                spi.Sleep();
+              }
+            }
+          }
           break;
         case Messages::OnNewNotification:
           if (settingsController.GetNotificationStatus() == Pinetime::Controllers::Settings::Notification::On) {
@@ -247,6 +268,10 @@ void SystemTask::Work() {
             break;
           }
           GoToRunning();
+          // The timer callback stays RAM-only (the flash may have been asleep);
+          // now that GoToRunning() powered the flash, scan the schedule file
+          // for same-second events and build the combined alert title.
+          scheduleController.PrepareFiring();
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::ScheduleReminderTriggered);
           break;
         case Messages::ScheduleSyncReceived:

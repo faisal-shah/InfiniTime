@@ -53,7 +53,6 @@ void ScheduleList::RenderPage() {
       continue;
     }
     const auto& occurrence = occurrences[idx];
-    const Controllers::ScheduleController::Event& event = scheduleController.GetEvent(occurrence.eventIndex);
     const time_t when = occurrence.when;
     const tm local = *std::localtime(&when);
     lv_label_set_text_fmt(rowLabels[i],
@@ -62,7 +61,7 @@ void ScheduleList::RenderPage() {
                           local.tm_mday,
                           local.tm_hour,
                           local.tm_min,
-                          event.title);
+                          occurrence.title);
   }
 }
 

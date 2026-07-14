@@ -9,6 +9,9 @@
 #include "components/datetime/DateTimeController.h"
 #include "components/schedule/ScheduleRules.h"
 
+// littlefs forward types for private helpers
+#include <littlefs/lfs.h>
+
 namespace Pinetime {
   namespace System {
     class SystemTask;
@@ -17,11 +20,16 @@ namespace Pinetime {
   namespace Controllers {
     class FS;
 
+    // Events live in littlefs (/.system/schedule.dat), not RAM. RAM holds only
+    // the digest fields (count, version), staging bookkeeping, and a cache of
+    // the next occurrence so the timer callback never touches the filesystem.
+    // Sync staging goes to /.system/schedule.stg and commit is an atomic
+    // rename, so a power loss at any instant leaves the previous schedule
+    // intact.
     class ScheduleController {
     public:
-      // Both the active and the staging array hold MaxEvents records (35 B each);
-      // 16 recurrence rules cover a full weekly routine at ~1.1 KB total.
-      static constexpr uint8_t MaxEvents = 16;
+      // 64 recurrence rules (39 B each) cost ~2.5 KB of flash and no RAM.
+      static constexpr uint8_t MaxEvents = 64;
       static constexpr uint8_t ProtocolVersion = 1;
       static constexpr size_t TitleSize = ScheduleRules::TitleSize;
 
@@ -30,29 +38,41 @@ namespace Pinetime {
 
       struct Occurrence {
         time_t when;
-        uint8_t eventIndex;
+        char title[TitleSize];
       };
 
       ScheduleController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);
 
       void Init(System::SystemTask* systemTask);
 
-      // Staging: safe to call from the BLE task. Touches no LVGL and no filesystem.
-      void BeginStaging(uint8_t count, uint32_t version);
+      // Staging: called from the BLE task; writes the staging file. The caller
+      // must hold the system awake (flash powered) for the whole transaction -
+      // ScheduleService takes a wake lock in BeginSync.
+      bool BeginStaging(uint8_t count, uint32_t version);
       bool StageEvent(uint8_t index, const Event& event);
       bool StagingComplete() const;
+      // Deletes the staging file only when a transaction is open, so an idle
+      // disconnect never touches (possibly sleeping) flash.
       void DiscardStaging();
 
       uint8_t GetStagedCount() const {
         return stagingOpen ? stagedCount : 0xFF; // 0xFF: no transaction open
       }
 
-      // Must only be called from the SystemTask (writes flash, re-arms the timer).
+      // Must only be called from the SystemTask (renames flash files, re-arms
+      // the timer). Flash must be awake (the sync wake lock guarantees it).
       void CommitStaged();
 
+      // Recomputes the next-occurrence cache from the schedule file and arms
+      // the timer. SystemTask or DisplayApp task only, flash awake.
       void Reschedule();
       void DeferReminder(uint32_t seconds);
+      // Timer-daemon callback: RAM only. Flash may be asleep here.
       void TimerFired();
+      // SystemTask, after GoToRunning() (flash awake): builds the combined
+      // title of all events due at the fired second. Falls back to the cached
+      // single title when the schedule changed between fire and wake.
+      void PrepareFiring();
       void StopAlerting();
 
       bool IsAlerting() const {
@@ -79,23 +99,24 @@ namespace Pinetime {
         return scheduleVersion;
       }
 
-      const Event& GetEvent(uint8_t index) const {
-        return events[index];
-      }
+      // Random-access read of one record from the schedule file (BLE event
+      // read characteristic). Any task, flash awake.
+      bool ReadEvent(uint8_t index, Event& out) const;
 
-      // Fills `out` with the next occurrences (sorted by time) within horizonDays.
-      // Returns the number written (<= max). No heap allocation.
+      // Fills `out` with the next occurrences (sorted by time) within
+      // horizonDays. Returns the number written (<= max). No heap allocation;
+      // titles are copied into the occurrences so callers never need the
+      // events again.
       uint8_t ComputeUpcoming(Occurrence* out, uint8_t max, uint16_t horizonDays = 14) const;
 
     private:
-      static constexpr uint8_t scheduleFormatVersion = 2;
-      // Format 1 predates Event::lastModified (35-byte records); LoadFromFile migrates it.
-      static constexpr uint8_t legacyFormatVersion = 1;
-      static constexpr size_t legacyEventSize = 35;
+      static constexpr uint8_t scheduleFormatVersion = 1;
       static constexpr int graceSeconds = 60;
       // FreeRTOS timer periods are 32-bit ticks; cap each arm and re-check on expiry
       // so occurrences further out than one day can't overflow the period.
       static constexpr uint32_t maxTimerSeconds = 24 * 60 * 60;
+      static constexpr const char* datPath = "/.system/schedule.dat";
+      static constexpr const char* stagePath = "/.system/schedule.stg";
 
       struct __attribute__((packed)) FileHeader {
         uint8_t version;
@@ -105,29 +126,40 @@ namespace Pinetime {
 
       time_t Now() const;
       void LoadFromFile();
-      void SaveToFile() const;
+      // Scan helpers; the caller must hold one FS::Lock across open..close so
+      // a concurrent commit-by-rename can't invalidate the open handle.
+      bool OpenForScan(lfs_file_t& file) const;
+      bool ReadRecord(lfs_file_t& file, Event& event) const;
+      void ClearStagingState();
+      void ArmTimer(int64_t seconds);
 
       Controllers::DateTime& dateTimeController;
       Controllers::FS& fs;
       System::SystemTask* systemTask = nullptr;
       TimerHandle_t reminderTimer {};
 
-      std::array<Event, MaxEvents> events;
+      // Digest fields; the file is the source of truth, these mirror its header.
       uint8_t count = 0;
       uint32_t scheduleVersion = 0;
 
-      std::array<Event, MaxEvents> staged;
-      uint32_t stagedReceived = 0; // bitmask, one bit per index; MaxEvents <= 32
+      uint64_t stagedReceived = 0; // bitmask, one bit per index
+      static_assert(MaxEvents <= 64, "stagedReceived bitmask is uint64_t");
       uint8_t stagedCount = 0;
       uint32_t stagedVersion = 0;
       bool stagingOpen = false;
 
-      bool isAlerting = false;
+      // Next-occurrence cache, so TimerFired never reads flash. Refreshed by
+      // Reschedule() on every mutation (commit, fire, dismiss, time change).
+      bool hasNext = false;
       time_t nextDueTime = 0;
-      int16_t nextIndex = -1;
+      uint8_t nextHour = 0;
+      uint8_t nextMinute = 0;
+      std::array<char, TitleSize> nextTitle {};
+
+      bool isAlerting = false;
       // Everything at or before this instant has already alerted; only strictly
       // later occurrences may fire. Events due at the same second alert together
-      // (their titles are combined), so no per-index tie-breaking is needed.
+      // (their titles are combined), so no per-event tie-breaking is needed.
       time_t lastFiredDue = 0;
 
       // Up to three same-second titles joined by newlines.
