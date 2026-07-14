@@ -208,8 +208,20 @@ lastModified 0:
 
     01 10 03 07 00 00 00
 
-## Notes
+## Security
 
-- The service performs no authentication (same trust model as the Current Time Service and
-  Simple Weather Service): any connected central may rewrite the schedule.
-- The watch persists the active schedule and its version to flash; both survive reboots.
+All three characteristics require an **authenticated** (passkey-paired), encrypted link
+(`BLE_GATT_CHR_F_*_AUTHEN`). On an unpaired connection the watch answers reads and writes
+with ATT "insufficient authentication", which prompts the central to pair: the watch
+displays a 6-digit passkey (InfiniTime's existing Security Manager, `BLE_SM_MITM`), and only
+a device that entered it can read or write the schedule. After the first pairing the bond is
+stored and subsequent syncs are silent.
+
+This means a stray BLE central (nRF Connect, another household's app) that has not paired —
+and cannot read the passkey off the watch's screen — cannot see or change the schedule.
+
+Note this is stricter than InfiniTime's built-in services (Current Time, Alert Notification,
+Simple Weather, DFU), which remain open to any central by upstream default. Locking those
+down is a separate, watch-wide change.
+
+The watch persists the active schedule and its version to flash; both survive reboots.
