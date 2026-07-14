@@ -28,8 +28,8 @@ ScheduleService::ScheduleService(Pinetime::System::SystemTask& systemTask, Sched
                               {.uuid = &eventReadCharUuid.u,
                                .access_cb = ScheduleServiceCallback,
                                .arg = this,
-                               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
-                                        BLE_GATT_CHR_F_READ_AUTHEN | BLE_GATT_CHR_F_WRITE_AUTHEN},
+                               .flags =
+                                 BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_READ_AUTHEN | BLE_GATT_CHR_F_WRITE_AUTHEN},
                               {0}},
     serviceDefinition {{.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &scheduleUuid.u, .characteristics = characteristicDefinition}, {0}},
     systemTask {systemTask},
