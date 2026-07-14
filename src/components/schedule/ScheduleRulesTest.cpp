@@ -153,9 +153,9 @@ int main() {
 
   // ---- Golden vector cross-check (doc/ScheduleService.md, EventRecord index 0) ----
   {
-    static constexpr uint8_t golden[35] = {0x01, 0x00, 0x02, 0x11, 0x00, 0xEA, 0x07, 0x07, 0x0D, 0x2A, 0x01, 0x51, 0x75,
+    static constexpr uint8_t golden[39] = {0x01, 0x00, 0x02, 0x11, 0x00, 0xEA, 0x07, 0x07, 0x0D, 0x2A, 0x01, 0x51, 0x75,
                                            0x72, 0x61, 0x6E, 0x20, 0x70, 0x72, 0x61, 0x63, 0x74, 0x69, 0x63, 0x65, 0x00,
-                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE, 0x55, 0x6A};
     Event e;
     memcpy(&e, golden, sizeof(e));
     check(e.id == 1, "golden: id");
@@ -164,6 +164,7 @@ int main() {
     check(e.anchorYear == 2026 && e.anchorMonth == 7 && e.anchorDay == 13, "golden: anchor");
     check(e.param == 0x2A && e.IsEnabled(), "golden: param/flags");
     check(strcmp(e.title, "Quran practice") == 0, "golden: title");
+    check(e.lastModified == 1784000000u, "golden: lastModified");
     // And the parsed rule behaves: Mon/Wed/Fri 17:00 from Tue -> Wed.
     check(Is(NextOccurrenceFrom(e, At(2026, 7, 14, 0, 0)), 2026, 7, 15, 17, 0), "golden: semantics");
   }

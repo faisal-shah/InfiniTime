@@ -22,7 +22,7 @@ namespace Pinetime {
       // Both the active and the staging array hold MaxEvents records (35 B each);
       // 16 recurrence rules cover a full weekly routine at ~1.1 KB total.
       static constexpr uint8_t MaxEvents = 16;
-      static constexpr uint8_t ProtocolVersion = 0;
+      static constexpr uint8_t ProtocolVersion = 1;
       static constexpr size_t TitleSize = ScheduleRules::TitleSize;
 
       using RuleKind = ScheduleRules::RuleKind;
@@ -88,7 +88,10 @@ namespace Pinetime {
       uint8_t ComputeUpcoming(Occurrence* out, uint8_t max, uint16_t horizonDays = 14) const;
 
     private:
-      static constexpr uint8_t scheduleFormatVersion = 1;
+      static constexpr uint8_t scheduleFormatVersion = 2;
+      // Format 1 predates Event::lastModified (35-byte records); LoadFromFile migrates it.
+      static constexpr uint8_t legacyFormatVersion = 1;
+      static constexpr size_t legacyEventSize = 35;
       static constexpr int graceSeconds = 60;
       // FreeRTOS timer periods are 32-bit ticks; cap each arm and re-check on expiry
       // so occurrences further out than one day can't overflow the period.

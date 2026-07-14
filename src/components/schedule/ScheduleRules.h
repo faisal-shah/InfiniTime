@@ -30,13 +30,17 @@ namespace Pinetime {
         uint8_t param;
         uint8_t flags;
         char title[TitleSize];
+        // UNIX seconds (UTC) of the companion's last edit. Opaque to the watch;
+        // companions use it to merge concurrent edits (doc/ScheduleService.md,
+        // "Multiple companions").
+        uint32_t lastModified;
 
         bool IsEnabled() const {
           return (flags & 0x01) != 0;
         }
       };
 
-      static_assert(sizeof(Event) == 35, "Event layout is part of the BLE protocol");
+      static_assert(sizeof(Event) == 39, "Event layout is part of the BLE protocol");
 
       inline int LastDayOfMonth(int year, int month0) { // month0: 0..11, year: full year
         static constexpr uint8_t days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};

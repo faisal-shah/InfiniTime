@@ -32,10 +32,12 @@ namespace Pinetime {
 
     private:
       enum class MessageType : uint8_t { BeginSync = 0, EventRecord = 1, CommitSync = 2, AbortSync = 3 };
-      static constexpr uint8_t messageVersion = 0;
+      static constexpr uint8_t messageVersion = 0;       // BeginSync / CommitSync / AbortSync
+      static constexpr uint8_t eventRecordVersion = 1;   // EventRecord (39-byte records)
 
       int OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt);
       int OnDigestRead(struct ble_gatt_access_ctxt* ctxt);
+      int OnEventReadAccess(struct ble_gatt_access_ctxt* ctxt);
 
       // 0006yyxx-78fc-48fe-8e23-433b3a1942d0
       static constexpr ble_uuid128_t CharUuid(uint8_t x, uint8_t y) {
@@ -46,12 +48,14 @@ namespace Pinetime {
       ble_uuid128_t scheduleUuid {CharUuid(0x00, 0x00)};
       ble_uuid128_t syncCommandCharUuid {CharUuid(0x00, 0x01)};
       ble_uuid128_t digestCharUuid {CharUuid(0x00, 0x02)};
+      ble_uuid128_t eventReadCharUuid {CharUuid(0x00, 0x03)};
 
-      const struct ble_gatt_chr_def characteristicDefinition[3];
+      const struct ble_gatt_chr_def characteristicDefinition[4];
       const struct ble_gatt_svc_def serviceDefinition[2];
 
       System::SystemTask& systemTask;
       ScheduleController& scheduleController;
+      uint8_t selectedReadIndex = 0;
     };
   }
 }

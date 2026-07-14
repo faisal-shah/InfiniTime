@@ -24,7 +24,7 @@ Write (with response). All messages start with a 2-byte header:
  - [0] Message type
  - [1] Message version (currently `0`)
 
-The full message must arrive in a single ATT write. The largest message is 38 bytes, so the
+The full message must arrive in a single ATT write. The largest message is 42 bytes, so the
 companion must negotiate an ATT MTU of at least 48 before syncing (e.g. request 256).
 
 #### Message type `0` : BeginSync
@@ -42,9 +42,9 @@ Opens a sync transaction and clears any staged data from a previous incomplete t
 #### Message type `1` : EventRecord
 
  - [0] : Message type = `1`
- - [1] : Message version = `0`
+ - [1] : Message version = `1`
  - [2] : Index of this record (0 .. count-1 from BeginSync)
- - [3]..[37] : Event record (35 bytes, layout below)
+ - [3]..[41] : Event record (39 bytes, layout below)
 
 Rejected (ATT error `0x0E`, "unlikely") if no transaction is open, the index is out of
 range, or the index was already received.
@@ -71,7 +71,7 @@ Discards the staged transaction. A BLE disconnect has the same effect.
 
 Read. Returns 7 bytes:
 
- - [0] : Protocol version = `0`
+ - [0] : Protocol version = `1`
  - [1] : Capacity (maximum number of events the watch can store)
  - [2] : Count of events in the active schedule
  - [3][4][5][6] : Schedule version of the active schedule (uint32 LE)
@@ -79,7 +79,19 @@ Read. Returns 7 bytes:
 Companions should read the Digest on connect and skip syncing when the schedule version
 already matches their local value.
 
-## Event record layout (35 bytes, little-endian)
+### Event Read (UUID 00060003-78fc-48fe-8e23-433b3a1942d0)
+
+Write then read: write a single byte (event index, 0 .. Digest count-1) to select, then
+read to receive that event's 39-byte record. Reading without a prior select, or after the
+schedule changed underneath the selection, returns the record at the last valid selected
+index (companions should select immediately before each read; the connection is exclusive,
+so nothing can interleave). Selecting an out-of-range index is rejected with ATT error
+`0x0E`.
+
+This is the pull half of multi-companion sync: a companion reads the watch's full schedule,
+merges it with its own (see "Multiple companions" below), and pushes the merged set.
+
+## Event record layout (39 bytes, little-endian)
 
 | Offset | Size | Field | Notes |
 |---|---|---|---|
@@ -93,6 +105,7 @@ already matches their local value.
 | 9 | 1 | param | meaning depends on ruleKind, see below |
 | 10 | 1 | flags | bit 0 = enabled; other bits reserved, must be 0 |
 | 11 | 24 | title | UTF-8, NUL-padded; at most 23 bytes of text (watch forces `title[23] = 0`) |
+| 35 | 4 | lastModified | uint32 UNIX seconds (UTC) of the companion's last edit; opaque to the watch, used by companions to merge |
 
 All dates and times are watch-local (the same clock the companion sets via the Current Time
 Service). There is no timezone or UTC conversion.
@@ -124,6 +137,29 @@ list.
 5. Write CommitSync(count).
 6. Read Digest; verify count and schedule version. Disconnect.
 
+## Multiple companions
+
+Several phones (or a computer) may manage the same watch; the watch is the shared
+database. Companions must sync with **pull → merge → push** inside one connection
+(connections are exclusive, making the whole cycle atomic):
+
+1. Read the Digest. If the schedule version equals the version this companion itself
+   last committed, nothing else wrote — skip the pull.
+2. Otherwise read all records via Event Read and three-way merge against the local list
+   and a locally-stored snapshot of this companion's last successful sync ("base"):
+   - present in both: keep the copy with the newer `lastModified`;
+   - present only locally: keep it if it is new (not in base) or edited since the last
+     sync, else it was deleted remotely — drop it;
+   - present only on the watch: adopt it if new (not in base) or edited since this
+     companion's last sync, else this companion deleted it — leave it out.
+3. Push the merged set with a fresh random schedule version and store it (plus the sync
+   time) as the new base.
+
+Event ids must be random (not sequential) so events created on different companions
+don't collide. An empty watch (version 0) combined with a non-empty base means the watch
+was reset — companions should ask the user whether to restore or start fresh rather than
+silently deleting local data.
+
 ## Golden byte vectors
 
 Reference vectors for implementations and tests. All bytes hex.
@@ -133,27 +169,32 @@ Reference vectors for implementations and tests. All bytes hex.
     00 00 03 07 00 00 00
 
 **EventRecord** — index 0; event id 1, Weekly on Mon/Wed/Fri (mask `0x2A`), 17:00,
-anchor 2026-07-13, enabled, title "Quran practice":
+anchor 2026-07-13, enabled, title "Quran practice", lastModified 1784000000
+(`0x6A55AE00`):
 
-    01 00 00
+    01 01 00
     01 00 02 11 00 EA 07 07 0D 2A 01
     51 75 72 61 6E 20 70 72 61 63 74 69 63 65 00 00
     00 00 00 00 00 00 00 00
+    00 AE 55 6A
 
 **EventRecord** — index 1; event id 2, EveryNDays N=1 (daily), 20:30, anchor 2026-01-01,
-enabled, title "Brush teeth":
+enabled, title "Brush teeth", lastModified 0:
 
-    01 00 01
+    01 01 01
     02 00 01 14 1E EA 07 01 01 01 01
     42 72 75 73 68 20 74 65 65 74 68 00 00 00 00 00
     00 00 00 00 00 00 00 00
+    00 00 00 00
 
-**EventRecord** — index 2; event id 3, OneShot 2026-08-01 09:15, enabled, title "Dentist":
+**EventRecord** — index 2; event id 3, OneShot 2026-08-01 09:15, enabled, title "Dentist",
+lastModified 0:
 
-    01 00 02
+    01 01 02
     03 00 00 09 0F EA 07 08 01 00 01
     44 65 6E 74 69 73 74 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00
+    00 00 00 00
 
 **CommitSync** — 3 events:
 
@@ -163,9 +204,9 @@ enabled, title "Brush teeth":
 
     03 00
 
-**Digest** after the commit above (protocol 0, capacity 16, 3 events, version 7):
+**Digest** after the commit above (protocol 1, capacity 16, 3 events, version 7):
 
-    00 10 03 07 00 00 00
+    01 10 03 07 00 00 00
 
 ## Notes
 
