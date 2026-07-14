@@ -107,6 +107,7 @@ Pinetime::Controllers::NotificationManager notificationManager;
 Pinetime::Controllers::MotionController motionController;
 Pinetime::Controllers::StopWatchController stopWatchController;
 Pinetime::Controllers::AlarmController alarmController {dateTimeController, fs};
+Pinetime::Controllers::ScheduleController scheduleController {dateTimeController, fs};
 Pinetime::Controllers::TouchHandler touchHandler;
 Pinetime::Controllers::ButtonHandler buttonHandler;
 Pinetime::Controllers::BrightnessController brightnessController {};
@@ -124,6 +125,7 @@ Pinetime::Applications::DisplayApp displayApp(lcd,
                                               motionController,
                                               stopWatchController,
                                               alarmController,
+                                              scheduleController,
                                               brightnessController,
                                               touchHandler,
                                               fs,
@@ -138,6 +140,7 @@ Pinetime::System::SystemTask systemTask(spi,
                                         dateTimeController,
                                         stopWatchController,
                                         alarmController,
+                                        scheduleController,
                                         watchdog,
                                         notificationManager,
                                         heartRateSensor,

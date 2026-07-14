@@ -29,6 +29,7 @@
 #include "displayapp/screens/Dice.h"
 #include "displayapp/screens/Weather.h"
 #include "displayapp/screens/PassKey.h"
+#include "displayapp/screens/ScheduleReminder.h"
 #include "displayapp/screens/Error.h"
 #include "displayapp/screens/Calculator.h"
 
@@ -88,6 +89,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                        Pinetime::Controllers::MotionController& motionController,
                        Pinetime::Controllers::StopWatchController& stopWatchController,
                        Pinetime::Controllers::AlarmController& alarmController,
+                       Pinetime::Controllers::ScheduleController& scheduleController,
                        Pinetime::Controllers::BrightnessController& brightnessController,
                        Pinetime::Controllers::TouchHandler& touchHandler,
                        Pinetime::Controllers::FS& filesystem,
@@ -105,6 +107,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
     motionController {motionController},
     stopWatchController {stopWatchController},
     alarmController {alarmController},
+    scheduleController {scheduleController},
     brightnessController {brightnessController},
     touchHandler {touchHandler},
     filesystem {filesystem},
@@ -121,6 +124,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  motionController,
                  stopWatchController,
                  alarmController,
+                 scheduleController,
                  brightnessController,
                  nullptr,
                  filesystem,
@@ -392,6 +396,14 @@ void DisplayApp::Refresh() {
           LoadNewScreen(Apps::Alarm, DisplayApp::FullRefreshDirections::None);
         }
         break;
+      case Messages::ScheduleReminderTriggered:
+        if (currentApp == Apps::ScheduleReminder) {
+          auto* reminder = static_cast<Screens::ScheduleReminder*>(currentScreen.get());
+          reminder->SetAlerting();
+        } else {
+          LoadNewScreen(Apps::ScheduleReminder, DisplayApp::FullRefreshDirections::None);
+        }
+        break;
       case Messages::ShowPairingKey:
         LoadNewScreen(Apps::PassKey, DisplayApp::FullRefreshDirections::Up);
         motorController.RunForDuration(35);
@@ -561,6 +573,9 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
 
     case Apps::PassKey:
       currentScreen = std::make_unique<Screens::PassKey>(bleController.GetPairingKey());
+      break;
+    case Apps::ScheduleReminder:
+      currentScreen = std::make_unique<Screens::ScheduleReminder>(this, scheduleController, *systemTask, motorController);
       break;
 
     case Apps::Notifications:
