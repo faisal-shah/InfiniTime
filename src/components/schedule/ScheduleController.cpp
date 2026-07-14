@@ -75,8 +75,6 @@ void ScheduleController::CommitStaged() {
   scheduleVersion = stagedVersion;
   std::copy_n(staged.begin(), count, events.begin());
   DiscardStaging();
-  // Indices may have shifted; suppress any same-second tie replays entirely.
-  lastFiredIndex = INT16_MAX;
   SaveToFile();
   NRF_LOG_INFO("[ScheduleController] Committed %u events, version %u", count, scheduleVersion);
   Reschedule();
@@ -95,9 +93,9 @@ void ScheduleController::Reschedule() {
     if (!t) {
       continue;
     }
-    // A dismissed occurrence must not replay within the grace window; ties at the
-    // same second only fire for indices after the one already fired.
-    if (*t < lastFiredDue || (*t == lastFiredDue && i <= lastFiredIndex)) {
+    // Anything at or before the last alert has already been shown (same-second
+    // events alerted together with combined titles).
+    if (*t <= lastFiredDue) {
       continue;
     }
     if (!best || *t < *best) {
@@ -136,13 +134,25 @@ void ScheduleController::TimerFired() {
     return;
   }
 
-  const Event& event = events[nextIndex];
-  std::memcpy(firingTitle.data(), event.title, TitleSize);
-  firingTitle[TitleSize - 1] = '\0';
-  firingHour = event.hour;
-  firingMinute = event.minute;
+  // Combine all events due at this exact second into one alert.
+  const time_t from = nextDueTime;
+  size_t used = 0;
+  for (uint8_t i = 0; i < count && used + 1 < firingTitle.size(); i++) {
+    const auto t = ScheduleRules::NextOccurrenceFrom(events[i], from);
+    if (!t || *t != nextDueTime) {
+      continue;
+    }
+    if (used != 0) {
+      firingTitle[used++] = '\n';
+    }
+    const size_t maxCopy = std::min(std::strlen(events[i].title), firingTitle.size() - used - 1);
+    std::memcpy(&firingTitle[used], events[i].title, maxCopy);
+    used += maxCopy;
+  }
+  firingTitle[used] = '\0';
+  firingHour = events[nextIndex].hour;
+  firingMinute = events[nextIndex].minute;
   lastFiredDue = nextDueTime;
-  lastFiredIndex = nextIndex;
   isAlerting = true;
   systemTask->PushMessage(System::Messages::SetOffScheduleReminder);
 }

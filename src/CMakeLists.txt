@@ -397,6 +397,7 @@ list(APPEND SOURCE_FILES
         displayapp/screens/Error.cpp
         displayapp/screens/Alarm.cpp
         displayapp/screens/ScheduleReminder.cpp
+        displayapp/screens/ScheduleList.cpp
         displayapp/screens/Styles.cpp
         displayapp/screens/WeatherSymbols.cpp
         displayapp/Colors.cpp
@@ -460,6 +461,7 @@ list(APPEND SOURCE_FILES
         components/ble/AlertNotificationService.cpp
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
+        components/ble/ScheduleService.cpp
         components/ble/NavigationService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
@@ -532,6 +534,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/AlertNotificationService.cpp
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
+        components/ble/ScheduleService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
         components/ble/ImmediateAlertService.cpp

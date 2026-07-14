@@ -30,7 +30,8 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
                                    Pinetime::Drivers::SpiNorFlash& spiNorFlash,
                                    HeartRateController& heartRateController,
                                    MotionController& motionController,
-                                   FS& fs)
+                                   FS& fs,
+                                   ScheduleController& scheduleController)
   : systemTask {systemTask},
     bleController {bleController},
     dateTimeController {dateTimeController},
@@ -44,6 +45,7 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     currentTimeService {dateTimeController},
     musicService {*this},
     weatherService {dateTimeController},
+    scheduleService {systemTask, scheduleController},
     batteryInformationService {batteryController},
     immediateAlertService {systemTask, notificationManager},
     heartRateService {*this, heartRateController},
@@ -90,6 +92,7 @@ void NimbleController::Init() {
   currentTimeService.Init();
   musicService.Init();
   weatherService.Init();
+  scheduleService.Init();
   navService.Init();
   anService.Init();
   dfuService.Init();
@@ -223,6 +226,7 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
 
       currentTimeClient.Reset();
       alertNotificationClient.Reset();
+      scheduleService.OnDisconnect();
       connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       if (bleController.IsConnected()) {
         bleController.Disconnect();

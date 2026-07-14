@@ -1,0 +1,117 @@
+#include "components/ble/ScheduleService.h"
+#include "components/schedule/ScheduleController.h"
+#include "systemtask/SystemTask.h"
+#include <cstring>
+#include <nrf_log.h>
+
+using namespace Pinetime::Controllers;
+
+int ScheduleServiceCallback(uint16_t /*connHandle*/, uint16_t /*attrHandle*/, struct ble_gatt_access_ctxt* ctxt, void* arg) {
+  return static_cast<ScheduleService*>(arg)->OnCommand(ctxt);
+}
+
+ScheduleService::ScheduleService(Pinetime::System::SystemTask& systemTask, ScheduleController& scheduleController)
+  : characteristicDefinition {{.uuid = &syncCommandCharUuid.u,
+                               .access_cb = ScheduleServiceCallback,
+                               .arg = this,
+                               .flags = BLE_GATT_CHR_F_WRITE},
+                              {.uuid = &digestCharUuid.u,
+                               .access_cb = ScheduleServiceCallback,
+                               .arg = this,
+                               .flags = BLE_GATT_CHR_F_READ},
+                              {0}},
+    serviceDefinition {{.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &scheduleUuid.u, .characteristics = characteristicDefinition}, {0}},
+    systemTask {systemTask},
+    scheduleController {scheduleController} {
+}
+
+void ScheduleService::Init() {
+  ble_gatts_count_cfg(serviceDefinition);
+  ble_gatts_add_svcs(serviceDefinition);
+}
+
+int ScheduleService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {
+  if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && ble_uuid_cmp(ctxt->chr->uuid, &syncCommandCharUuid.u) == 0) {
+    return OnSyncCommandWrite(ctxt);
+  }
+  if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && ble_uuid_cmp(ctxt->chr->uuid, &digestCharUuid.u) == 0) {
+    return OnDigestRead(ctxt);
+  }
+  return BLE_ATT_ERR_UNLIKELY;
+}
+
+int ScheduleService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
+  const uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+  // Largest message: EventRecord = 3-byte header + 35-byte record.
+  uint8_t buffer[3 + sizeof(ScheduleController::Event)];
+  if (len < 2 || len > sizeof(buffer)) {
+    return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+  }
+  if (os_mbuf_copydata(ctxt->om, 0, len, buffer) != 0) {
+    return BLE_ATT_ERR_UNLIKELY;
+  }
+  if (buffer[1] != messageVersion) {
+    return BLE_ATT_ERR_UNLIKELY;
+  }
+
+  switch (static_cast<MessageType>(buffer[0])) {
+    case MessageType::BeginSync: {
+      if (len != 7) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      const uint8_t count = buffer[2];
+      if (count > ScheduleController::MaxEvents) {
+        return BLE_ATT_ERR_UNLIKELY;
+      }
+      uint32_t version;
+      std::memcpy(&version, &buffer[3], sizeof(version));
+      scheduleController.BeginStaging(count, version);
+      return 0;
+    }
+
+    case MessageType::EventRecord: {
+      if (len != 3 + sizeof(ScheduleController::Event)) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      ScheduleController::Event event;
+      std::memcpy(&event, &buffer[3], sizeof(event));
+      if (!scheduleController.StageEvent(buffer[2], event)) {
+        return BLE_ATT_ERR_UNLIKELY;
+      }
+      return 0;
+    }
+
+    case MessageType::CommitSync: {
+      if (len != 3) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      if (buffer[2] != scheduleController.GetStagedCount() || !scheduleController.StagingComplete()) {
+        scheduleController.DiscardStaging();
+        return BLE_ATT_ERR_UNLIKELY;
+      }
+      // Commit (flash write + timer re-arm) must run on the SystemTask.
+      systemTask.PushMessage(System::Messages::ScheduleSyncReceived);
+      return 0;
+    }
+
+    case MessageType::AbortSync:
+      scheduleController.DiscardStaging();
+      return 0;
+  }
+  return BLE_ATT_ERR_UNLIKELY;
+}
+
+int ScheduleService::OnDigestRead(struct ble_gatt_access_ctxt* ctxt) {
+  uint8_t digest[7];
+  digest[0] = ScheduleController::ProtocolVersion;
+  digest[1] = ScheduleController::MaxEvents;
+  digest[2] = scheduleController.GetCount();
+  const uint32_t version = scheduleController.GetVersion();
+  std::memcpy(&digest[3], &version, sizeof(version));
+  const int res = os_mbuf_append(ctxt->om, digest, sizeof(digest));
+  return res == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
+void ScheduleService::OnDisconnect() {
+  scheduleController.DiscardStaging();
+}
