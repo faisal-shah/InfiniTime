@@ -11,18 +11,25 @@ int ScheduleServiceCallback(uint16_t /*connHandle*/, uint16_t /*attrHandle*/, st
 }
 
 ScheduleService::ScheduleService(Pinetime::System::SystemTask& systemTask, ScheduleController& scheduleController)
+  // *_AUTHEN requires an authenticated (passkey-paired) encrypted link for every
+  // access. On an unpaired connection NimBLE returns "insufficient
+  // authentication", which prompts the central to pair — the watch shows its
+  // 6-digit passkey, and only a device that entered it can read or write the
+  // schedule. This reuses InfiniTime's existing Security Manager; it cannot be
+  // exercised in the simulator (no radio/SM), only on hardware.
   : characteristicDefinition {{.uuid = &syncCommandCharUuid.u,
                                .access_cb = ScheduleServiceCallback,
                                .arg = this,
-                               .flags = BLE_GATT_CHR_F_WRITE},
+                               .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_AUTHEN},
                               {.uuid = &digestCharUuid.u,
                                .access_cb = ScheduleServiceCallback,
                                .arg = this,
-                               .flags = BLE_GATT_CHR_F_READ},
+                               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_AUTHEN},
                               {.uuid = &eventReadCharUuid.u,
                                .access_cb = ScheduleServiceCallback,
                                .arg = this,
-                               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE},
+                               .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
+                                        BLE_GATT_CHR_F_READ_AUTHEN | BLE_GATT_CHR_F_WRITE_AUTHEN},
                               {0}},
     serviceDefinition {{.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &scheduleUuid.u, .characteristics = characteristicDefinition}, {0}},
     systemTask {systemTask},
