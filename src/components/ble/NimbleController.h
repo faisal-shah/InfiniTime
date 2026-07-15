@@ -99,9 +99,18 @@ namespace Pinetime {
       void EnableRadio();
       void DisableRadio();
 
+      // Find My beacon mode. RequestBeaconMode queues the transition onto the
+      // NimBLE host task; it reads the intent from BeaconController::IsBeaconing.
+      // Everything else runs on the "ble" task.
+      void RequestBeaconMode(bool enable);
+      bool IsBeaconing() const;
+      void DoBeaconTransition();
+
     private:
       void PersistBond(struct ble_gap_conn_desc& desc);
       void RestoreBond();
+      void StartBeaconAdvertising();
+      void ExitBeaconMode();
 
       static constexpr const char* deviceName = "InfiniTime";
       Pinetime::System::SystemTask& systemTask;
@@ -120,6 +129,7 @@ namespace Pinetime {
       SimpleWeatherService weatherService;
       ScheduleService scheduleService;
       PrayerService prayerService;
+      BeaconController& beaconController;
       BeaconService beaconService;
       NavigationService navService;
       BatteryInformationService batteryInformationService;
@@ -133,6 +143,13 @@ namespace Pinetime {
       uint16_t connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       uint8_t fastAdvCount = 0;
       uint8_t bondId[16] = {0};
+
+      // Beacon-mode radio state, owned by and only touched on the "ble" task.
+      bool beaconActive = false;
+      // Whether the device identity is a random address (PineTime: yes). If so,
+      // entering beacon mode overwrites the identity random address, so it is
+      // restored on exit (bleController.Address() keeps the identity copy).
+      bool identityAddrIsRandom = false;
     };
 
     static NimbleController* nptr;
