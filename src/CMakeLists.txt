@@ -470,6 +470,7 @@ list(APPEND SOURCE_FILES
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
         components/ble/PrayerService.cpp
+        components/ble/BeaconService.cpp
         components/ble/NavigationService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
@@ -485,6 +486,7 @@ list(APPEND SOURCE_FILES
         components/alarm/AlarmController.cpp
         components/schedule/ScheduleController.cpp
         components/prayer/PrayerController.cpp
+        components/beacon/BeaconController.cpp
         components/fs/FS.cpp
         drivers/Cst816s.cpp
         FreeRTOS/port.c
@@ -545,6 +547,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
         components/ble/PrayerService.cpp
+        components/ble/BeaconService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
         components/ble/ImmediateAlertService.cpp
@@ -559,6 +562,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/alarm/AlarmController.cpp
         components/schedule/ScheduleController.cpp
         components/prayer/PrayerController.cpp
+        components/beacon/BeaconController.cpp
         drivers/Cst816s.cpp
         FreeRTOS/port.c
         FreeRTOS/port_cmsis_systick.c

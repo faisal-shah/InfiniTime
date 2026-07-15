@@ -19,6 +19,7 @@
 #include "components/alarm/AlarmController.h"
 #include "components/schedule/ScheduleController.h"
 #include "components/prayer/PrayerController.h"
+#include "components/beacon/BeaconController.h"
 #include "components/fs/FS.h"
 #include "touchhandler/TouchHandler.h"
 #include "buttonhandler/ButtonHandler.h"
@@ -67,6 +68,7 @@ namespace Pinetime {
                  Controllers::AlarmController& alarmController,
                  Controllers::ScheduleController& scheduleController,
                  Controllers::PrayerController& prayerController,
+                 Controllers::BeaconController& beaconController,
                  Drivers::Watchdog& watchdog,
                  Pinetime::Controllers::NotificationManager& notificationManager,
                  Pinetime::Drivers::Hrs3300& heartRateSensor,
@@ -118,6 +120,7 @@ namespace Pinetime {
       Pinetime::Controllers::AlarmController& alarmController;
       Pinetime::Controllers::ScheduleController& scheduleController;
       Pinetime::Controllers::PrayerController& prayerController;
+      Pinetime::Controllers::BeaconController& beaconController;
       QueueHandle_t systemTasksMsgQueue;
       Pinetime::Drivers::Watchdog& watchdog;
       Pinetime::Controllers::NotificationManager& notificationManager;

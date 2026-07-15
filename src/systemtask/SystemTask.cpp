@@ -43,6 +43,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Controllers::AlarmController& alarmController,
                        Controllers::ScheduleController& scheduleController,
                        Controllers::PrayerController& prayerController,
+                       Controllers::BeaconController& beaconController,
                        Drivers::Watchdog& watchdog,
                        Pinetime::Controllers::NotificationManager& notificationManager,
                        Pinetime::Drivers::Hrs3300& heartRateSensor,
@@ -66,6 +67,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
     alarmController {alarmController},
     scheduleController {scheduleController},
     prayerController {prayerController},
+    beaconController {beaconController},
     watchdog {watchdog},
     notificationManager {notificationManager},
     heartRateSensor {heartRateSensor},
@@ -88,7 +90,8 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                      motionController,
                      fs,
                      scheduleController,
-                     prayerController) {
+                     prayerController,
+                     beaconController) {
 }
 
 void SystemTask::Start() {
@@ -138,6 +141,7 @@ void SystemTask::Work() {
   alarmController.Init(this);
   scheduleController.Init(this);
   prayerController.Init(this);
+  beaconController.Init();
 
   // Reset the TWI device because the motion sensor chip most probably crashed it...
   twiMaster.Sleep();
@@ -287,6 +291,14 @@ void SystemTask::Work() {
           // silent settings push should not light the screen.
           const bool flashWasAsleep = WakeFlashForWork();
           prayerController.CommitStaged();
+          RestoreFlashAfterWork(flashWasAsleep);
+          break;
+        }
+        case Messages::BeaconKeyReceived: {
+          // Persist the provisioned Find My key; same flash-wake bracket as a
+          // prayer settings write.
+          const bool flashWasAsleep = WakeFlashForWork();
+          beaconController.CommitStagedKey();
           RestoreFlashAfterWork(flashWasAsleep);
           break;
         }
