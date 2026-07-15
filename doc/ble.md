@@ -100,6 +100,7 @@ The following custom services are implemented in InfiniTime:
 - Fork-only (this repository):
   - [Schedule Service](ScheduleService.md) : `00060000-78fc-48fe-8e23-433b3a1942d0`
   - [Prayer Service](PrayerService.md) : `00070000-78fc-48fe-8e23-433b3a1942d0`
+  - [Beacon Service](BeaconService.md) : `00080000-78fc-48fe-8e23-433b3a1942d0`
 
 ---
 
