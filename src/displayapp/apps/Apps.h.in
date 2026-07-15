@@ -41,6 +41,7 @@ namespace Pinetime {
       SettingTimeFormat,
       SettingWeatherFormat,
       SettingPrayer,
+      SettingFindMy,
       SettingPrayerMethod,
       SettingPrayerAsr,
       SettingPrayerAlerts,

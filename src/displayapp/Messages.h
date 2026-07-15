@@ -26,6 +26,8 @@ namespace Pinetime {
         PrayerAlertTriggered,
         Chime,
         BleRadioEnableToggle,
+        BeaconModeEnable,
+        BeaconModeDisable,
       };
     }
   }

@@ -17,6 +17,7 @@
 #include "components/alarm/AlarmController.h"
 #include "components/schedule/ScheduleController.h"
 #include "components/prayer/PrayerController.h"
+#include "components/beacon/BeaconController.h"
 #include "touchhandler/TouchHandler.h"
 
 #include "displayapp/Messages.h"
@@ -70,6 +71,7 @@ namespace Pinetime {
                  Pinetime::Controllers::AlarmController& alarmController,
                  Pinetime::Controllers::ScheduleController& scheduleController,
                  Pinetime::Controllers::PrayerController& prayerController,
+                 Pinetime::Controllers::BeaconController& beaconController,
                  Pinetime::Controllers::BrightnessController& brightnessController,
                  Pinetime::Controllers::TouchHandler& touchHandler,
                  Pinetime::Controllers::FS& filesystem,
@@ -103,6 +105,7 @@ namespace Pinetime {
       Pinetime::Controllers::AlarmController& alarmController;
       Pinetime::Controllers::ScheduleController& scheduleController;
       Pinetime::Controllers::PrayerController& prayerController;
+      Pinetime::Controllers::BeaconController& beaconController;
       Pinetime::Controllers::BrightnessController& brightnessController;
       Pinetime::Controllers::TouchHandler& touchHandler;
       Pinetime::Controllers::FS& filesystem;
