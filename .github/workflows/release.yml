@@ -1,0 +1,80 @@
+# Builds the firmware release artifacts and attaches them to the GitHub
+# release that triggered it: MCUBoot DFU zip (OTA via companion/Gadgetbridge),
+# MCUBoot app image (bin + hex, for SWD flashing), recovery-loader DFU/image,
+# external-flash resources zip, reference bootloader, and the ELF (.out) with
+# debug symbols.
+#
+# The build runs inside upstream's published infinitime/infinitime-build
+# image — the same container upstream CI uses (we only consume it; no image
+# of our own is built). /opt/build.sh configures with BUILD_DFU=1 and
+# BUILD_RESOURCES=1 and stages everything into build/output.
+#
+# Validation without publishing anything: run via workflow_dispatch — the
+# build job uploads Actions artifacts; release assets are only attached when
+# an actual release triggered the run.
+
+name: firmware release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: infinitime/infinitime-build
+    env:
+      SOURCES_DIR: .
+    steps:
+      - name: Checkout (release tag or dispatched ref)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+          submodules: recursive
+      - name: Install resource build dependencies
+        run: |
+          apt-get update
+          apt-get -y install --no-install-recommends python3-pil
+      - name: Build all targets
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          /opt/build.sh all
+      - name: Upload output as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-output
+          path: |
+            build/output/pinetime-mcuboot-app-dfu-*.zip
+            build/output/pinetime-mcuboot-app-image-*.bin
+            build/output/pinetime-mcuboot-recovery-loader-dfu-*.zip
+            build/output/pinetime-mcuboot-recovery-loader-image-*.bin
+            build/output/infinitime-resources-*.zip
+            build/output/bootloader.bin
+            build/output/src/pinetime-mcuboot-app-image-*.hex
+            build/output/src/pinetime-app-*.out
+
+  attach:
+    # Only when a release triggered the run — dispatch runs stop at artifacts.
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-output
+          path: output
+      - name: Attach firmware assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          find output -type f | sort
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            $(find output -type f)
