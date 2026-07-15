@@ -400,6 +400,7 @@ list(APPEND SOURCE_FILES
         displayapp/screens/PrayerAlert.cpp
         displayapp/screens/PrayerTimes.cpp
         displayapp/screens/settings/SettingPrayer.cpp
+        displayapp/screens/settings/SettingFindMy.cpp
         displayapp/screens/settings/SettingPrayerMethod.cpp
         displayapp/screens/settings/SettingPrayerAsr.cpp
         displayapp/screens/settings/SettingPrayerAlerts.cpp

@@ -47,6 +47,7 @@
 #include "displayapp/screens/settings/SettingTimeFormat.h"
 #include "displayapp/screens/settings/SettingWeatherFormat.h"
 #include "displayapp/screens/settings/SettingPrayer.h"
+#include "displayapp/screens/settings/SettingFindMy.h"
 #include "displayapp/screens/settings/SettingPrayerMethod.h"
 #include "displayapp/screens/settings/SettingPrayerAsr.h"
 #include "displayapp/screens/settings/SettingPrayerAlerts.h"
@@ -98,6 +99,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                        Pinetime::Controllers::AlarmController& alarmController,
                        Pinetime::Controllers::ScheduleController& scheduleController,
                        Pinetime::Controllers::PrayerController& prayerController,
+                       Pinetime::Controllers::BeaconController& beaconController,
                        Pinetime::Controllers::BrightnessController& brightnessController,
                        Pinetime::Controllers::TouchHandler& touchHandler,
                        Pinetime::Controllers::FS& filesystem,
@@ -117,6 +119,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
     alarmController {alarmController},
     scheduleController {scheduleController},
     prayerController {prayerController},
+    beaconController {beaconController},
     brightnessController {brightnessController},
     touchHandler {touchHandler},
     filesystem {filesystem},
@@ -518,6 +521,12 @@ void DisplayApp::Refresh() {
       case Messages::BleRadioEnableToggle:
         PushMessageToSystemTask(System::Messages::BleRadioEnableToggle);
         break;
+      case Messages::BeaconModeEnable:
+        PushMessageToSystemTask(System::Messages::BeaconEnable);
+        break;
+      case Messages::BeaconModeDisable:
+        PushMessageToSystemTask(System::Messages::BeaconDisable);
+        break;
       case Messages::Chime:
         LoadNewScreen(Apps::Clock, DisplayApp::FullRefreshDirections::None);
         motorController.RunForDuration(35);
@@ -649,6 +658,9 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
       break;
     case Apps::SettingPrayer:
       currentScreen = std::make_unique<Screens::SettingPrayer>(this, settingsController);
+      break;
+    case Apps::SettingFindMy:
+      currentScreen = std::make_unique<Screens::SettingFindMy>(this, beaconController);
       break;
     case Apps::SettingPrayerMethod:
       currentScreen = std::make_unique<Screens::SettingPrayerMethod>(this, prayerController);
