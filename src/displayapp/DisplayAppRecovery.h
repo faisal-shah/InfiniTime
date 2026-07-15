@@ -34,6 +34,8 @@ namespace Pinetime {
     class StopWatchController;
     class AlarmController;
     class ScheduleController;
+    class PrayerController;
+    class BeaconController;
     class BrightnessController;
     class FS;
     class SimpleWeatherService;
@@ -62,6 +64,8 @@ namespace Pinetime {
                  Pinetime::Controllers::StopWatchController& stopWatchController,
                  Pinetime::Controllers::AlarmController& alarmController,
                  Pinetime::Controllers::ScheduleController& scheduleController,
+                 Pinetime::Controllers::PrayerController& prayerController,
+                 Pinetime::Controllers::BeaconController& beaconController,
                  Pinetime::Controllers::BrightnessController& brightnessController,
                  Pinetime::Controllers::TouchHandler& touchHandler,
                  Pinetime::Controllers::FS& filesystem,
