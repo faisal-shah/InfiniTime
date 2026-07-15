@@ -12,10 +12,12 @@
 #include <controller/ble_hw.h>
 #include <services/gap/ble_svc_gap.h>
 #include <services/gatt/ble_svc_gatt.h>
+#include <nimble/nimble_port.h>
 #undef max
 #undef min
 #include "components/ble/BleController.h"
 #include "components/ble/NotificationManager.h"
+#include "components/beacon/BeaconController.h"
 #include "components/datetime/DateTimeController.h"
 #include "components/fs/FS.h"
 #include "systemtask/SystemTask.h"
@@ -49,6 +51,7 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     weatherService {dateTimeController},
     scheduleService {systemTask, scheduleController},
     prayerService {systemTask, prayerController},
+    beaconController {beaconController},
     beaconService {systemTask, beaconController},
     batteryInformationService {batteryController},
     immediateAlertService {systemTask, notificationManager},
@@ -76,6 +79,17 @@ void nimble_on_sync(void) {
 int GAPEventCallback(struct ble_gap_event* event, void* arg) {
   auto nimbleController = static_cast<NimbleController*>(arg);
   return nimbleController->OnGAPEvent(event);
+}
+
+namespace {
+  // The Find My beacon transition runs on the "ble" host task; this static
+  // event carries it there. Initialised once in Init(), posted by
+  // RequestBeaconMode.
+  struct ble_npl_event beaconTransitionEvent;
+
+  void BeaconTransitionHandler(struct ble_npl_event* ev) {
+    static_cast<NimbleController*>(ble_npl_event_get_arg(ev))->DoBeaconTransition();
+  }
 }
 
 void NimbleController::Init() {
@@ -122,6 +136,9 @@ void NimbleController::Init() {
   ASSERT(rc == 0);
 
   bleController.Address(std::move(address));
+  // Remember whether the identity address is random: beacon mode sets a random
+  // address, which would overwrite a random identity, so we restore it on exit.
+  identityAddrIsRandom = (addrType == BLE_OWN_ADDR_RANDOM);
   switch (addrType) {
     case BLE_OWN_ADDR_PUBLIC:
       bleController.AddressType(Ble::AddressTypes::Public);
@@ -141,6 +158,10 @@ void NimbleController::Init() {
   ASSERT(rc == 0);
 
   RestoreBond();
+
+  // Initialise the beacon-transition event once; it is posted to the host task
+  // by RequestBeaconMode.
+  ble_npl_event_init(&beaconTransitionEvent, BeaconTransitionHandler, this);
 
   StartAdvertising();
 }
@@ -195,7 +216,9 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
     case BLE_GAP_EVENT_ADV_COMPLETE:
       NRF_LOG_INFO("Advertising event : BLE_GAP_EVENT_ADV_COMPLETE");
       NRF_LOG_INFO("reason=%d; status=%0X", event->adv_complete.reason, event->connect.status);
-      if (bleController.IsRadioEnabled() && !bleController.IsConnected()) {
+      // Beacon advertising uses BLE_HS_FOREVER so this does not fire while
+      // beaconing; the guard prevents any stray restart from stomping it.
+      if (bleController.IsRadioEnabled() && !bleController.IsConnected() && !beaconActive) {
         StartAdvertising();
       }
       break;
@@ -237,7 +260,14 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       if (bleController.IsConnected()) {
         bleController.Disconnect();
         fastAdvCount = 0;
-        StartAdvertising();
+        // If beacon mode was requested, this disconnect was our own terminate
+        // (the connection had to drop before we could swap the address); start
+        // beacon advertising here rather than the normal connectable path.
+        if (beaconActive) {
+          StartBeaconAdvertising();
+        } else {
+          StartAdvertising();
+        }
       }
       break;
 
@@ -421,6 +451,12 @@ void NimbleController::EnableRadio() {
 }
 
 void NimbleController::DisableRadio() {
+  // Turning the radio off also exits beacon mode cleanly (restores the identity
+  // address); otherwise a later EnableRadio would advertise the beacon address.
+  if (beaconActive) {
+    beaconController.SetActive(false);
+    ExitBeaconMode();
+  }
   bleController.DisableRadio();
   if (bleController.IsConnected()) {
     ble_gap_terminate(connectionHandle, BLE_ERR_REM_USER_CONN_TERM);
@@ -428,6 +464,75 @@ void NimbleController::DisableRadio() {
   } else {
     ble_gap_adv_stop();
   }
+}
+
+bool NimbleController::IsBeaconing() const {
+  return beaconActive;
+}
+
+// --- Find My beacon mode ---------------------------------------------------
+// The transition runs on the "ble" host task, serialized with GAP events, via
+// beaconTransitionEvent (defined at the top of this file). The enable/disable
+// intent is read from BeaconController, set by the SystemTask handler before
+// the event is posted.
+
+void NimbleController::RequestBeaconMode(bool /*enable*/) {
+  // The event is initialised once in Init(). ble_npl_eventq_put coalesces if the
+  // event is already queued, so rapid toggles collapse to one transition that
+  // reads the latest intent from BeaconController.
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &beaconTransitionEvent);
+}
+
+void NimbleController::DoBeaconTransition() {
+  if (beaconController.IsBeaconing()) {
+    // Enable. Drop any connection first; the address swap must not happen while
+    // a connection is live, so defer the beacon start to the disconnect event.
+    beaconActive = true;
+    if (bleController.IsConnected()) {
+      const int rc = ble_gap_terminate(connectionHandle, BLE_ERR_REM_USER_CONN_TERM);
+      if (rc != 0) {
+        // Already disconnected: no event will come, start now.
+        StartBeaconAdvertising();
+      }
+      // rc == 0: the DISCONNECT handler starts the beacon.
+    } else {
+      StartBeaconAdvertising();
+    }
+  } else {
+    ExitBeaconMode();
+  }
+}
+
+void NimbleController::StartBeaconAdvertising() {
+  ble_gap_adv_stop(); // may return BLE_HS_EALREADY when idle; ignore
+
+  uint8_t addr[6];
+  beaconController.BuildAddress(addr);
+  ble_hs_id_set_rnd(addr);
+
+  uint8_t payload[31];
+  beaconController.BuildPayload(payload);
+  ble_gap_adv_set_data(payload, sizeof(payload));
+
+  struct ble_gap_adv_params params {};
+
+  params.conn_mode = BLE_GAP_CONN_MODE_NON;
+  params.disc_mode = BLE_GAP_DISC_MODE_NON;
+  params.itvl_min = 0x0640; // ~1 s
+  params.itvl_max = 0x0C80; // ~2 s
+  ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER, &params, GAPEventCallback, this);
+}
+
+void NimbleController::ExitBeaconMode() {
+  ble_gap_adv_stop(); // may return BLE_HS_EALREADY; ignore
+  beaconActive = false;
+  // Restore the identity random address that the beacon overwrote, so normal
+  // advertising and existing bonds use the original address again.
+  if (identityAddrIsRandom) {
+    ble_hs_id_set_rnd(bleController.Address().data());
+  }
+  fastAdvCount = 0;
+  StartAdvertising();
 }
 
 void NimbleController::PersistBond(struct ble_gap_conn_desc& desc) {

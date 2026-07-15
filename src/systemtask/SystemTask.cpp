@@ -302,6 +302,19 @@ void SystemTask::Work() {
           RestoreFlashAfterWork(flashWasAsleep);
           break;
         }
+        case Messages::BeaconEnable:
+          // Requires the radio on and a provisioned key. Set the intent, then
+          // let NimbleController run the stop/swap-address/restart transition on
+          // the ble host task.
+          if (settingsController.GetBleRadioEnabled() && beaconController.HasKey()) {
+            beaconController.SetActive(true);
+            nimbleController.RequestBeaconMode(true);
+          }
+          break;
+        case Messages::BeaconDisable:
+          beaconController.SetActive(false);
+          nimbleController.RequestBeaconMode(false);
+          break;
         case Messages::BleConnected:
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::NotifyDeviceActivity);
           isBleDiscoveryTimerRunning = true;
