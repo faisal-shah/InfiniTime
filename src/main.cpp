@@ -109,6 +109,7 @@ Pinetime::Controllers::StopWatchController stopWatchController;
 Pinetime::Controllers::AlarmController alarmController {dateTimeController, fs};
 Pinetime::Controllers::ScheduleController scheduleController {dateTimeController, fs};
 Pinetime::Controllers::PrayerController prayerController {dateTimeController, fs};
+Pinetime::Controllers::BeaconController beaconController {fs};
 Pinetime::Controllers::TouchHandler touchHandler;
 Pinetime::Controllers::ButtonHandler buttonHandler;
 Pinetime::Controllers::BrightnessController brightnessController {};
@@ -144,6 +145,7 @@ Pinetime::System::SystemTask systemTask(spi,
                                         alarmController,
                                         scheduleController,
                                         prayerController,
+                                        beaconController,
                                         watchdog,
                                         notificationManager,
                                         heartRateSensor,
