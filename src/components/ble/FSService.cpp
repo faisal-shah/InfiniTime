@@ -174,7 +174,7 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
         fs.FileClose(&f);
         resp.status = (res == 0) ? 0x01 : (int8_t) res;
       }
-      resp.freespace = std::min(fs.getSize() - (fs.GetFSSize() * fs.getBlockSize()), fileSize - header->offset);
+      resp.freespace = std::min<size_t>(fs.getSize() - (fs.GetFSSize() * fs.getBlockSize()), fileSize - header->offset);
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(WriteResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
       break;
@@ -196,7 +196,7 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
       if (res < 0) {
         resp.status = (int8_t) res;
       }
-      resp.freespace = std::min(fs.getSize() - (fs.GetFSSize() * fs.getBlockSize()), fileSize - header->offset);
+      resp.freespace = std::min<size_t>(fs.getSize() - (fs.GetFSSize() * fs.getBlockSize()), fileSize - header->offset);
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(WriteResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
       break;
