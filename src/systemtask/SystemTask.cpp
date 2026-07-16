@@ -93,6 +93,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                      fs,
                      scheduleController,
                      prayerController,
+                     multiAlarmController,
                      beaconController) {
 }
 
@@ -304,6 +305,14 @@ void SystemTask::Work() {
           // prayer settings write.
           const bool flashWasAsleep = WakeFlashForWork();
           beaconController.CommitStagedKey();
+          RestoreFlashAfterWork(flashWasAsleep);
+          break;
+        }
+        case Messages::MultiAlarmSettingsReceived: {
+          // Persist a companion alarm write staged on the BLE task; same
+          // flash-wake bracket. Reschedule (RAM/timer) happens inside commit.
+          const bool flashWasAsleep = WakeFlashForWork();
+          multiAlarmController.CommitStagedFromCompanion();
           RestoreFlashAfterWork(flashWasAsleep);
           break;
         }

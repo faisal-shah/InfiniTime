@@ -470,6 +470,7 @@ list(APPEND SOURCE_FILES
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
         components/ble/PrayerService.cpp
+        components/ble/MultiAlarmService.cpp
         components/ble/BeaconService.cpp
         components/ble/NavigationService.cpp
         components/ble/BatteryInformationService.cpp
@@ -548,6 +549,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
         components/ble/PrayerService.cpp
+        components/ble/MultiAlarmService.cpp
         components/ble/BeaconService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp

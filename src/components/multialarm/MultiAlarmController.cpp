@@ -58,18 +58,49 @@ void MultiAlarmController::SetEnabled(uint8_t index, bool enabled) {
   Reschedule();
 }
 
-bool MultiAlarmController::ApplyFromCompanion(uint32_t expectedVersion, const Alarm (&next)[MaxAlarms]) {
-  // Compare-and-swap: reject if the watch moved on since the phone last pulled.
+bool MultiAlarmController::StageWire(const uint8_t (&wire)[WireSize]) {
+  uint32_t expectedVersion;
+  std::memcpy(&expectedVersion, &wire[0], sizeof(expectedVersion));
+  // Compare-and-swap: reject synchronously if the watch moved on since the
+  // phone last pulled.
   if (expectedVersion != version) {
     return false;
   }
+  Alarm next[MaxAlarms];
   for (uint8_t i = 0; i < MaxAlarms; i++) {
-    alarms[i] = next[i];
+    const size_t o = 4 + i * 4;
+    const uint8_t hour = wire[o + 0];
+    const uint8_t minute = wire[o + 1];
+    const uint8_t mode = wire[o + 2];
+    if (hour > 23 || minute > 59 || mode > 1) {
+      return false; // reject the whole write on any invalid field
+    }
+    next[i] = {hour, minute, static_cast<Mode>(mode), wire[o + 3] != 0};
+  }
+  for (uint8_t i = 0; i < MaxAlarms; i++) {
+    staged[i] = next[i];
+  }
+  stagedExpectedVersion = expectedVersion;
+  stagedValid = true;
+  return true;
+}
+
+void MultiAlarmController::CommitStagedFromCompanion() {
+  if (!stagedValid) {
+    return;
+  }
+  stagedValid = false;
+  // Re-check the CAS: a watch-side edit may have bumped version between stage
+  // and commit. A stale stage is dropped (the phone re-reads and retries).
+  if (stagedExpectedVersion != version) {
+    return;
+  }
+  for (uint8_t i = 0; i < MaxAlarms; i++) {
+    alarms[i] = staged[i];
   }
   version++;
   SaveToFile();
   Reschedule();
-  return true;
 }
 
 void MultiAlarmController::Serialize(uint8_t (&out)[WireSize]) const {

@@ -45,15 +45,22 @@ namespace Pinetime {
       void SetAlarm(uint8_t index, const Alarm& alarm);
       void SetEnabled(uint8_t index, bool enabled);
 
-      // Companion sync: atomically replace all alarms IF expectedVersion matches
-      // the current version (compare-and-swap). Returns false on mismatch (the
-      // phone must re-pull, merge, retry). On success persists + bumps version.
-      bool ApplyFromCompanion(uint32_t expectedVersion, const Alarm (&next)[MaxAlarms]);
-
-      // Serialize/parse the wire form shared with the companion + BLE service:
+      // Serialize the wire form shared with the companion + BLE service:
       // {version u32, MaxAlarms × {hour, minute, mode, enabled}}.
       static constexpr size_t WireSize = 4 + MaxAlarms * 4;
       void Serialize(uint8_t (&out)[WireSize]) const;
+
+      // Companion WRITE, staged on the BLE task (RAM only, no flash). The leading
+      // u32 is the EXPECTED prior version (compare-and-swap). Returns false —
+      // rejecting the write synchronously — on an invalid field OR a version
+      // mismatch (the phone re-reads, merges, retries). On true, SystemTask must
+      // CommitStagedFromCompanion() with the flash awake.
+      bool StageWire(const uint8_t (&wire)[WireSize]);
+
+      // SystemTask, flash awake: apply the staged alarms if the CAS still holds
+      // (a watch-side edit may have bumped the version since staging), persist,
+      // re-arm. A stale stage is silently dropped.
+      void CommitStagedFromCompanion();
 
       void Reschedule();
       void TimerFired();
@@ -95,6 +102,11 @@ namespace Pinetime {
 
       std::array<Alarm, MaxAlarms> alarms {};
       uint32_t version = 0;
+
+      // Companion write staged on the BLE task, committed on SystemTask.
+      std::array<Alarm, MaxAlarms> staged {};
+      uint32_t stagedExpectedVersion = 0;
+      bool stagedValid = false;
 
       bool hasNext = false;
       time_t nextDueTime = 0;
