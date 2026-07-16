@@ -16,7 +16,7 @@
 #include "components/ble/NimbleController.h"
 #include "components/ble/NotificationManager.h"
 #include "components/stopwatch/StopWatchController.h"
-#include "components/alarm/AlarmController.h"
+#include "components/multialarm/MultiAlarmController.h"
 #include "components/schedule/ScheduleController.h"
 #include "components/prayer/PrayerController.h"
 #include "components/beacon/BeaconController.h"
@@ -66,7 +66,7 @@ namespace Pinetime {
                  Controllers::Ble& bleController,
                  Controllers::DateTime& dateTimeController,
                  Controllers::StopWatchController& stopWatchController,
-                 Controllers::AlarmController& alarmController,
+                 Controllers::MultiAlarmController& multiAlarmController,
                  Controllers::ScheduleController& scheduleController,
                  Controllers::PrayerController& prayerController,
                  Controllers::BeaconController& beaconController,
@@ -119,7 +119,7 @@ namespace Pinetime {
       Pinetime::Controllers::Ble& bleController;
       Pinetime::Controllers::DateTime& dateTimeController;
       Pinetime::Controllers::StopWatchController& stopWatchController;
-      Pinetime::Controllers::AlarmController& alarmController;
+      Pinetime::Controllers::MultiAlarmController& multiAlarmController;
       Pinetime::Controllers::ScheduleController& scheduleController;
       Pinetime::Controllers::PrayerController& prayerController;
       Pinetime::Controllers::BeaconController& beaconController;

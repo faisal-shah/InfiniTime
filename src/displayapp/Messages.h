@@ -21,7 +21,6 @@ namespace Pinetime {
         // Does nothing when asleep
         NotifyDeviceActivity,
         ShowPairingKey,
-        AlarmTriggered,
         PendingAlertsTriggered,
         Chime,
         BleRadioEnableToggle,

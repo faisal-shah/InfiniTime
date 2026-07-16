@@ -24,7 +24,7 @@ namespace Pinetime {
       OnNewHalfHour,
       OnChargingEvent,
       OnPairing,
-      SetOffAlarm,
+      SetOffMultiAlarm,
       SetOffScheduleReminder,
       ScheduleSyncReceived,
       SetOffPrayerAlert,

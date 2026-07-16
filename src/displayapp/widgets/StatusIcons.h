@@ -5,7 +5,7 @@
 #include "displayapp/screens/Screen.h"
 #include "components/battery/BatteryController.h"
 #include "components/ble/BleController.h"
-#include "components/alarm/AlarmController.h"
+#include "components/multialarm/MultiAlarmController.h"
 #include "displayapp/screens/BatteryIcon.h"
 #include "utility/DirtyValue.h"
 
@@ -16,7 +16,7 @@ namespace Pinetime {
       public:
         StatusIcons(const Controllers::Battery& batteryController,
                     const Controllers::Ble& bleController,
-                    const Controllers::AlarmController& alarmController);
+                    const Controllers::MultiAlarmController& multiAlarmController);
         void Align();
         void Create();
 
@@ -30,7 +30,7 @@ namespace Pinetime {
         Screens::BatteryIcon batteryIcon;
         const Pinetime::Controllers::Battery& batteryController;
         const Controllers::Ble& bleController;
-        const Controllers::AlarmController& alarmController;
+        const Controllers::MultiAlarmController& multiAlarmController;
 
         Utility::DirtyValue<uint8_t> batteryPercentRemaining {};
         Utility::DirtyValue<bool> powerPresent {};

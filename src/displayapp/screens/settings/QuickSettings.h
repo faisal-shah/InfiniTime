@@ -24,7 +24,7 @@ namespace Pinetime {
                       Controllers::MotorController& motorController,
                       Pinetime::Controllers::Settings& settingsController,
                       const Controllers::Ble& bleController,
-                      const Controllers::AlarmController& alarmController);
+                      const Controllers::MultiAlarmController& multiAlarmController);
 
         ~QuickSettings() override;
 

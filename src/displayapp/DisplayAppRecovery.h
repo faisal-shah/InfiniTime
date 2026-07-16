@@ -32,7 +32,7 @@ namespace Pinetime {
     class TouchHandler;
     class MotorController;
     class StopWatchController;
-    class AlarmController;
+    class MultiAlarmController;
     class ScheduleController;
     class PrayerController;
     class BeaconController;
@@ -63,7 +63,7 @@ namespace Pinetime {
                  Pinetime::Controllers::MotorController& motorController,
                  Pinetime::Controllers::MotionController& motionController,
                  Pinetime::Controllers::StopWatchController& stopWatchController,
-                 Pinetime::Controllers::AlarmController& alarmController,
+                 Pinetime::Controllers::MultiAlarmController& multiAlarmController,
                  Pinetime::Controllers::ScheduleController& scheduleController,
                  Pinetime::Controllers::PrayerController& prayerController,
                  Pinetime::Controllers::BeaconController& beaconController,

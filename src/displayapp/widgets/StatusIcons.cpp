@@ -1,13 +1,13 @@
 #include "displayapp/widgets/StatusIcons.h"
 #include "displayapp/screens/Symbols.h"
-#include "components/alarm/AlarmController.h"
+#include "components/multialarm/MultiAlarmController.h"
 
 using namespace Pinetime::Applications::Widgets;
 
 StatusIcons::StatusIcons(const Controllers::Battery& batteryController,
                          const Controllers::Ble& bleController,
-                         const Controllers::AlarmController& alarmController)
-  : batteryIcon(true), batteryController {batteryController}, bleController {bleController}, alarmController {alarmController} {
+                         const Controllers::MultiAlarmController& multiAlarmController)
+  : batteryIcon(true), batteryController {batteryController}, bleController {bleController}, multiAlarmController {multiAlarmController} {
 }
 
 void StatusIcons::Create() {
@@ -43,7 +43,7 @@ void StatusIcons::Update() {
     batteryIcon.SetBatteryPercentage(batteryPercent);
   }
 
-  alarmEnabled = alarmController.IsEnabled();
+  alarmEnabled = multiAlarmController.AnyEnabled();
   if (alarmEnabled.IsUpdated()) {
     lv_obj_set_hidden(alarmIcon, !alarmEnabled.Get());
   }
