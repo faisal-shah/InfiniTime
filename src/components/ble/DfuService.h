@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <array>
+#include <FreeRTOS.h>
+#include <timers.h>
 
 #define min // workaround: nimble's min/max macros conflict with libstdc++
 #define max
