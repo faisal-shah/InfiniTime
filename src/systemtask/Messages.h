@@ -30,6 +30,7 @@ namespace Pinetime {
       SetOffPrayerAlert,
       PrayerSettingsReceived,
       BeaconKeyReceived,
+      MultiAlarmSettingsReceived,
       BeaconEnable,
       BeaconDisable,
       MeasureBatteryTimerExpired,
