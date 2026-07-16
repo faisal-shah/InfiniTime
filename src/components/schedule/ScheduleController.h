@@ -66,29 +66,20 @@ namespace Pinetime {
       // Recomputes the next-occurrence cache from the schedule file and arms
       // the timer. SystemTask or DisplayApp task only, flash awake.
       void Reschedule();
-      void DeferReminder(uint32_t seconds);
       // Timer-daemon callback: RAM only. Flash may be asleep here.
       void TimerFired();
-      // SystemTask, after GoToRunning() (flash awake): builds the combined
-      // title of all events due at the fired second. Falls back to the cached
-      // single title when the schedule changed between fire and wake.
-      void PrepareFiring();
-      void StopAlerting();
 
-      bool IsAlerting() const {
-        return isAlerting;
-      }
+      // Pull-model text for the pending-alerts queue: rebuild the combined
+      // title of all events due at exactly `due` into `buf` (flash must be
+      // awake — display/system task only). Returns false when no event
+      // matches (schedule re-synced since the firing); caller shows a generic
+      // fallback. Replaces the old PrepareFiring/FiringTitle firing state.
+      bool DescribeFiring(time_t due, char* buf, size_t bufSize);
 
-      const char* FiringTitle() const {
-        return firingTitle.data();
-      }
-
-      uint8_t FiringHour() const {
-        return firingHour;
-      }
-
-      uint8_t FiringMinute() const {
-        return firingMinute;
+      // The due time of the most recent TimerFired(), for SystemTask to stamp
+      // the queue entry with.
+      time_t LastFiredDue() const {
+        return lastFiredDue;
       }
 
       uint8_t GetCount() const {
@@ -156,16 +147,11 @@ namespace Pinetime {
       uint8_t nextMinute = 0;
       std::array<char, TitleSize> nextTitle {};
 
-      bool isAlerting = false;
       // Everything at or before this instant has already alerted; only strictly
       // later occurrences may fire. Events due at the same second alert together
-      // (their titles are combined), so no per-event tie-breaking is needed.
+      // (their titles are combined at display time), so no per-event tie-breaking
+      // is needed. Alerting state now lives in the AlertQueue, not here.
       time_t lastFiredDue = 0;
-
-      // Up to three same-second titles joined by newlines.
-      std::array<char, 3 * TitleSize> firingTitle {};
-      uint8_t firingHour = 0;
-      uint8_t firingMinute = 0;
     };
   }
 }

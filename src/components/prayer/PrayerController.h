@@ -75,23 +75,21 @@ namespace Pinetime {
       void Reschedule();
       // Timer-daemon callback: RAM only.
       void TimerFired();
-      void DeferAlert(uint32_t seconds);
-      void StopAlerting();
 
-      bool IsAlerting() const {
-        return isAlerting;
+      // Pull-model text for the pending-alerts queue: the prayer enum rides in
+      // the queue entry's detail field; the name is a compile-time string.
+      static const char* PrayerName(uint16_t detail) {
+        return PrayerRules::Name(static_cast<PrayerRules::Prayer>(detail));
       }
 
-      const char* FiringPrayerName() const {
-        return PrayerRules::Name(static_cast<PrayerRules::Prayer>(firingPrayer));
+      // Which prayer the most recent TimerFired() was for (queue entry detail)
+      // and when it was due (queue entry timestamp).
+      uint16_t LastFiredPrayer() const {
+        return lastFiredPrayer;
       }
 
-      uint8_t FiringHour() const {
-        return firingHour;
-      }
-
-      uint8_t FiringMinute() const {
-        return firingMinute;
+      time_t LastFiredDue() const {
+        return lastFiredDue;
       }
 
     private:
@@ -126,11 +124,9 @@ namespace Pinetime {
       uint8_t nextHour = 0;
       uint8_t nextMinute = 0;
 
-      bool isAlerting = false;
+      // Alerting state lives in the AlertQueue; these stamp the queue entry.
       time_t lastFiredDue = 0;
-      uint8_t firingPrayer = 0;
-      uint8_t firingHour = 0;
-      uint8_t firingMinute = 0;
+      uint16_t lastFiredPrayer = 0;
     };
   }
 }

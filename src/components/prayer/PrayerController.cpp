@@ -181,21 +181,10 @@ void PrayerController::TimerFired() {
   }
 
   lastFiredDue = nextDueTime;
-  firingPrayer = nextPrayer;
-  firingHour = nextHour;
-  firingMinute = nextMinute;
-  isAlerting = true;
+  lastFiredPrayer = nextPrayer;
   systemTask->PushMessage(System::Messages::SetOffPrayerAlert);
-}
-
-void PrayerController::DeferAlert(uint32_t seconds) {
-  isAlerting = false;
-  xTimerChangePeriod(alertTimer, static_cast<TickType_t>(seconds) * configTICK_RATE_HZ, 0);
-  xTimerStart(alertTimer, 0);
-}
-
-void PrayerController::StopAlerting() {
-  isAlerting = false;
+  // Immediately re-arm for the next prayer: alerting state lives in the
+  // AlertQueue now, so nothing here waits for a dismissal.
   Reschedule();
 }
 
