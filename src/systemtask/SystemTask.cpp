@@ -40,7 +40,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Controllers::Ble& bleController,
                        Controllers::DateTime& dateTimeController,
                        Controllers::StopWatchController& stopWatchController,
-                       Controllers::AlarmController& alarmController,
+                       Controllers::MultiAlarmController& multiAlarmController,
                        Controllers::ScheduleController& scheduleController,
                        Controllers::PrayerController& prayerController,
                        Controllers::BeaconController& beaconController,
@@ -65,7 +65,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
     bleController {bleController},
     dateTimeController {dateTimeController},
     stopWatchController {stopWatchController},
-    alarmController {alarmController},
+    multiAlarmController {multiAlarmController},
     scheduleController {scheduleController},
     prayerController {prayerController},
     beaconController {beaconController},
@@ -140,7 +140,7 @@ void SystemTask::Work() {
   dateTimeController.Register(this);
   batteryController.Register(this);
   motionSensor.SoftReset();
-  alarmController.Init(this);
+  multiAlarmController.Init(this);
   scheduleController.Init(this);
   prayerController.Init(this);
   beaconController.Init();
@@ -233,20 +233,17 @@ void SystemTask::Work() {
           GoToSleep();
           break;
         case Messages::OnNewTime:
-          if (alarmController.IsEnabled()) {
-            alarmController.ScheduleAlarm();
-          }
-          // Reschedule() scans the schedule file, but a companion time-set
-          // arrives even while sleeping with the SPI flash powered down. Wake
-          // just the flash for the scan; GoToRunning() would light the screen
-          // on every time sync.
+          // Reschedule() scans a flash file, but a companion time-set arrives
+          // even while sleeping with the SPI flash powered down. Wake just the
+          // flash for the scans; GoToRunning() would light the screen on every
+          // time sync. Multi-alarm reads its cached alarms (no flash), prayer
+          // recomputes from RAM math.
           {
             const bool flashWasAsleep = WakeFlashForWork();
             scheduleController.Reschedule();
             RestoreFlashAfterWork(flashWasAsleep);
           }
-          // The prayer alert recomputes from RAM settings and pure math; no
-          // flash needed.
+          multiAlarmController.Reschedule();
           prayerController.Reschedule();
           break;
         case Messages::OnNewNotification:
@@ -257,10 +254,20 @@ void SystemTask::Work() {
             displayApp.PushMessage(Pinetime::Applications::Display::Messages::NewNotification);
           }
           break;
-        case Messages::SetOffAlarm:
+        case Messages::SetOffMultiAlarm: {
+          // A one-shot alarm disables itself after firing; do it here with the
+          // flash awake (GoToRunning powers it), then re-arm for the next.
+          const uint16_t idx = multiAlarmController.LastFiredIndex();
+          alertQueue.Push(Controllers::AlertQueue::Source::MultiAlarm,
+                          static_cast<uint32_t>(multiAlarmController.LastFiredDue()),
+                          idx);
           GoToRunning();
-          displayApp.PushMessage(Pinetime::Applications::Display::Messages::AlarmTriggered);
+          if (multiAlarmController.Get(idx).mode == Controllers::MultiAlarmController::Mode::Once) {
+            multiAlarmController.SetEnabled(idx, false); // persists + reschedules
+          }
+          displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
+        }
         case Messages::SetOffScheduleReminder:
           // No deferral dance: every firing lands in the pending-alerts queue
           // and the queue screen shows the newest. GoToRunning() powers the
@@ -415,17 +422,15 @@ void SystemTask::Work() {
           motionController.AdvanceDay();
           break;
         case Messages::OnNewHour:
-          using Pinetime::Controllers::AlarmController;
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
-              settingsController.GetChimeOption() == Controllers::Settings::ChimesOption::Hours && !alarmController.IsAlerting()) {
+              settingsController.GetChimeOption() == Controllers::Settings::ChimesOption::Hours && alertQueue.IsEmpty()) {
             GoToRunning();
             displayApp.PushMessage(Pinetime::Applications::Display::Messages::Chime);
           }
           break;
         case Messages::OnNewHalfHour:
-          using Pinetime::Controllers::AlarmController;
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
-              settingsController.GetChimeOption() == Controllers::Settings::ChimesOption::HalfHours && !alarmController.IsAlerting()) {
+              settingsController.GetChimeOption() == Controllers::Settings::ChimesOption::HalfHours && alertQueue.IsEmpty()) {
             GoToRunning();
             displayApp.PushMessage(Pinetime::Applications::Display::Messages::Chime);
           }

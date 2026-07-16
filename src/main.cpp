@@ -106,7 +106,7 @@ Pinetime::Drivers::Watchdog watchdog;
 Pinetime::Controllers::NotificationManager notificationManager;
 Pinetime::Controllers::MotionController motionController;
 Pinetime::Controllers::StopWatchController stopWatchController;
-Pinetime::Controllers::AlarmController alarmController {dateTimeController, fs};
+Pinetime::Controllers::MultiAlarmController multiAlarmController {dateTimeController, fs};
 Pinetime::Controllers::ScheduleController scheduleController {dateTimeController, fs};
 Pinetime::Controllers::PrayerController prayerController {dateTimeController, fs};
 Pinetime::Controllers::BeaconController beaconController {fs};
@@ -127,7 +127,7 @@ Pinetime::Applications::DisplayApp displayApp(lcd,
                                               motorController,
                                               motionController,
                                               stopWatchController,
-                                              alarmController,
+                                              multiAlarmController,
                                               scheduleController,
                                               prayerController,
                                               beaconController,
@@ -145,7 +145,7 @@ Pinetime::System::SystemTask systemTask(spi,
                                         bleController,
                                         dateTimeController,
                                         stopWatchController,
-                                        alarmController,
+                                        multiAlarmController,
                                         scheduleController,
                                         prayerController,
                                         beaconController,

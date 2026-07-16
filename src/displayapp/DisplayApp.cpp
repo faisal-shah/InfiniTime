@@ -4,7 +4,7 @@
 #include "displayapp/screens/HeartRate.h"
 #include "displayapp/screens/Motion.h"
 #include "displayapp/screens/Timer.h"
-#include "displayapp/screens/Alarm.h"
+#include "displayapp/screens/MultiAlarm.h"
 #include "components/battery/BatteryController.h"
 #include "components/ble/BleController.h"
 #include "components/datetime/DateTimeController.h"
@@ -95,7 +95,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                        Pinetime::Controllers::MotorController& motorController,
                        Pinetime::Controllers::MotionController& motionController,
                        Pinetime::Controllers::StopWatchController& stopWatchController,
-                       Pinetime::Controllers::AlarmController& alarmController,
+                       Pinetime::Controllers::MultiAlarmController& multiAlarmController,
                        Pinetime::Controllers::ScheduleController& scheduleController,
                        Pinetime::Controllers::PrayerController& prayerController,
                        Pinetime::Controllers::BeaconController& beaconController,
@@ -116,7 +116,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
     motorController {motorController},
     motionController {motionController},
     stopWatchController {stopWatchController},
-    alarmController {alarmController},
+    multiAlarmController {multiAlarmController},
     scheduleController {scheduleController},
     prayerController {prayerController},
     beaconController {beaconController},
@@ -136,7 +136,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  motorController,
                  motionController,
                  stopWatchController,
-                 alarmController,
+                 multiAlarmController,
                  scheduleController,
                  prayerController,
                  alertQueue,
@@ -410,14 +410,6 @@ void DisplayApp::Refresh() {
         }
         break;
       }
-      case Messages::AlarmTriggered:
-        if (currentApp == Apps::Alarm) {
-          auto* alarm = static_cast<Screens::Alarm*>(currentScreen.get());
-          alarm->SetAlerting();
-        } else {
-          LoadNewScreen(Apps::Alarm, DisplayApp::FullRefreshDirections::None);
-        }
-        break;
       case Messages::PendingAlertsTriggered:
         if (currentApp == Apps::PendingAlerts) {
           auto* pending = static_cast<Screens::PendingAlerts*>(currentScreen.get());
@@ -572,7 +564,7 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
                                                                  settingsController,
                                                                  batteryController,
                                                                  bleController,
-                                                                 alarmController,
+                                                                 multiAlarmController,
                                                                  dateTimeController,
                                                                  filesystem,
                                                                  std::move(apps));
@@ -631,7 +623,7 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
                                                                motorController,
                                                                settingsController,
                                                                bleController,
-                                                               alarmController);
+                                                               multiAlarmController);
       break;
     case Apps::Settings:
       currentScreen = std::make_unique<Screens::Settings>(this, settingsController);

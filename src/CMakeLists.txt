@@ -395,7 +395,7 @@ list(APPEND SOURCE_FILES
         displayapp/screens/Dice.cpp
         displayapp/screens/PassKey.cpp
         displayapp/screens/Error.cpp
-        displayapp/screens/Alarm.cpp
+        displayapp/screens/MultiAlarm.cpp
         displayapp/screens/PendingAlerts.cpp
         displayapp/screens/PrayerTimes.cpp
         displayapp/screens/settings/SettingPrayer.cpp
@@ -483,7 +483,7 @@ list(APPEND SOURCE_FILES
         components/settings/Settings.cpp
         components/timer/Timer.cpp
         components/stopwatch/StopWatchController.cpp
-        components/alarm/AlarmController.cpp
+        components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
@@ -560,7 +560,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/settings/Settings.cpp
         components/timer/Timer.cpp
         components/stopwatch/StopWatchController.cpp
-        components/alarm/AlarmController.cpp
+        components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
@@ -641,7 +641,7 @@ set(INCLUDE_FILES
         displayapp/screens/Motion.h
         displayapp/screens/Timer.h
         displayapp/screens/Dice.h
-        displayapp/screens/Alarm.h
+        displayapp/screens/MultiAlarm.h
         displayapp/Colors.h
         displayapp/widgets/Counter.h
         displayapp/widgets/PageIndicator.h
@@ -684,7 +684,7 @@ set(INCLUDE_FILES
         components/settings/Settings.h
         components/timer/Timer.h
         components/stopwatch/StopWatchController.h
-        components/alarm/AlarmController.h
+        components/multialarm/MultiAlarmController.h
         drivers/Cst816s.h
         FreeRTOS/portmacro.h
         FreeRTOS/portmacro_cmsis.h

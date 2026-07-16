@@ -14,7 +14,7 @@
 #include "displayapp/screens/Screen.h"
 #include "components/timer/Timer.h"
 #include "components/stopwatch/StopWatchController.h"
-#include "components/alarm/AlarmController.h"
+#include "components/multialarm/MultiAlarmController.h"
 #include "components/schedule/ScheduleController.h"
 #include "components/prayer/PrayerController.h"
 #include "components/beacon/BeaconController.h"
@@ -69,7 +69,7 @@ namespace Pinetime {
                  Pinetime::Controllers::MotorController& motorController,
                  Pinetime::Controllers::MotionController& motionController,
                  Pinetime::Controllers::StopWatchController& stopWatchController,
-                 Pinetime::Controllers::AlarmController& alarmController,
+                 Pinetime::Controllers::MultiAlarmController& multiAlarmController,
                  Pinetime::Controllers::ScheduleController& scheduleController,
                  Pinetime::Controllers::PrayerController& prayerController,
                  Pinetime::Controllers::BeaconController& beaconController,
@@ -104,7 +104,7 @@ namespace Pinetime {
       Pinetime::Controllers::MotorController& motorController;
       Pinetime::Controllers::MotionController& motionController;
       Pinetime::Controllers::StopWatchController& stopWatchController;
-      Pinetime::Controllers::AlarmController& alarmController;
+      Pinetime::Controllers::MultiAlarmController& multiAlarmController;
       Pinetime::Controllers::ScheduleController& scheduleController;
       Pinetime::Controllers::PrayerController& prayerController;
       Pinetime::Controllers::BeaconController& beaconController;
