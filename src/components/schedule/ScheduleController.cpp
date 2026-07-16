@@ -225,17 +225,12 @@ void ScheduleController::ArmTimer(int64_t seconds) {
   xTimerStart(reminderTimer, 0);
 }
 
-void ScheduleController::DeferReminder(uint32_t seconds) {
-  isAlerting = false;
-  xTimerChangePeriod(reminderTimer, static_cast<TickType_t>(seconds) * configTICK_RATE_HZ, 0);
-  xTimerStart(reminderTimer, 0);
-}
 
 void ScheduleController::TimerFired() {
   // Runs on the FreeRTOS timer daemon task, possibly with the SPI flash in
   // deep power-down: everything here must stay in RAM. The flash scan that
-  // builds the combined title happens later, in PrepareFiring() on the
-  // SystemTask, once GoToRunning() has powered the flash back up.
+  // builds the combined title happens later, via DescribeFiring() on the
+  // display task, once GoToRunning() has powered the flash back up.
   if (!hasNext) {
     return;
   }
@@ -247,28 +242,27 @@ void ScheduleController::TimerFired() {
   }
 
   lastFiredDue = nextDueTime;
-  std::memcpy(firingTitle.data(), nextTitle.data(), TitleSize);
-  firingTitle[TitleSize - 1] = '\0';
-  firingHour = nextHour;
-  firingMinute = nextMinute;
-  isAlerting = true;
   systemTask->PushMessage(System::Messages::SetOffScheduleReminder);
 }
 
-void ScheduleController::PrepareFiring() {
-  // Combine all events due at the fired second into one alert. TimerFired()
-  // already placed the cached title in firingTitle as a fallback in case the
-  // schedule was replaced between the timer and this scan.
-  const time_t due = lastFiredDue;
+bool ScheduleController::DescribeFiring(time_t due, char* buf, size_t bufSize) {
+  // Combine all events due at exactly `due` into buf (newline-joined). Pull
+  // model: the pending-alerts screen calls this at render time, so the queue
+  // never stores text. Returns false when nothing matches (schedule was
+  // re-synced since the firing) - caller shows a generic fallback.
+  if (bufSize == 0) {
+    return false;
+  }
   size_t used = 0;
+  buf[0] = '\0';
 
   FS::Lock lock(fs);
   lfs_file_t file;
   if (!OpenForScan(file)) {
-    return;
+    return false;
   }
   Event event;
-  for (uint8_t i = 0; i < count && used + 1 < firingTitle.size(); i++) {
+  for (uint8_t i = 0; i < count && used + 1 < bufSize; i++) {
     if (!ReadRecord(file, event)) {
       break;
     }
@@ -277,23 +271,17 @@ void ScheduleController::PrepareFiring() {
       continue;
     }
     if (used != 0) {
-      firingTitle[used++] = '\n';
+      buf[used++] = '\n';
     }
-    const size_t maxCopy = std::min(std::strlen(event.title), firingTitle.size() - used - 1);
-    std::memcpy(&firingTitle[used], event.title, maxCopy);
+    const size_t maxCopy = std::min(std::strlen(event.title), bufSize - used - 1);
+    std::memcpy(&buf[used], event.title, maxCopy);
     used += maxCopy;
   }
   fs.FileClose(&file);
-
-  if (used > 0) {
-    firingTitle[used] = '\0';
-  }
+  buf[used] = '\0';
+  return used > 0;
 }
 
-void ScheduleController::StopAlerting() {
-  isAlerting = false;
-  Reschedule();
-}
 
 bool ScheduleController::ReadEvent(uint8_t index, Event& out) const {
   if (index >= count) {

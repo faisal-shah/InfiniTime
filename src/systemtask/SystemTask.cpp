@@ -44,6 +44,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Controllers::ScheduleController& scheduleController,
                        Controllers::PrayerController& prayerController,
                        Controllers::BeaconController& beaconController,
+                       Controllers::AlertQueue& alertQueue,
                        Drivers::Watchdog& watchdog,
                        Pinetime::Controllers::NotificationManager& notificationManager,
                        Pinetime::Drivers::Hrs3300& heartRateSensor,
@@ -68,6 +69,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
     scheduleController {scheduleController},
     prayerController {prayerController},
     beaconController {beaconController},
+    alertQueue {alertQueue},
     watchdog {watchdog},
     notificationManager {notificationManager},
     heartRateSensor {heartRateSensor},
@@ -260,30 +262,26 @@ void SystemTask::Work() {
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::AlarmTriggered);
           break;
         case Messages::SetOffScheduleReminder:
-          // An alerting alarm or prayer alert owns the screen and the motor;
-          // retry shortly after.
-          if (alarmController.IsAlerting() || prayerController.IsAlerting()) {
-            scheduleController.DeferReminder(30);
-            break;
-          }
+          // No deferral dance: every firing lands in the pending-alerts queue
+          // and the queue screen shows the newest. GoToRunning() powers the
+          // flash synchronously, after which the schedule can re-arm for its
+          // next occurrence (its Reschedule scans the schedule file).
+          alertQueue.Push(Controllers::AlertQueue::Source::Schedule,
+                          static_cast<uint32_t>(scheduleController.LastFiredDue()),
+                          0);
           GoToRunning();
-          // The timer callback stays RAM-only (the flash may have been asleep);
-          // now that GoToRunning() powered the flash, scan the schedule file
-          // for same-second events and build the combined alert title.
-          scheduleController.PrepareFiring();
-          displayApp.PushMessage(Pinetime::Applications::Display::Messages::ScheduleReminderTriggered);
+          scheduleController.Reschedule();
+          displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
         case Messages::ScheduleSyncReceived:
           scheduleController.CommitStaged();
           break;
         case Messages::SetOffPrayerAlert:
-          // The alarm and the schedule reminder both outrank the prayer alert.
-          if (alarmController.IsAlerting() || scheduleController.IsAlerting()) {
-            prayerController.DeferAlert(30);
-            break;
-          }
+          alertQueue.Push(Controllers::AlertQueue::Source::Prayer,
+                          static_cast<uint32_t>(prayerController.LastFiredDue()),
+                          prayerController.LastFiredPrayer());
           GoToRunning();
-          displayApp.PushMessage(Pinetime::Applications::Display::Messages::PrayerAlertTriggered);
+          displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
         case Messages::PrayerSettingsReceived: {
           // Committing writes the settings file; a BLE write can arrive while
