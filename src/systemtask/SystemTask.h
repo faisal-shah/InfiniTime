@@ -18,6 +18,7 @@
 #include "components/stopwatch/StopWatchController.h"
 #include "components/multialarm/MultiAlarmController.h"
 #include "components/schedule/ScheduleController.h"
+#include "components/task/TaskController.h"
 #include "components/prayer/PrayerController.h"
 #include "components/beacon/BeaconController.h"
 #include "components/alertqueue/AlertQueue.h"
@@ -68,6 +69,7 @@ namespace Pinetime {
                  Controllers::StopWatchController& stopWatchController,
                  Controllers::MultiAlarmController& multiAlarmController,
                  Controllers::ScheduleController& scheduleController,
+                 Controllers::TaskController& taskController,
                  Controllers::PrayerController& prayerController,
                  Controllers::BeaconController& beaconController,
                  Controllers::AlertQueue& alertQueue,
@@ -121,6 +123,7 @@ namespace Pinetime {
       Pinetime::Controllers::StopWatchController& stopWatchController;
       Pinetime::Controllers::MultiAlarmController& multiAlarmController;
       Pinetime::Controllers::ScheduleController& scheduleController;
+      Pinetime::Controllers::TaskController& taskController;
       Pinetime::Controllers::PrayerController& prayerController;
       Pinetime::Controllers::BeaconController& beaconController;
       Pinetime::Controllers::AlertQueue& alertQueue;

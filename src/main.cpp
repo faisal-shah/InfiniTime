@@ -108,6 +108,7 @@ Pinetime::Controllers::MotionController motionController;
 Pinetime::Controllers::StopWatchController stopWatchController;
 Pinetime::Controllers::MultiAlarmController multiAlarmController {dateTimeController, fs};
 Pinetime::Controllers::ScheduleController scheduleController {dateTimeController, fs};
+Pinetime::Controllers::TaskController taskController {dateTimeController, fs};
 Pinetime::Controllers::PrayerController prayerController {dateTimeController, fs};
 Pinetime::Controllers::BeaconController beaconController {fs};
 Pinetime::Controllers::AlertQueue alertQueue;
@@ -147,6 +148,7 @@ Pinetime::System::SystemTask systemTask(spi,
                                         stopWatchController,
                                         multiAlarmController,
                                         scheduleController,
+                                        taskController,
                                         prayerController,
                                         beaconController,
                                         alertQueue,

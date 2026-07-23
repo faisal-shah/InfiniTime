@@ -27,6 +27,7 @@ namespace Pinetime {
       SetOffMultiAlarm,
       SetOffScheduleReminder,
       ScheduleSyncReceived,
+      TaskSyncReceived,
       SetOffPrayerAlert,
       PrayerSettingsReceived,
       BeaconKeyReceived,

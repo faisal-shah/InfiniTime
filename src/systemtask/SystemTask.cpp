@@ -42,6 +42,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Controllers::StopWatchController& stopWatchController,
                        Controllers::MultiAlarmController& multiAlarmController,
                        Controllers::ScheduleController& scheduleController,
+                       Controllers::TaskController& taskController,
                        Controllers::PrayerController& prayerController,
                        Controllers::BeaconController& beaconController,
                        Controllers::AlertQueue& alertQueue,
@@ -67,6 +68,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
     stopWatchController {stopWatchController},
     multiAlarmController {multiAlarmController},
     scheduleController {scheduleController},
+    taskController {taskController},
     prayerController {prayerController},
     beaconController {beaconController},
     alertQueue {alertQueue},
@@ -92,6 +94,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                      motionController,
                      fs,
                      scheduleController,
+                     taskController,
                      prayerController,
                      multiAlarmController,
                      beaconController) {
@@ -143,6 +146,7 @@ void SystemTask::Work() {
   motionSensor.SoftReset();
   multiAlarmController.Init(this);
   scheduleController.Init(this);
+  taskController.Init(this);
   prayerController.Init(this);
   beaconController.Init();
 
@@ -283,6 +287,9 @@ void SystemTask::Work() {
           break;
         case Messages::ScheduleSyncReceived:
           scheduleController.CommitStaged();
+          break;
+        case Messages::TaskSyncReceived:
+          taskController.CommitStaged();
           break;
         case Messages::SetOffPrayerAlert:
           alertQueue.Push(Controllers::AlertQueue::Source::Prayer,
@@ -429,6 +436,7 @@ void SystemTask::Work() {
         case Messages::OnNewDay:
           motionSensor.ResetStepCounter();
           motionController.AdvanceDay();
+          taskController.RollOverDay();
           break;
         case Messages::OnNewHour:
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
