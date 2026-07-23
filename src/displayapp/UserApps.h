@@ -4,6 +4,7 @@
 
 #include "displayapp/screens/MultiAlarm.h"
 #include "displayapp/screens/ScheduleList.h"
+#include "displayapp/screens/Tasks.h"
 #include "displayapp/screens/PrayerTimes.h"
 #include "displayapp/screens/Dice.h"
 #include "displayapp/screens/Timer.h"
