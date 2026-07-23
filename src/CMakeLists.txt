@@ -405,6 +405,7 @@ list(APPEND SOURCE_FILES
         displayapp/screens/settings/SettingPrayerAlerts.cpp
         displayapp/screens/settings/SettingPrayerLocation.cpp
         displayapp/screens/ScheduleList.cpp
+        displayapp/screens/Tasks.cpp
         displayapp/screens/Styles.cpp
         displayapp/screens/WeatherSymbols.cpp
         displayapp/Colors.cpp
