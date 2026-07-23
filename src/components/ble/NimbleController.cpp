@@ -34,6 +34,7 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
                                    MotionController& motionController,
                                    FS& fs,
                                    ScheduleController& scheduleController,
+                                   TaskController& taskController,
                                    PrayerController& prayerController,
                                    MultiAlarmController& multiAlarmController,
                                    BeaconController& beaconController)
@@ -51,6 +52,7 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     musicService {*this},
     weatherService {dateTimeController},
     scheduleService {systemTask, scheduleController},
+    taskService {systemTask, taskController},
     prayerService {systemTask, prayerController},
     multiAlarmService {systemTask, multiAlarmController},
     beaconController {beaconController},
@@ -113,6 +115,7 @@ void NimbleController::Init() {
   musicService.Init();
   weatherService.Init();
   scheduleService.Init();
+  taskService.Init();
   prayerService.Init();
   multiAlarmService.Init();
   beaconService.Init();
@@ -259,6 +262,7 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       currentTimeClient.Reset();
       alertNotificationClient.Reset();
       scheduleService.OnDisconnect();
+      taskService.OnDisconnect();
       connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       if (bleController.IsConnected()) {
         bleController.Disconnect();

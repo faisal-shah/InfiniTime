@@ -469,6 +469,7 @@ list(APPEND SOURCE_FILES
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
+        components/ble/TaskService.cpp
         components/ble/PrayerService.cpp
         components/ble/MultiAlarmService.cpp
         components/ble/BeaconService.cpp
@@ -486,6 +487,7 @@ list(APPEND SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
+        components/task/TaskController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
         components/alertqueue/AlertQueue.cpp
@@ -548,6 +550,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
+        components/ble/TaskService.cpp
         components/ble/PrayerService.cpp
         components/ble/MultiAlarmService.cpp
         components/ble/BeaconService.cpp
@@ -564,6 +567,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
+        components/task/TaskController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
         components/alertqueue/AlertQueue.cpp
