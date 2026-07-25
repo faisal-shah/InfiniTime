@@ -32,7 +32,8 @@ TaskService::TaskService(Pinetime::System::SystemTask& systemTask, TaskControlle
                               {0}},
     serviceDefinition {{.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &taskUuid.u, .characteristics = characteristicDefinition}, {0}},
     systemTask {systemTask},
-    taskController {taskController} {
+    taskController {taskController},
+    wakeLock {systemTask} {
 }
 
 void TaskService::Init() {
@@ -75,13 +76,13 @@ int TaskService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
       if (count > TaskController::MaxTasks) {
         return BLE_ATT_ERR_UNLIKELY;
       }
-      if (!AcquireSyncWakeLock()) {
+      if (!wakeLock.Acquire()) {
         return BLE_ATT_ERR_UNLIKELY;
       }
       uint32_t version;
       std::memcpy(&version, &buffer[3], sizeof(version));
       if (!taskController.BeginStaging(count, version)) {
-        ReleaseSyncWakeLock();
+        wakeLock.Release();
         return BLE_ATT_ERR_UNLIKELY;
       }
       return 0;
@@ -108,17 +109,17 @@ int TaskService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
       }
       if (buffer[2] != taskController.GetStagedCount() || !taskController.StagingComplete()) {
         taskController.DiscardStaging();
-        ReleaseSyncWakeLock();
+        wakeLock.Release();
         return BLE_ATT_ERR_UNLIKELY;
       }
       systemTask.PushMessage(System::Messages::TaskSyncReceived);
-      ReleaseSyncWakeLock();
+      wakeLock.Release();
       return 0;
     }
 
     case MessageType::AbortSync:
       taskController.DiscardStaging();
-      ReleaseSyncWakeLock();
+      wakeLock.Release();
       return 0;
 
     case MessageType::SetStreak: {
@@ -128,48 +129,18 @@ int TaskService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
       uint16_t value;
       std::memcpy(&value, &buffer[2], sizeof(value));
       // SetStreak writes the state file; keep the flash powered for the write.
-      const bool ownWake = !syncWakeLockHeld;
-      if (ownWake && !AcquireSyncWakeLock()) {
+      const bool ownWake = !wakeLock.Held();
+      if (ownWake && !wakeLock.Acquire()) {
         return BLE_ATT_ERR_UNLIKELY;
       }
       taskController.SetStreak(value);
       if (ownWake) {
-        ReleaseSyncWakeLock();
+        wakeLock.Release();
       }
       return 0;
     }
   }
   return BLE_ATT_ERR_UNLIKELY;
-}
-
-bool TaskService::WaitUntilAwake() {
-  for (uint8_t attempt = 0; systemTask.IsSleeping(); attempt++) {
-    if (attempt >= 30) {
-      return false;
-    }
-    vTaskDelay(100);
-  }
-  return true;
-}
-
-bool TaskService::AcquireSyncWakeLock() {
-  if (syncWakeLockHeld) {
-    return true;
-  }
-  systemTask.PushMessage(System::Messages::StartFileTransfer);
-  syncWakeLockHeld = true;
-  if (!WaitUntilAwake()) {
-    ReleaseSyncWakeLock();
-    return false;
-  }
-  return true;
-}
-
-void TaskService::ReleaseSyncWakeLock() {
-  if (syncWakeLockHeld) {
-    systemTask.PushMessage(System::Messages::StopFileTransfer);
-    syncWakeLockHeld = false;
-  }
 }
 
 int TaskService::OnDigestRead(struct ble_gatt_access_ctxt* ctxt) {
@@ -202,10 +173,10 @@ int TaskService::OnTaskReadAccess(struct ble_gatt_access_ctxt* ctxt) {
     return BLE_ATT_ERR_UNLIKELY;
   }
 
-  const bool ownWake = !syncWakeLockHeld;
+  const bool ownWake = !wakeLock.Held();
   if (ownWake) {
     systemTask.PushMessage(System::Messages::StartFileTransfer);
-    if (!WaitUntilAwake()) {
+    if (!wakeLock.WaitUntilAwake()) {
       systemTask.PushMessage(System::Messages::StopFileTransfer);
       return BLE_ATT_ERR_UNLIKELY;
     }
@@ -224,5 +195,5 @@ int TaskService::OnTaskReadAccess(struct ble_gatt_access_ctxt* ctxt) {
 
 void TaskService::OnDisconnect() {
   taskController.DiscardStaging();
-  ReleaseSyncWakeLock();
+  wakeLock.Release();
 }

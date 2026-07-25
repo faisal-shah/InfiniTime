@@ -470,6 +470,7 @@ list(APPEND SOURCE_FILES
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
+        components/ble/SyncWakeLock.cpp
         components/ble/TaskService.cpp
         components/ble/PrayerService.cpp
         components/ble/MultiAlarmService.cpp
@@ -551,6 +552,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/MusicService.cpp
         components/ble/SimpleWeatherService.cpp
         components/ble/ScheduleService.cpp
+        components/ble/SyncWakeLock.cpp
         components/ble/TaskService.cpp
         components/ble/PrayerService.cpp
         components/ble/MultiAlarmService.cpp
