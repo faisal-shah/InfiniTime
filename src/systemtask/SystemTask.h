@@ -160,6 +160,28 @@ namespace Pinetime {
       // sleeping; returns whether it was asleep so Restore can re-sleep it.
       bool WakeFlashForWork();
       void RestoreFlashAfterWork(bool wasAsleep);
+
+      // Scoped form of the pair above: powers the flash for the enclosing block
+      // and puts it back exactly as it was on exit, so no path can leak it on.
+      //   { FlashWakeScope flash(*this); controller.CommitStaged(); }
+      class FlashWakeScope {
+      public:
+        explicit FlashWakeScope(SystemTask& systemTask) : systemTask {systemTask}, wasAsleep {systemTask.WakeFlashForWork()} {
+        }
+
+        ~FlashWakeScope() {
+          systemTask.RestoreFlashAfterWork(wasAsleep);
+        }
+
+        FlashWakeScope(const FlashWakeScope&) = delete;
+        FlashWakeScope& operator=(const FlashWakeScope&) = delete;
+        FlashWakeScope(FlashWakeScope&&) = delete;
+        FlashWakeScope& operator=(FlashWakeScope&&) = delete;
+
+      private:
+        SystemTask& systemTask;
+        const bool wasAsleep;
+      };
       void UpdateMotion();
       static constexpr TickType_t batteryMeasurementPeriod = pdMS_TO_TICKS(10 * 60 * 1000);
 

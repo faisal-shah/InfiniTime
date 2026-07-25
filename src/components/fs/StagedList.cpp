@@ -1,11 +1,24 @@
 #include "components/fs/StagedList.h"
 #include "components/fs/FS.h"
 #include <cstring>
+#include <libraries/log/nrf_log.h>
 
 using namespace Pinetime::Controllers;
 
-StagedList::StagedList(FS& fs, const char* datPath, const char* stagePath, uint16_t recordSize, uint8_t maxCount, uint8_t formatVersion)
-  : fs {fs}, datPath {datPath}, stagePath {stagePath}, recordSize {recordSize}, maxCount {maxCount}, formatVersion {formatVersion} {
+StagedList::StagedList(FS& fs,
+                       const char* name,
+                       const char* datPath,
+                       const char* stagePath,
+                       uint16_t recordSize,
+                       uint8_t maxCount,
+                       uint8_t formatVersion)
+  : fs {fs},
+    name {name},
+    datPath {datPath},
+    stagePath {stagePath},
+    recordSize {recordSize},
+    maxCount {maxCount},
+    formatVersion {formatVersion} {
 }
 
 void StagedList::ClearStaging() {
@@ -18,6 +31,7 @@ void StagedList::Load() {
   FS::Lock lock(fs);
   lfs_file_t file;
   if (fs.FileOpen(&file, datPath, LFS_O_RDONLY) != LFS_ERR_OK) {
+    NRF_LOG_WARNING("[%s] No data file", name);
     return; // no file yet -> stays empty
   }
   Header header {};
@@ -25,15 +39,18 @@ void StagedList::Load() {
                         header.version == formatVersion && header.count <= maxCount;
   fs.FileClose(&file);
   if (!headerOk) {
+    NRF_LOG_WARNING("[%s] Invalid data file, discarding", name);
     return;
   }
   // Validate length so scans can trust the header count.
   lfs_info info {};
   if (fs.Stat(datPath, &info) != LFS_ERR_OK || info.size < sizeof(Header) + static_cast<uint32_t>(header.count) * recordSize) {
+    NRF_LOG_WARNING("[%s] Truncated data file, discarding", name);
     return;
   }
   count = header.count;
   version = header.listVersion;
+  NRF_LOG_INFO("[%s] Loaded %u records, version %u", name, count, version);
 }
 
 bool StagedList::Begin(uint8_t newCount, uint32_t newVersion) {
@@ -126,6 +143,7 @@ bool StagedList::Commit() {
     return false;
   }
   if (fs.Rename(stagePath, datPath) != LFS_ERR_OK) {
+    NRF_LOG_WARNING("[%s] Commit rename failed, keeping previous data", name);
     Discard();
     return false;
   }
