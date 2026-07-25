@@ -16,7 +16,7 @@ namespace {
 }
 
 ScheduleController::ScheduleController(Controllers::DateTime& dateTimeController, Controllers::FS& fs)
-  : dateTimeController {dateTimeController}, fs {fs}, staged {fs, datPath, stagePath, sizeof(Event), MaxEvents, scheduleFormatVersion} {
+  : dateTimeController {dateTimeController}, fs {fs}, staged {fs, "ScheduleController", datPath, stagePath, sizeof(Event), MaxEvents, scheduleFormatVersion} {
 }
 
 void ScheduleController::Init(System::SystemTask* systemTask) {

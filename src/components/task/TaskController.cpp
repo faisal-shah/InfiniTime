@@ -7,7 +7,7 @@
 using namespace Pinetime::Controllers;
 
 TaskController::TaskController(Controllers::DateTime& dateTimeController, Controllers::FS& fs)
-  : dateTimeController {dateTimeController}, fs {fs}, staged {fs, datPath, stagePath, sizeof(Task), MaxTasks, formatVersion} {
+  : dateTimeController {dateTimeController}, fs {fs}, staged {fs, "TaskController", datPath, stagePath, sizeof(Task), MaxTasks, formatVersion} {
 }
 
 void TaskController::Init(System::SystemTask* systemTask) {

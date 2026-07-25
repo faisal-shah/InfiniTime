@@ -244,9 +244,8 @@ void SystemTask::Work() {
           // time sync. Multi-alarm reads its cached alarms (no flash), prayer
           // recomputes from RAM math.
           {
-            const bool flashWasAsleep = WakeFlashForWork();
+            FlashWakeScope flash(*this);
             scheduleController.Reschedule();
-            RestoreFlashAfterWork(flashWasAsleep);
           }
           multiAlarmController.Reschedule();
           prayerController.Reschedule();
@@ -302,25 +301,22 @@ void SystemTask::Work() {
           // Committing writes the settings file; a BLE write can arrive while
           // sleeping with the flash powered down. Wake just the flash; a
           // silent settings push should not light the screen.
-          const bool flashWasAsleep = WakeFlashForWork();
+          FlashWakeScope flash(*this);
           prayerController.CommitStaged();
-          RestoreFlashAfterWork(flashWasAsleep);
           break;
         }
         case Messages::BeaconKeyReceived: {
           // Persist the provisioned Find My key; same flash-wake bracket as a
           // prayer settings write.
-          const bool flashWasAsleep = WakeFlashForWork();
+          FlashWakeScope flash(*this);
           beaconController.CommitStagedKey();
-          RestoreFlashAfterWork(flashWasAsleep);
           break;
         }
         case Messages::MultiAlarmSettingsReceived: {
           // Persist a companion alarm write staged on the BLE task; same
           // flash-wake bracket. Reschedule (RAM/timer) happens inside commit.
-          const bool flashWasAsleep = WakeFlashForWork();
+          FlashWakeScope flash(*this);
           multiAlarmController.CommitStagedFromCompanion();
-          RestoreFlashAfterWork(flashWasAsleep);
           break;
         }
         case Messages::BeaconEnable:

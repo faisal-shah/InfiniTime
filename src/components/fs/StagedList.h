@@ -18,7 +18,14 @@ namespace Pinetime {
     // the SPI flash awake for staging (the sync service holds a wake lock).
     class StagedList {
     public:
-      StagedList(FS& fs, const char* datPath, const char* stagePath, uint16_t recordSize, uint8_t maxCount, uint8_t formatVersion);
+      // `name` tags the diagnostic log lines (e.g. "ScheduleController").
+      StagedList(FS& fs,
+                 const char* name,
+                 const char* datPath,
+                 const char* stagePath,
+                 uint16_t recordSize,
+                 uint8_t maxCount,
+                 uint8_t formatVersion);
 
       // Read the live file's header into the digest fields (leaves them 0/0 if
       // absent, invalid, or truncated). Call once at Init.
@@ -63,6 +70,7 @@ namespace Pinetime {
       void ClearStaging();
 
       FS& fs;
+      const char* name;
       const char* datPath;
       const char* stagePath;
       uint16_t recordSize;
