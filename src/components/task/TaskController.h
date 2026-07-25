@@ -33,7 +33,7 @@ namespace Pinetime {
       static constexpr size_t TitleSize = 24;
 
       // On-wire / on-flash record. Field order + packing are part of the BLE
-      // protocol and the persistence format (companion: src/ble/tasksProtocol.ts).
+      // protocol and the persistence format (see doc/TaskService.md).
       struct __attribute__((packed)) Task {
         uint16_t id;
         uint8_t order;
