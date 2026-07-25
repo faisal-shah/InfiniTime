@@ -3,6 +3,7 @@
 #include <FreeRTOS.h>
 #include <cstdint>
 #include "components/datetime/DateTimeController.h"
+#include "components/fs/StagedList.h"
 
 #include <littlefs/lfs.h>
 
@@ -15,8 +16,8 @@ namespace Pinetime {
     class FS;
 
     // The daily task checklist. Task DEFINITIONS (id/order/title) live in
-    // littlefs (/.system/tasks.dat) and sync from the phone exactly like the
-    // Schedule — full-replace, atomic-rename staging (/.system/tasks.stg).
+    // littlefs (/.system/tasks.dat) and sync from the phone by full-replace,
+    // atomic-rename staging — the shared StagedList, exactly like the Schedule.
     //
     // COMPLETION is watch-only: which tasks are ticked today, plus a
     // consecutive-all-done streak, live in a tiny separate file
@@ -40,6 +41,7 @@ namespace Pinetime {
         uint32_t lastModified;
       };
       static_assert(sizeof(Task) == 31, "Task layout is part of the BLE protocol");
+      static_assert(MaxTasks <= 64, "StagedList uses a uint64_t received-bitmask");
 
       TaskController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);
 
@@ -48,19 +50,23 @@ namespace Pinetime {
       // --- definition staging (BLE task; TaskService holds the wake lock) ---
       bool BeginStaging(uint8_t count, uint32_t version);
       bool StageTask(uint8_t index, const Task& task);
-      bool StagingComplete() const;
-      void DiscardStaging();
+      bool StagingComplete() const {
+        return staged.Complete();
+      }
+      void DiscardStaging() {
+        staged.Discard();
+      }
       uint8_t GetStagedCount() const {
-        return stagingOpen ? stagedCount : 0xFF;
+        return staged.StagedCount();
       }
       // SystemTask only, flash awake (renames the staging file to live).
       void CommitStaged();
 
       uint8_t GetCount() const {
-        return count;
+        return staged.Count();
       }
       uint32_t GetVersion() const {
-        return taskVersion;
+        return staged.Version();
       }
       bool ReadTask(uint8_t index, Task& out) const;
 
@@ -85,12 +91,6 @@ namespace Pinetime {
       static constexpr const char* stagePath = "/.system/tasks.stg";
       static constexpr const char* statePath = "/.system/tasks.state";
 
-      struct __attribute__((packed)) FileHeader {
-        uint8_t version;
-        uint8_t count;
-        uint32_t taskVersion;
-      };
-
       struct __attribute__((packed)) StateFile {
         uint8_t version;
         uint32_t dateKey; // YYYYMMDD local; 0 = none
@@ -100,27 +100,15 @@ namespace Pinetime {
       };
 
       uint32_t TodayKey() const; // YYYYMMDD from the local clock
-      void LoadFromFile();
       void LoadState();
       void SaveState(); // best-effort: a no-op if flash is asleep
-      void ClearStagingState();
       bool IdDone(uint16_t id) const;
       void SetIdDone(uint16_t id, bool done);
 
       Controllers::DateTime& dateTimeController;
       Controllers::FS& fs;
+      StagedList staged;
       System::SystemTask* systemTask = nullptr;
-
-      // Definition digest fields; the file is the source of truth.
-      uint8_t count = 0;
-      uint32_t taskVersion = 0;
-
-      // Staging bookkeeping.
-      uint64_t stagedReceived = 0; // bitmask, one bit per index
-      static_assert(MaxTasks <= 64, "stagedReceived bitmask is uint64_t");
-      uint8_t stagedCount = 0;
-      uint32_t stagedVersion = 0;
-      bool stagingOpen = false;
 
       // Completion state (mirrors statePath).
       uint32_t stateDateKey = 0;

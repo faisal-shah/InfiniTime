@@ -489,6 +489,7 @@ list(APPEND SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
+        components/fs/StagedList.cpp
         components/task/TaskController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
@@ -570,6 +571,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
+        components/fs/StagedList.cpp
         components/task/TaskController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp

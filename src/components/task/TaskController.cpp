@@ -7,13 +7,13 @@
 using namespace Pinetime::Controllers;
 
 TaskController::TaskController(Controllers::DateTime& dateTimeController, Controllers::FS& fs)
-  : dateTimeController {dateTimeController}, fs {fs} {
+  : dateTimeController {dateTimeController}, fs {fs}, staged {fs, datPath, stagePath, sizeof(Task), MaxTasks, formatVersion} {
 }
 
 void TaskController::Init(System::SystemTask* systemTask) {
   this->systemTask = systemTask;
   fs.FileDelete(stagePath); // leftover staging from a power loss mid-sync
-  LoadFromFile();
+  staged.Load();
   LoadState();
   // Watch was off / idle across a midnight -> settle the day that ended.
   if (stateDateKey != TodayKey()) {
@@ -26,111 +26,23 @@ uint32_t TaskController::TodayKey() const {
          static_cast<uint32_t>(dateTimeController.Month()) * 100 + dateTimeController.Day();
 }
 
-// ---- definition staging (mirrors ScheduleController) ----
+// ---- definition staging (delegated to the shared StagedList) ----
 
-bool TaskController::BeginStaging(uint8_t newCount, uint32_t version) {
-  if (newCount > MaxTasks) {
-    ClearStagingState();
-    return false;
-  }
-
-  FS::Lock lock(fs);
-  lfs_dir systemDir;
-  if (fs.DirOpen("/.system", &systemDir) != LFS_ERR_OK) {
-    fs.DirCreate("/.system");
-  } else {
-    fs.DirClose(&systemDir);
-  }
-
-  lfs_file_t file;
-  if (fs.FileOpen(&file, stagePath, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
-    ClearStagingState();
-    return false;
-  }
-  const FileHeader header {formatVersion, newCount, version};
-  const bool ok = fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
-  fs.FileClose(&file);
-  if (!ok) {
-    fs.FileDelete(stagePath);
-    ClearStagingState();
-    return false;
-  }
-
-  stagingOpen = true;
-  stagedCount = newCount;
-  stagedVersion = version;
-  stagedReceived = 0;
-  return true;
+bool TaskController::BeginStaging(uint8_t count, uint32_t version) {
+  return staged.Begin(count, version);
 }
 
 bool TaskController::StageTask(uint8_t index, const Task& task) {
-  if (!stagingOpen || index >= stagedCount) {
-    return false;
-  }
-  const uint64_t bit = 1ull << index;
-  if ((stagedReceived & bit) != 0) {
-    return false;
-  }
-
   Task record = task;
   record.title[TitleSize - 1] = '\0';
-
-  FS::Lock lock(fs);
-  lfs_file_t file;
-  if (fs.FileOpen(&file, stagePath, LFS_O_WRONLY) != LFS_ERR_OK) {
-    return false;
-  }
-  const uint32_t offset = sizeof(FileHeader) + static_cast<uint32_t>(index) * sizeof(Task);
-  const bool ok =
-    fs.FileSeek(&file, offset) >= 0 && fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&record), sizeof(record)) == sizeof(record);
-  fs.FileClose(&file);
-  if (!ok) {
-    return false;
-  }
-
-  stagedReceived |= bit;
-  return true;
-}
-
-bool TaskController::StagingComplete() const {
-  if (!stagingOpen) {
-    return false;
-  }
-  const uint64_t all = stagedCount >= 64 ? ~0ull : (1ull << stagedCount) - 1;
-  return stagedReceived == all;
-}
-
-void TaskController::ClearStagingState() {
-  stagingOpen = false;
-  stagedReceived = 0;
-  stagedCount = 0;
-}
-
-void TaskController::DiscardStaging() {
-  FS::Lock lock(fs);
-  if (stagingOpen) {
-    fs.FileDelete(stagePath);
-  }
-  ClearStagingState();
+  return staged.Stage(index, &record);
 }
 
 void TaskController::CommitStaged() {
-  {
-    FS::Lock lock(fs);
-    if (!StagingComplete()) {
-      DiscardStaging();
-      return;
-    }
-    if (fs.Rename(stagePath, datPath) != LFS_ERR_OK) {
-      NRF_LOG_WARNING("[TaskController] Commit rename failed, keeping previous tasks");
-      DiscardStaging();
-      return;
-    }
-    count = stagedCount;
-    taskVersion = stagedVersion;
-    ClearStagingState();
+  if (!staged.Commit()) {
+    return;
   }
-  NRF_LOG_INFO("[TaskController] Committed %u tasks, version %u", count, taskVersion);
+  NRF_LOG_INFO("[TaskController] Committed %u tasks, version %u", staged.Count(), staged.Version());
 
   // Drop completion for tasks that no longer exist (ids not in the new list),
   // so stale ticks can't count toward "all done".
@@ -138,7 +50,7 @@ void TaskController::CommitStaged() {
   for (uint8_t i = 0; i < doneCount; i++) {
     Task t;
     bool present = false;
-    for (uint8_t j = 0; j < count; j++) {
+    for (uint8_t j = 0; j < staged.Count(); j++) {
       if (ReadTask(j, t) && t.id == doneIds[i]) {
         present = true;
         break;
@@ -155,44 +67,11 @@ void TaskController::CommitStaged() {
 }
 
 bool TaskController::ReadTask(uint8_t index, Task& out) const {
-  if (index >= count) {
+  if (!staged.Read(index, &out)) {
     return false;
   }
-  FS::Lock lock(fs);
-  lfs_file_t file;
-  if (fs.FileOpen(&file, datPath, LFS_O_RDONLY) != LFS_ERR_OK) {
-    return false;
-  }
-  const uint32_t offset = sizeof(FileHeader) + static_cast<uint32_t>(index) * sizeof(Task);
-  const bool ok = fs.FileSeek(&file, offset) >= 0 && fs.FileRead(&file, reinterpret_cast<uint8_t*>(&out), sizeof(out)) == sizeof(out);
-  fs.FileClose(&file);
   out.title[TitleSize - 1] = '\0';
-  return ok;
-}
-
-void TaskController::LoadFromFile() {
-  FS::Lock lock(fs);
-  lfs_file_t file;
-  if (fs.FileOpen(&file, datPath, LFS_O_RDONLY) != LFS_ERR_OK) {
-    NRF_LOG_WARNING("[TaskController] No task file");
-    return;
-  }
-  FileHeader header {};
-  const bool headerOk = fs.FileRead(&file, reinterpret_cast<uint8_t*>(&header), sizeof(header)) == sizeof(header) &&
-                        header.version == formatVersion && header.count <= MaxTasks;
-  fs.FileClose(&file);
-  if (!headerOk) {
-    NRF_LOG_WARNING("[TaskController] Invalid task file, discarding");
-    return;
-  }
-  lfs_info info {};
-  if (fs.Stat(datPath, &info) != LFS_ERR_OK || info.size < sizeof(FileHeader) + static_cast<uint32_t>(header.count) * sizeof(Task)) {
-    NRF_LOG_WARNING("[TaskController] Truncated task file, discarding");
-    return;
-  }
-  count = header.count;
-  taskVersion = header.taskVersion;
-  NRF_LOG_INFO("[TaskController] Loaded %u tasks, version %u", count, taskVersion);
+  return true;
 }
 
 // ---- completion + streak ----
@@ -237,7 +116,7 @@ void TaskController::ToggleAt(uint8_t index) {
 uint8_t TaskController::CompletedCount() const {
   uint8_t done = 0;
   Task t;
-  for (uint8_t i = 0; i < count; i++) {
+  for (uint8_t i = 0; i < GetCount(); i++) {
     if (ReadTask(i, t) && IdDone(t.id)) {
       done++;
     }
@@ -253,8 +132,8 @@ void TaskController::SetStreak(uint16_t value) {
 void TaskController::RollOverDay() {
   // Evaluate the day that is ending: a full-completion day extends the streak,
   // any incomplete day breaks it. A day with no tasks leaves the streak alone.
-  if (count > 0) {
-    streak = (CompletedCount() == count) ? static_cast<uint16_t>(streak + 1) : 0;
+  if (GetCount() > 0) {
+    streak = (CompletedCount() == GetCount()) ? static_cast<uint16_t>(streak + 1) : 0;
   }
   doneCount = 0;
   stateDateKey = TodayKey();
