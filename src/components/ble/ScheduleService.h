@@ -9,6 +9,9 @@
 #undef max
 #undef min
 
+#include "components/ble/CustomServiceUuid.h"
+#include "components/ble/SyncWakeLock.h"
+
 int ScheduleServiceCallback(uint16_t connHandle, uint16_t attrHandle, struct ble_gatt_access_ctxt* ctxt, void* arg);
 
 namespace Pinetime {
@@ -40,20 +43,12 @@ namespace Pinetime {
       int OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt);
       int OnDigestRead(struct ble_gatt_access_ctxt* ctxt);
       int OnEventReadAccess(struct ble_gatt_access_ctxt* ctxt);
-      bool WaitUntilAwake();
-      bool AcquireSyncWakeLock();
-      void ReleaseSyncWakeLock();
 
-      // 0006yyxx-78fc-48fe-8e23-433b3a1942d0
-      static constexpr ble_uuid128_t CharUuid(uint8_t x, uint8_t y) {
-        return ble_uuid128_t {.u = {.type = BLE_UUID_TYPE_128},
-                              .value = {0xd0, 0x42, 0x19, 0x3a, 0x3b, 0x43, 0x23, 0x8e, 0xfe, 0x48, 0xfc, 0x78, y, x, 0x06, 0x00}};
-      }
-
-      ble_uuid128_t scheduleUuid {CharUuid(0x00, 0x00)};
-      ble_uuid128_t syncCommandCharUuid {CharUuid(0x00, 0x01)};
-      ble_uuid128_t digestCharUuid {CharUuid(0x00, 0x02)};
-      ble_uuid128_t eventReadCharUuid {CharUuid(0x00, 0x03)};
+      static constexpr uint8_t serviceByte = 0x06;
+      ble_uuid128_t scheduleUuid {CustomCharUuid(serviceByte, 0x00, 0x00)};
+      ble_uuid128_t syncCommandCharUuid {CustomCharUuid(serviceByte, 0x00, 0x01)};
+      ble_uuid128_t digestCharUuid {CustomCharUuid(serviceByte, 0x00, 0x02)};
+      ble_uuid128_t eventReadCharUuid {CustomCharUuid(serviceByte, 0x00, 0x03)};
 
       const struct ble_gatt_chr_def characteristicDefinition[4];
       const struct ble_gatt_svc_def serviceDefinition[2];
@@ -61,7 +56,7 @@ namespace Pinetime {
       System::SystemTask& systemTask;
       ScheduleController& scheduleController;
       uint8_t selectedReadIndex = 0;
-      bool syncWakeLockHeld = false;
+      SyncWakeLock wakeLock;
     };
   }
 }
