@@ -8,6 +8,7 @@
 #include <optional>
 #include "components/datetime/DateTimeController.h"
 #include "components/schedule/ScheduleRules.h"
+#include "components/fs/StagedList.h"
 
 // littlefs forward types for private helpers
 #include <littlefs/lfs.h>
@@ -50,13 +51,15 @@ namespace Pinetime {
       // ScheduleService takes a wake lock in BeginSync.
       bool BeginStaging(uint8_t count, uint32_t version);
       bool StageEvent(uint8_t index, const Event& event);
-      bool StagingComplete() const;
-      // Deletes the staging file only when a transaction is open, so an idle
-      // disconnect never touches (possibly sleeping) flash.
-      void DiscardStaging();
+      bool StagingComplete() const {
+        return staged.Complete();
+      }
+      void DiscardStaging() {
+        staged.Discard();
+      }
 
       uint8_t GetStagedCount() const {
-        return stagingOpen ? stagedCount : 0xFF; // 0xFF: no transaction open
+        return staged.StagedCount();
       }
 
       // Must only be called from the SystemTask (renames flash files, re-arms
@@ -83,11 +86,11 @@ namespace Pinetime {
       }
 
       uint8_t GetCount() const {
-        return count;
+        return staged.Count();
       }
 
       uint32_t GetVersion() const {
-        return scheduleVersion;
+        return staged.Version();
       }
 
       // Random-access read of one record from the schedule file (BLE event
@@ -108,36 +111,20 @@ namespace Pinetime {
       static constexpr uint32_t maxTimerSeconds = 24 * 60 * 60;
       static constexpr const char* datPath = "/.system/schedule.dat";
       static constexpr const char* stagePath = "/.system/schedule.stg";
-
-      struct __attribute__((packed)) FileHeader {
-        uint8_t version;
-        uint8_t count;
-        uint32_t scheduleVersion;
-      };
+      static_assert(MaxEvents <= 64, "StagedList uses a uint64_t received-bitmask");
 
       time_t Now() const;
-      void LoadFromFile();
-      // Scan helpers; the caller must hold one FS::Lock across open..close so
-      // a concurrent commit-by-rename can't invalidate the open handle.
+      void ArmTimer(int64_t seconds);
+      // Sequential-scan wrappers over `staged`; the caller holds one FS::Lock
+      // across OpenForScan..close (see StagedList).
       bool OpenForScan(lfs_file_t& file) const;
       bool ReadRecord(lfs_file_t& file, Event& event) const;
-      void ClearStagingState();
-      void ArmTimer(int64_t seconds);
 
       Controllers::DateTime& dateTimeController;
       Controllers::FS& fs;
+      StagedList staged;
       System::SystemTask* systemTask = nullptr;
       TimerHandle_t reminderTimer {};
-
-      // Digest fields; the file is the source of truth, these mirror its header.
-      uint8_t count = 0;
-      uint32_t scheduleVersion = 0;
-
-      uint64_t stagedReceived = 0; // bitmask, one bit per index
-      static_assert(MaxEvents <= 64, "stagedReceived bitmask is uint64_t");
-      uint8_t stagedCount = 0;
-      uint32_t stagedVersion = 0;
-      bool stagingOpen = false;
 
       // Next-occurrence cache, so TimerFired never reads flash. Refreshed by
       // Reschedule() on every mutation (commit, fire, dismiss, time change).
