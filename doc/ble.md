@@ -101,6 +101,31 @@ The following custom services are implemented in InfiniTime:
   - [Schedule Service](ScheduleService.md) : `00060000-78fc-48fe-8e23-433b3a1942d0`
   - [Prayer Service](PrayerService.md) : `00070000-78fc-48fe-8e23-433b3a1942d0`
   - [Beacon Service](BeaconService.md) : `00080000-78fc-48fe-8e23-433b3a1942d0`
+  - [Multi-Alarm Service](MultiAlarmService.md) : `00090000-78fc-48fe-8e23-433b3a1942d0`
+  - [Task Service](TaskService.md) : `000a0000-78fc-48fe-8e23-433b3a1942d0`
+
+  The next free fork service byte is `0x0b`. All fork services share the
+  `00ss____-78fc-48fe-8e23-433b3a1942d0` layout and build their UUIDs with
+  `CustomCharUuid(serviceByte, x, y)` (`components/ble/CustomServiceUuid.h`).
+
+### Companion sync models
+
+Two — deliberately. Pick by what the data *is*, not by which is newer:
+
+| | **Staged list** (Schedule, Task) | **Compare-and-swap** (Multi-Alarm) |
+|---|---|---|
+| Shape | variable-length list, items added/deleted | fixed slots (always 5) |
+| Item identity | random 16-bit `id`, stable across reorder | the slot index |
+| Item carries | `id`, `title`, `lastModified` | `hour`, `minute`, `mode`, `enabled` |
+| Who writes | the phone only; the watch renders | phone, watch UI, **and the firmware** (a one-shot alarm disables itself when it fires) |
+| Transport | `BeginSync`/record ×N/`CommitSync` staged into a file, atomic-rename commit (`components/fs/StagedList.h`) | one small blob, read-modify-write |
+| Conflicts | three-way merge on the phone, newest `lastModified` wins | watch rejects a write whose expected version ≠ current; phone re-reads, re-applies its slot, retries |
+| Needs a correct clock | yes (timestamps order edits) | **no** |
+
+Use **staged list** for phone-authored collections. Use **CAS** when the watch
+or the firmware also mutates the state: CAS never silently loses a write, and
+needs no timestamps — important because a merge that trusted a skewed watch
+clock could resurrect an alarm that has already fired.
 
 ---
 
