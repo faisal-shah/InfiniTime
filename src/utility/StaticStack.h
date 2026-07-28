@@ -12,12 +12,6 @@ namespace Pinetime {
       void Push(T element);
       void Reset();
       T Top();
-      size_t Size() const {
-        return stackPointer;
-      }
-      bool IsEmpty() const {
-        return stackPointer == 0;
-      }
 
     private:
       std::array<T, N> elementArray;

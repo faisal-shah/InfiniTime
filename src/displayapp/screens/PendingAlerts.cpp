@@ -128,7 +128,7 @@ void PendingAlerts::Render() {
   localtime_r(&fired, &local);
   const char* suffix;
   const uint8_t shownHour = SplitHour(local.tm_hour, settingsController.GetClockType(), &suffix);
-  lv_label_set_text_fmt(timeLabel, "%d:%02d", shownHour, local.tm_min);
+  lv_label_set_text_fmt(timeLabel, suffix != nullptr ? "%d:%02d" : "%02d:%02d", shownHour, local.tm_min);
   // jetbrains_mono_42 carries no letters, so AM/PM rides on the source label.
   if (suffix != nullptr) {
     lv_label_set_text_fmt(sourceLabel, "%s  %s", SourceName(entry.source), suffix);
