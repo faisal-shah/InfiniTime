@@ -2,16 +2,20 @@
 
 #include <lvgl/lvgl.h>
 #include <cstdio>
+#include <cctype>
 #include "displayapp/screens/BatteryIcon.h"
 #include "displayapp/screens/BleIcon.h"
 #include "displayapp/screens/NotificationIcon.h"
 #include "displayapp/screens/Symbols.h"
+#include "displayapp/screens/TimeFormat.h"
 #include "components/battery/BatteryController.h"
 #include "components/ble/BleController.h"
 #include "components/ble/NotificationManager.h"
 #include "components/heartrate/HeartRateController.h"
 #include "components/motion/MotionController.h"
+#include "components/prayer/PrayerController.h"
 #include "components/settings/Settings.h"
+#include "components/task/TaskController.h"
 using namespace Pinetime::Applications::Screens;
 
 WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTimeController,
@@ -21,6 +25,8 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
                                                    Controllers::Settings& settingsController,
                                                    Controllers::HeartRateController& heartRateController,
                                                    Controllers::MotionController& motionController,
+                                                   Controllers::PrayerController& prayerController,
+                                                   Controllers::TaskController& taskController,
                                                    Controllers::FS& filesystem)
   : currentDateTime {{}},
     batteryIcon(false),
@@ -30,12 +36,21 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
     notificatioManager {notificatioManager},
     settingsController {settingsController},
     heartRateController {heartRateController},
-    motionController {motionController} {
+    motionController {motionController},
+    prayerController {prayerController},
+    taskController {taskController} {
 
   lfs_file f = {};
   if (filesystem.FileOpen(&f, "/fonts/lv_font_dots_40.bin", LFS_O_RDONLY) >= 0) {
     filesystem.FileClose(&f);
     font_dot40 = lv_font_load("F:/fonts/lv_font_dots_40.bin");
+  }
+
+  // Same typeface as lv_font_dots_40, small enough that a two-digit month with
+  // a two-digit day fits the top-left box and MAGHRIB fits the prayer row.
+  if (filesystem.FileOpen(&f, "/fonts/lv_font_dots_30.bin", LFS_O_RDONLY) >= 0) {
+    filesystem.FileClose(&f);
+    font_dot30 = lv_font_load("F:/fonts/lv_font_dots_30.bin");
   }
 
   if (filesystem.FileOpen(&f, "/fonts/7segments_40.bin", LFS_O_RDONLY) >= 0) {
@@ -78,17 +93,19 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_obj_set_style_local_text_font(label_day_of_week, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_dot40);
   lv_label_set_text_static(label_day_of_week, "SUN");
 
-  label_week_number = lv_label_create(lv_scr_act(), nullptr);
-  lv_obj_align(label_week_number, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 5, 22);
-  lv_obj_set_style_local_text_color(label_week_number, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
-  lv_obj_set_style_local_text_font(label_week_number, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_dot40);
-  lv_label_set_text_static(label_week_number, "WK26");
+  // Dot-matrix like the weekday below it, but 30px: "12-28" in the 40px face
+  // overflows the ~86px box interior.
+  label_date = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_align(label_date, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 8, 28);
+  lv_obj_set_style_local_text_color(label_date, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_obj_set_style_local_text_font(label_date, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_dot30);
+  lv_label_set_text_static(label_date, "6-30");
 
-  label_day_of_year = lv_label_create(lv_scr_act(), nullptr);
-  lv_obj_align(label_day_of_year, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 100, 30);
-  lv_obj_set_style_local_text_color(label_day_of_year, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
-  lv_obj_set_style_local_text_font(label_day_of_year, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_segment40);
-  lv_label_set_text_static(label_day_of_year, "181-184");
+  label_prayer_window = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_align(label_prayer_window, lv_scr_act(), LV_ALIGN_IN_TOP_RIGHT, -6, 34);
+  lv_obj_set_style_local_text_color(label_prayer_window, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_obj_set_style_local_text_font(label_prayer_window, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_dot30);
+  lv_label_set_text_static(label_prayer_window, "");
 
   lv_style_init(&style_line);
   lv_style_set_line_width(&style_line, LV_STATE_DEFAULT, 2);
@@ -110,21 +127,28 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_obj_add_style(line_day_of_week_number, LV_LINE_PART_MAIN, &style_border);
   lv_obj_align(line_day_of_week_number, nullptr, LV_ALIGN_IN_TOP_LEFT, 0, 8);
 
-  line_day_of_year = lv_line_create(lv_scr_act(), nullptr);
-  lv_line_set_points(line_day_of_year, line_day_of_year_points, 3);
-  lv_obj_add_style(line_day_of_year, LV_LINE_PART_MAIN, &style_line);
-  lv_obj_align(line_day_of_year, nullptr, LV_ALIGN_IN_TOP_RIGHT, 0, 60);
+  line_prayer_window = lv_line_create(lv_scr_act(), nullptr);
+  lv_line_set_points(line_prayer_window, line_prayer_window_points, 3);
+  lv_obj_add_style(line_prayer_window, LV_LINE_PART_MAIN, &style_line);
+  lv_obj_align(line_prayer_window, nullptr, LV_ALIGN_IN_TOP_RIGHT, 0, 60);
 
-  label_date = lv_label_create(lv_scr_act(), nullptr);
-  lv_obj_align(label_date, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 100, 70);
-  lv_obj_set_style_local_text_color(label_date, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
-  lv_obj_set_style_local_text_font(label_date, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_segment40);
-  lv_label_set_text_static(label_date, "6-30");
+  // AM/PM sits at the right edge and the 7-segment time is placed against it,
+  // because the 7-segment font carries no letters.
+  label_prayer_next_ampm = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_align(label_prayer_next_ampm, lv_scr_act(), LV_ALIGN_IN_TOP_RIGHT, -6, 80);
+  lv_obj_set_style_local_text_color(label_prayer_next_ampm, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_label_set_text_static(label_prayer_next_ampm, "");
 
-  line_date = lv_line_create(lv_scr_act(), nullptr);
-  lv_line_set_points(line_date, line_date_points, 3);
-  lv_obj_add_style(line_date, LV_LINE_PART_MAIN, &style_line);
-  lv_obj_align(line_date, nullptr, LV_ALIGN_IN_TOP_RIGHT, 0, 100);
+  label_prayer_next = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_align(label_prayer_next, lv_scr_act(), LV_ALIGN_IN_TOP_RIGHT, -34, 72);
+  lv_obj_set_style_local_text_color(label_prayer_next, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_obj_set_style_local_text_font(label_prayer_next, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_segment40);
+  lv_label_set_text_static(label_prayer_next, "");
+
+  line_prayer_next = lv_line_create(lv_scr_act(), nullptr);
+  lv_line_set_points(line_prayer_next, line_prayer_next_points, 3);
+  lv_obj_add_style(line_prayer_next, LV_LINE_PART_MAIN, &style_line);
+  lv_obj_align(line_prayer_next, nullptr, LV_ALIGN_IN_TOP_RIGHT, 0, 100);
 
   label_time = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_text_color(label_time, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
@@ -168,6 +192,11 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_label_set_text_static(stepIcon, Symbols::shoe);
   lv_obj_align(stepIcon, stepValue, LV_ALIGN_OUT_LEFT_MID, -5, 0);
 
+  label_tasks = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_set_style_local_text_color(label_tasks, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_label_set_text_static(label_tasks, "");
+  lv_obj_align(label_tasks, lv_scr_act(), LV_ALIGN_IN_BOTTOM_MID, 0, -2);
+
   taskRefresh = lv_task_create(RefreshTaskCallback, LV_DISP_DEF_REFR_PERIOD, LV_TASK_PRIO_MID, this);
   Refresh();
 }
@@ -180,6 +209,10 @@ WatchFaceCasioStyleG7710::~WatchFaceCasioStyleG7710() {
 
   if (font_dot40 != nullptr) {
     lv_font_free(font_dot40);
+  }
+
+  if (font_dot30 != nullptr) {
+    lv_font_free(font_dot30);
   }
 
   if (font_segment40 != nullptr) {
@@ -244,47 +277,22 @@ void WatchFaceCasioStyleG7710::Refresh() {
     }
     lv_obj_realign(label_time);
 
+    RefreshPrayer();
+    RefreshTasks();
+
     currentDate = std::chrono::time_point_cast<std::chrono::days>(currentDateTime.Get());
     if (currentDate.IsUpdated()) {
-      const char* weekNumberFormat = "%V";
-
-      uint16_t year = dateTimeController.Year();
       Controllers::DateTime::Months month = dateTimeController.Month();
       uint8_t day = dateTimeController.Day();
-      int dayOfYear = dateTimeController.DayOfYear();
+
       if (settingsController.GetClockType() == Controllers::Settings::ClockType::H24) {
-        // 24h mode: ddmmyyyy, first DOW=Monday;
-        lv_label_set_text_fmt(label_date, "%3d-%2d", day, month);
-        weekNumberFormat = "%V"; // Replaced by the week number of the year (Monday as the first day of the week) as a decimal number
-                                 // [01,53]. If the week containing 1 January has four or more days in the new year, then it is considered
-                                 // week 1. Otherwise, it is the last week of the previous year, and the next week is week 1. Both January
-                                 // 4th and the first Thursday of January are always in week 1. [ tm_year, tm_wday, tm_yday]
+        lv_label_set_text_fmt(label_date, "%d-%d", day, month);
       } else {
-        // 12h mode: mmddyyyy, first DOW=Sunday;
-        lv_label_set_text_fmt(label_date, "%3d-%2d", month, day);
-        weekNumberFormat = "%U"; // Replaced by the week number of the year as a decimal number [00,53]. The first Sunday of January is the
-                                 // first day of week 1; days in the new year before this are in week 0. [ tm_year, tm_wday, tm_yday]
+        lv_label_set_text_fmt(label_date, "%d-%d", month, day);
       }
-
-      time_t ttTime =
-        std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(currentDateTime.Get()));
-      tm* tmTime = std::localtime(&ttTime);
-
-      // TODO: When we start using C++20, use std::chrono::year::is_leap
-      int daysInCurrentYear = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 ? 366 : 365;
-      uint16_t daysTillEndOfYearNumber = daysInCurrentYear - dayOfYear;
-
-      char buffer[8];
-      strftime(buffer, 8, weekNumberFormat, tmTime);
-      uint8_t weekNumber = atoi(buffer);
-
       lv_label_set_text_fmt(label_day_of_week, "%s", dateTimeController.DayOfWeekShortToString());
-      lv_label_set_text_fmt(label_day_of_year, "%3d-%3d", dayOfYear, daysTillEndOfYearNumber);
-      lv_label_set_text_fmt(label_week_number, "WK%02d", weekNumber);
 
       lv_obj_realign(label_day_of_week);
-      lv_obj_realign(label_day_of_year);
-      lv_obj_realign(label_week_number);
       lv_obj_realign(label_date);
     }
   }
@@ -312,10 +320,66 @@ void WatchFaceCasioStyleG7710::Refresh() {
   }
 }
 
+void WatchFaceCasioStyleG7710::RefreshPrayer() {
+  Controllers::PrayerController::Window window;
+  if (!prayerController.CurrentWindow(window)) {
+    // A word, not a blank row: an empty box here is indistinguishable from a
+    // font that failed to load.
+    lv_label_set_text_static(label_prayer_window, "UNSET");
+    lv_label_set_text_static(label_prayer_next, "");
+    lv_label_set_text_static(label_prayer_next_ampm, "");
+    lv_obj_realign(label_prayer_window);
+    lv_obj_realign(label_prayer_next);
+    lv_obj_realign(label_prayer_next_ampm);
+    return;
+  }
+
+  if (window.name == nullptr) {
+    // Between sunrise and dhuhr no prayer's window is open.
+    lv_label_set_text_static(label_prayer_window, "----");
+  } else {
+    // Upper case to match the rest of the face; the controller keeps the
+    // canonical mixed-case names the alert screens use.
+    char name[8];
+    size_t i = 0;
+    for (; i + 1 < sizeof(name) && window.name[i] != '\0'; i++) {
+      name[i] = std::toupper(static_cast<unsigned char>(window.name[i]));
+    }
+    name[i] = '\0';
+    lv_label_set_text(label_prayer_window, name);
+  }
+
+  const char* suffix = nullptr;
+  const uint8_t hour = SplitHour(window.nextHour, settingsController.GetClockType(), &suffix);
+  lv_label_set_text_fmt(label_prayer_next, suffix != nullptr ? "%d:%02d" : "%02d:%02d", hour, window.nextMinute);
+  lv_label_set_text(label_prayer_next_ampm, suffix != nullptr ? suffix : "");
+
+  lv_obj_realign(label_prayer_window);
+  lv_obj_realign(label_prayer_next);
+  lv_obj_realign(label_prayer_next_ampm);
+}
+
+void WatchFaceCasioStyleG7710::RefreshTasks() {
+  // CompletedCount() reads every task record from flash, so this is deliberately
+  // on the once-a-minute path rather than the per-frame one.
+  const uint8_t total = taskController.GetCount();
+  if (total == 0) {
+    lv_label_set_text_static(label_tasks, "");
+  } else {
+    lv_label_set_text_fmt(label_tasks, "%d/%d", taskController.CompletedCount(), total);
+  }
+  lv_obj_realign(label_tasks);
+}
+
 bool WatchFaceCasioStyleG7710::IsAvailable(Pinetime::Controllers::FS& filesystem) {
   lfs_file file = {};
 
   if (filesystem.FileOpen(&file, "/fonts/lv_font_dots_40.bin", LFS_O_RDONLY) < 0) {
+    return false;
+  }
+
+  filesystem.FileClose(&file);
+  if (filesystem.FileOpen(&file, "/fonts/lv_font_dots_30.bin", LFS_O_RDONLY) < 0) {
     return false;
   }
 

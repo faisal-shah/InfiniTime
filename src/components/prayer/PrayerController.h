@@ -50,9 +50,9 @@ namespace Pinetime {
       static constexpr uint8_t formatVersion = 1;
 
       static bool Validate(const Settings& s) {
-        return s.version == formatVersion && s.method <= 4 && s.asrMadhab <= 1 &&
-               (s.flags == 0x00 || s.flags == 0x01 || s.flags == 0x03) && s.latE2 >= -9000 &&
-               s.latE2 <= 9000 && s.lonE2 >= -18000 && s.lonE2 <= 18000 && s.utcOffsetQuarters >= -48 && s.utcOffsetQuarters <= 56;
+        return s.version == formatVersion && s.method <= 4 && s.asrMadhab <= 1 && (s.flags == 0x00 || s.flags == 0x01 || s.flags == 0x03) &&
+               s.latE2 >= -9000 && s.latE2 <= 9000 && s.lonE2 >= -18000 && s.lonE2 <= 18000 && s.utcOffsetQuarters >= -48 &&
+               s.utcOffsetQuarters <= 56;
       }
 
       PrayerController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);
@@ -99,6 +99,24 @@ namespace Pinetime {
         return lastFiredDue;
       }
 
+      // Which prayer's window contains "now", and when the next prayer starts.
+      // For watch faces, so deliberately unlike DueTimesFor(): it counts
+      // Sunrise as a window boundary and ignores both AlertsEnabled() and
+      // SkipFajr(), because what is displayed must not depend on what vibrates.
+      struct Window {
+        // Name of the window we are inside, or nullptr between Sunrise and
+        // Dhuhr — that stretch belongs to no prayer.
+        const char* name;
+        // Start of the next prayer, local time of day. Sunrise is never it.
+        uint8_t nextHour;
+        uint8_t nextMinute;
+      };
+
+      // False when there is no window to show: no location set, or the day's
+      // times are not computable (polar cases leave all but Dhuhr invalid).
+      // Pure math; no filesystem. Cheap enough for once-a-minute.
+      bool CurrentWindow(Window& out) const;
+
     private:
       static constexpr int graceSeconds = 60;
       // FreeRTOS timer periods are 32-bit ticks; cap each arm and re-check on
@@ -108,6 +126,8 @@ namespace Pinetime {
       static constexpr const char* stagePath = "/.system/prayer.stg";
 
       time_t Now() const;
+      // Prayer times for the civil day containing `dayAnchor`.
+      PrayerRules::Times ComputeFor(time_t dayAnchor) const;
       void LoadFromFile();
       void SaveToFile();
       // Due instants (local epoch) of the five alerting prayers for the civil

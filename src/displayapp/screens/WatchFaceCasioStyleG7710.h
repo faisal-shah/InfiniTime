@@ -20,6 +20,8 @@ namespace Pinetime {
     class NotificationManager;
     class HeartRateController;
     class MotionController;
+    class PrayerController;
+    class TaskController;
   }
 
   namespace Applications {
@@ -34,6 +36,8 @@ namespace Pinetime {
                                  Controllers::Settings& settingsController,
                                  Controllers::HeartRateController& heartRateController,
                                  Controllers::MotionController& motionController,
+                                 Controllers::PrayerController& prayerController,
+                                 Controllers::TaskController& taskController,
                                  Controllers::FS& filesystem);
         ~WatchFaceCasioStyleG7710() override;
 
@@ -42,6 +46,11 @@ namespace Pinetime {
         static bool IsAvailable(Pinetime::Controllers::FS& filesystem);
 
       private:
+        // Both are on the once-a-minute path: the prayer window is trigonometry
+        // and the task counter reads flash.
+        void RefreshPrayer();
+        void RefreshTasks();
+
         Utility::DirtyValue<uint8_t> batteryPercentRemaining {};
         Utility::DirtyValue<bool> powerPresent {};
         Utility::DirtyValue<bool> bleState {};
@@ -55,8 +64,8 @@ namespace Pinetime {
 
         lv_point_t line_icons_points[3] {{0, 5}, {117, 5}, {122, 0}};
         lv_point_t line_day_of_week_number_points[4] {{0, 0}, {100, 0}, {95, 95}, {0, 95}};
-        lv_point_t line_day_of_year_points[3] {{0, 5}, {130, 5}, {135, 0}};
-        lv_point_t line_date_points[3] {{0, 5}, {135, 5}, {140, 0}};
+        lv_point_t line_prayer_window_points[3] {{0, 5}, {130, 5}, {135, 0}};
+        lv_point_t line_prayer_next_points[3] {{0, 5}, {135, 5}, {140, 0}};
         lv_point_t line_time_points[3] {{0, 0}, {230, 0}, {235, 5}};
 
         lv_color_t color_text = lv_color_hex(0x98B69A);
@@ -67,13 +76,18 @@ namespace Pinetime {
         lv_obj_t* label_time;
         lv_obj_t* line_time;
         lv_obj_t* label_time_ampm;
+        // Top-left box: numeric date over the weekday.
         lv_obj_t* label_date;
-        lv_obj_t* line_date;
         lv_obj_t* label_day_of_week;
-        lv_obj_t* label_week_number;
         lv_obj_t* line_day_of_week_number;
-        lv_obj_t* label_day_of_year;
-        lv_obj_t* line_day_of_year;
+        // Top-right rows: the prayer window we are in, and when the next starts.
+        lv_obj_t* label_prayer_window;
+        lv_obj_t* line_prayer_window;
+        lv_obj_t* label_prayer_next;
+        lv_obj_t* label_prayer_next_ampm;
+        lv_obj_t* line_prayer_next;
+        // Bottom centre, between heart rate and steps.
+        lv_obj_t* label_tasks;
         lv_obj_t* backgroundLabel;
         lv_obj_t* bleIcon;
         lv_obj_t* batteryPlug;
@@ -94,9 +108,12 @@ namespace Pinetime {
         Controllers::Settings& settingsController;
         Controllers::HeartRateController& heartRateController;
         Controllers::MotionController& motionController;
+        Controllers::PrayerController& prayerController;
+        Controllers::TaskController& taskController;
 
         lv_task_t* taskRefresh;
         lv_font_t* font_dot40 = nullptr;
+        lv_font_t* font_dot30 = nullptr;
         lv_font_t* font_segment40 = nullptr;
         lv_font_t* font_segment115 = nullptr;
       };
@@ -115,6 +132,8 @@ namespace Pinetime {
                                                      controllers.settingsController,
                                                      controllers.heartRateController,
                                                      controllers.motionController,
+                                                     controllers.prayerController,
+                                                     controllers.tasksController,
                                                      controllers.filesystem);
       };
 

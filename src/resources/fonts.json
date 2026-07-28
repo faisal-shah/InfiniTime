@@ -35,6 +35,18 @@
       "format": "bin",
       "target_path": "/fonts/"
    },
+   "lv_font_dots_30": {
+      "sources": [
+         {
+            "file": "fonts/repetitionscrolling.ttf",
+            "symbols": "0123456789-ABDEFGHIJMNRSTU"
+         }
+      ],
+      "bpp": 1,
+      "size": 30,
+      "format": "bin",
+      "target_path": "/fonts/"
+   },
    "7segments_40" : {
       "sources": [
          {
