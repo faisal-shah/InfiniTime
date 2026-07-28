@@ -11,6 +11,7 @@ namespace Pinetime {
   namespace Controllers {
     class ScheduleController;
     class MotorController;
+    class Settings;
   }
 
   namespace Applications {
@@ -27,7 +28,8 @@ namespace Pinetime {
                       Controllers::AlertQueue& alertQueue,
                       Controllers::ScheduleController& scheduleController,
                       System::SystemTask& systemTask,
-                      Controllers::MotorController& motorController);
+                      Controllers::MotorController& motorController,
+                      Controllers::Settings& settingsController);
         ~PendingAlerts() override;
 
         // A new firing arrived while this screen is up: jump to newest and
@@ -48,6 +50,7 @@ namespace Pinetime {
         Controllers::ScheduleController& scheduleController;
         System::WakeLock wakeLock;
         Controllers::MotorController& motorController;
+        Controllers::Settings& settingsController;
 
         uint8_t index = 0; // 0 = newest
 
@@ -70,7 +73,8 @@ namespace Pinetime {
                                           controllers.alertQueue,
                                           controllers.scheduleController,
                                           *controllers.systemTask,
-                                          controllers.motorController);
+                                          controllers.motorController,
+                                          controllers.settingsController);
       };
     };
   }
