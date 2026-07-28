@@ -4,6 +4,8 @@
 #include "components/schedule/ScheduleController.h"
 #include "components/prayer/PrayerController.h"
 #include "components/motor/MotorController.h"
+#include "components/settings/Settings.h"
+#include "displayapp/screens/TimeFormat.h"
 #include <cstdio>
 #include <ctime>
 
@@ -38,12 +40,14 @@ PendingAlerts::PendingAlerts(DisplayApp* app,
                              Controllers::AlertQueue& alertQueue,
                              Controllers::ScheduleController& scheduleController,
                              System::SystemTask& systemTask,
-                             Controllers::MotorController& motorController)
+                             Controllers::MotorController& motorController,
+                             Controllers::Settings& settingsController)
   : app {app},
     alertQueue {alertQueue},
     scheduleController {scheduleController},
     wakeLock(systemTask),
-    motorController {motorController} {
+    motorController {motorController},
+    settingsController {settingsController} {
 
   sourceLabel = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_text_color(sourceLabel, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_ORANGE);
@@ -109,17 +113,28 @@ void PendingAlerts::StopRingingOnly() {
 void PendingAlerts::Render() {
   Controllers::AlertQueue::Entry entry;
   if (!alertQueue.Get(index, entry)) {
+    // Nothing to show. Returning here would leave every label at LVGL's default
+    // "Text" (and timeLabel's digits-only font renders that as a lone "t"), so
+    // close instead — this screen has no meaning without an entry.
+    running = false;
     return;
   }
 
-  lv_label_set_text_static(sourceLabel, SourceName(entry.source));
   lv_label_set_text_fmt(positionLabel, "%d/%d", index + 1, alertQueue.Count());
   lv_obj_align(positionLabel, lv_scr_act(), LV_ALIGN_IN_TOP_RIGHT, -8, 8);
 
   const time_t fired = static_cast<time_t>(entry.firedAt);
   tm local;
   localtime_r(&fired, &local);
-  lv_label_set_text_fmt(timeLabel, "%02d:%02d", local.tm_hour, local.tm_min);
+  const char* suffix;
+  const uint8_t shownHour = SplitHour(local.tm_hour, settingsController.GetClockType(), &suffix);
+  lv_label_set_text_fmt(timeLabel, "%d:%02d", shownHour, local.tm_min);
+  // jetbrains_mono_42 carries no letters, so AM/PM rides on the source label.
+  if (suffix != nullptr) {
+    lv_label_set_text_fmt(sourceLabel, "%s  %s", SourceName(entry.source), suffix);
+  } else {
+    lv_label_set_text_static(sourceLabel, SourceName(entry.source));
+  }
 
   char title[96];
   switch (entry.source) {
@@ -143,7 +158,12 @@ void PendingAlerts::AcknowledgeCurrent() {
   StopRingingOnly();
   const uint8_t remaining = alertQueue.Acknowledge(index);
   if (remaining == 0) {
-    app->StartApp(Apps::Clock, DisplayApp::FullRefreshDirections::None);
+    // Leave by going *back*, not forward. StartApp routes through
+    // LoadNewScreen, which pushes the outgoing app — so exiting that way left
+    // Apps::PendingAlerts on the return stack, and a later back-gesture would
+    // reopen this screen with an empty queue (all-default "Text" labels).
+    // running = false makes DisplayApp pop instead, like every other
+    // self-closing screen.
     running = false;
     return;
   }

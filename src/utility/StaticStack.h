@@ -1,3 +1,5 @@
+#pragma once
+
 #include <array>
 #include <cstddef>
 
@@ -10,6 +12,12 @@ namespace Pinetime {
       void Push(T element);
       void Reset();
       T Top();
+      size_t Size() const {
+        return stackPointer;
+      }
+      bool IsEmpty() const {
+        return stackPointer == 0;
+      }
 
     private:
       std::array<T, N> elementArray;
@@ -39,8 +47,13 @@ namespace Pinetime {
       stackPointer = 0;
     }
 
+    // Reading the top of an empty stack indexed elementArray[-1]; DisplayApp
+    // reaches this on every gesture made before anything has been stacked.
     template <typename T, size_t N>
     T StaticStack<T, N>::Top() {
+      if (stackPointer == 0) {
+        return T {};
+      }
       return elementArray[stackPointer - 1];
     }
   }
