@@ -38,7 +38,6 @@
 #include "systemtask/Messages.h"
 
 extern std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime;
-extern bool NoInit_BackUpTimeKnown;
 
 namespace Pinetime {
   namespace Drivers {
