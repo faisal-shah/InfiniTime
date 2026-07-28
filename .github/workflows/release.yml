@@ -36,6 +36,25 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
           submodules: recursive
+      # The firmware's own version is the source of truth; the tag must agree.
+      # They silently diverged once (every v1.16.0-family.N build reported a bare
+      # "1.16.0"), which made releases indistinguishable on the watch and broke
+      # the companion's post-update confirmation.
+      - name: Tag must match the firmware version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(sed -n 's/^project(pinetime VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          suffix=$(sed -n 's/^set(PROJECT_VERSION_SUFFIX "\([^"]*\)".*/\1/p' CMakeLists.txt)
+          expected="v${version}${suffix}"
+          echo "tag=$TAG  firmware=$expected"
+          if [ "$TAG" != "$expected" ]; then
+            echo "::error::Release tag '$TAG' does not match the firmware version '$expected'."
+            echo "::error::Update PROJECT_VERSION / PROJECT_VERSION_SUFFIX in CMakeLists.txt, or retag."
+            exit 1
+          fi
+
       - name: Install resource build dependencies
         run: |
           apt-get update
