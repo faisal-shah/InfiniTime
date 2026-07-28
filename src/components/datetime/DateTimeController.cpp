@@ -32,12 +32,10 @@ DateTime::DateTime(Controllers::Settings& settingsController) : settingsControll
 
   // __DATE__ is a string of the format "MMM DD YYYY", so an offset of 7 gives the start of the year
   SetTime(compileTimeAtoi(&__DATE__[7]), 1, 1, 0, 0, 0);
-  timeKnown = false; // the line above is a placeholder, not a known time
 }
 
-void DateTime::SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t, bool known) {
+void DateTime::SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t) {
   xSemaphoreTake(mutex, portMAX_DELAY);
-  timeKnown = known;
   this->currentDateTime = t;
   UpdateTime(previousSystickCounter, true); // Update internal state without updating the time
   xSemaphoreGive(mutex);
@@ -59,7 +57,6 @@ void DateTime::SetTime(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, 
   tm.tm_isdst = -1; // Use DST value from local time zone
 
   xSemaphoreTake(mutex, portMAX_DELAY);
-  timeKnown = true;
   currentDateTime = std::chrono::system_clock::from_time_t(std::mktime(&tm));
   UpdateTime(previousSystickCounter, true);
   xSemaphoreGive(mutex);

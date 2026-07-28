@@ -136,19 +136,8 @@ namespace Pinetime {
         return uptime;
       }
 
-      // False until something authoritative sets the clock: the phone over CTS,
-      // the user in Settings, or the no-init backup restored after a reset.
-      // On a cold boot the clock defaults to 1 January of the build year, which
-      // looks plausible but is months out — anything that reasons about *dates*
-      // (rather than the time of day) must not trust it.
-      bool IsTimeKnown() const {
-        return timeKnown;
-      }
-
       void Register(System::SystemTask* systemTask);
-      // `known` is false only for the no-init restore after a reset, where the
-      // backed-up value may itself be the cold-boot placeholder.
-      void SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t, bool known = true);
+      void SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t);
       std::string FormattedTime();
 
     private:
@@ -164,7 +153,6 @@ namespace Pinetime {
       std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> currentDateTime;
       std::chrono::seconds uptime {0};
 
-      bool timeKnown = false;
       bool isMidnightAlreadyNotified = false;
       bool isHourAlreadyNotified = true;
       bool isHalfHourAlreadyNotified = true;
