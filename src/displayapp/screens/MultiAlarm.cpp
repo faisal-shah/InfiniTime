@@ -190,6 +190,17 @@ void MultiAlarm::SaveEditor() {
   ShowList();
 }
 
+bool MultiAlarm::OnTouchEvent(Pinetime::Applications::TouchEvents event) {
+  // In the editor, swipe-down backs out to the alarm list without saving.
+  // Without this it fell through to the OS and closed the whole app, so
+  // editing a second alarm meant reopening it from the drawer.
+  if (view == View::Edit && event == TouchEvents::SwipeDown) {
+    ShowList();
+    return true;
+  }
+  return false; // list view: let swipe-down close the app as usual
+}
+
 bool MultiAlarm::OnButtonPushed() {
   // In the editor, the physical button backs out to the list without saving.
   if (view == View::Edit) {

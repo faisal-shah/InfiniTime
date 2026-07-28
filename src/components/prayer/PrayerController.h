@@ -29,13 +29,19 @@ namespace Pinetime {
         uint8_t version = formatVersion;
         uint8_t method = 0;    // PrayerRules::Method
         uint8_t asrMadhab = 0; // PrayerRules::Madhab
-        uint8_t flags = 0;     // bit0: alerts enabled; rest reserved 0
+        uint8_t flags = 0;     // bit0: alerts enabled; bit1: skip Fajr; rest reserved 0
         int16_t latE2 = 0;     // degrees x100, north positive
         int16_t lonE2 = 0;     // degrees x100, east positive
         int8_t utcOffsetQuarters = 0;
 
         bool AlertsEnabled() const {
           return (flags & 0x01) != 0;
+        }
+
+        // "Vibrate all but Fajr" — the pre-dawn one is the one people most
+        // often want to opt out of. Only meaningful while alerts are enabled.
+        bool SkipFajr() const {
+          return (flags & 0x02) != 0;
         }
       };
 
@@ -44,7 +50,8 @@ namespace Pinetime {
       static constexpr uint8_t formatVersion = 1;
 
       static bool Validate(const Settings& s) {
-        return s.version == formatVersion && s.method <= 4 && s.asrMadhab <= 1 && (s.flags & ~0x01) == 0 && s.latE2 >= -9000 &&
+        return s.version == formatVersion && s.method <= 4 && s.asrMadhab <= 1 &&
+               (s.flags == 0x00 || s.flags == 0x01 || s.flags == 0x03) && s.latE2 >= -9000 &&
                s.latE2 <= 9000 && s.lonE2 >= -18000 && s.lonE2 <= 18000 && s.utcOffsetQuarters >= -48 && s.utcOffsetQuarters <= 56;
       }
 

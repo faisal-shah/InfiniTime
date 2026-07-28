@@ -42,7 +42,7 @@ void Tasks::ShowSummary() {
 
   const bool allDone = done == total;
 
-  // Progress ring: filled portion = tasks done today. (A tap anywhere opens the
+  // Progress ring: filled portion = tasks done today. (Swipe up opens the
   // checklist — handled in OnTouchEvent, so nothing here needs to be clickable.)
   lv_obj_t* arc = lv_arc_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_bg_opa(arc, LV_ARC_PART_BG, LV_STATE_DEFAULT, LV_OPA_0);
@@ -68,6 +68,11 @@ void Tasks::ShowSummary() {
   lv_obj_set_style_local_text_color(ofLabel, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
   lv_label_set_text_fmt(ofLabel, "of %d done", total);
   lv_obj_align(ofLabel, nullptr, LV_ALIGN_CENTER, 0, 14);
+
+  lv_obj_t* hint = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_text_static(hint, "swipe up for list");
+  lv_obj_set_style_local_text_color(hint, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
+  lv_obj_align(hint, nullptr, LV_ALIGN_IN_BOTTOM_MID, 0, -26);
 
   lv_obj_t* streak = lv_label_create(lv_scr_act(), nullptr);
   const uint16_t days = taskController.GetStreak();
@@ -140,11 +145,16 @@ void Tasks::OnRowToggled(lv_obj_t* checkbox) {
 
 bool Tasks::OnTouchEvent(Pinetime::Applications::TouchEvents event) {
   if (mode == Mode::Summary) {
-    if (event == TouchEvents::Tap && taskController.GetCount() > 0) {
+    // Swipe up to open the checklist, NOT tap: the tap that launched the app
+    // from the drawer is delivered to this screen, so a tap-to-open made the
+    // summary flash past on entry. Swipe-down still falls through to the OS,
+    // which leaves the app.
+    if (event == TouchEvents::SwipeUp && taskController.GetCount() > 0) {
+      app->SetFullRefresh(DisplayApp::FullRefreshDirections::Up);
       ShowList();
       return true;
     }
-    return false; // let the OS handle swipes (e.g. swipe-down to leave)
+    return false;
   }
 
   const uint8_t pages = PageCount(taskController.GetCount());

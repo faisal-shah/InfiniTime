@@ -19,7 +19,7 @@ companion's encoder):
 | 0 | u8  | version | must be 1 |
 | 1 | u8  | method | 0 MWL, 1 ISNA, 2 Egyptian, 3 Umm al-Qura, 4 Karachi |
 | 2 | u8  | asrMadhab | 0 Standard (shadow factor 1), 1 Hanafi (factor 2) |
-| 3 | u8  | flags | bit0 = alerts enabled; bits 1-7 reserved, must be 0 |
+| 3 | u8  | flags | bit0 = alerts enabled; bit1 = skip Fajr; bits 2-7 reserved, must be 0. Only `0x00` (off), `0x01` (all prayers) and `0x03` (all but Fajr) are accepted — `0x02` is rejected as an encoder error |
 | 4 | i16 | lat | degrees x 100, north positive, -9000..9000 |
 | 6 | i16 | lon | degrees x 100, east positive, -18000..18000 |
 | 8 | i8  | utcOffsetQuarters | local clock offset from UTC in quarter hours, -48..+56 |
