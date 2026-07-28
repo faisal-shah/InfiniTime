@@ -25,6 +25,7 @@ namespace Pinetime {
         void OnRowEvent(lv_obj_t* obj, lv_event_t event);
         void OnEditorEvent(lv_obj_t* obj, lv_event_t event);
         bool OnButtonPushed() override;
+        bool OnTouchEvent(TouchEvents event) override;
 
       private:
         void ShowList();

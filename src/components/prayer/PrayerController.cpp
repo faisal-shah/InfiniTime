@@ -103,6 +103,9 @@ uint8_t PrayerController::DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_
     if ((times.validMask & (1u << p)) == 0) {
       continue;
     }
+    if (p == PrayerRules::Fajr && settings.SkipFajr()) {
+      continue;
+    }
     time_t t = dayStart + static_cast<time_t>(times.minutes[p]) * 60;
     // Only the post-noon prayers can genuinely wrap past midnight (near-polar
     // summer maghrib/isha); fajr is always before dhuhr on the same civil day.
