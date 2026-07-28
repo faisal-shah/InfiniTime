@@ -146,7 +146,9 @@ namespace Pinetime {
       }
 
       void Register(System::SystemTask* systemTask);
-      void SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t);
+      // `known` is false only for the no-init restore after a reset, where the
+      // backed-up value may itself be the cold-boot placeholder.
+      void SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t, bool known = true);
       std::string FormattedTime();
 
     private:

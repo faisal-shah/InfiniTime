@@ -29,7 +29,7 @@ namespace Pinetime {
       }
 
       // Widest output is "12:05 PM" -> 8 chars + NUL.
-      static constexpr size_t FormattedTimeSize = 9;
+      inline constexpr size_t FormattedTimeSize = 9;
 
       // Split form, for screens that render the time in a digits-only font
       // (jetbrains_mono_42 has no letters, so "AM"/"PM" must be a second label

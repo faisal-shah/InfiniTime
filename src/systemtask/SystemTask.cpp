@@ -488,6 +488,7 @@ void SystemTask::Work() {
       }
       monitor.Process();
       NoInit_BackUpTime = dateTimeController.CurrentDateTime();
+      NoInit_BackUpTimeKnown = dateTimeController.IsTimeKnown();
       if (nrf_gpio_pin_read(PinMap::Button) == 0) {
         watchdog.Reload();
       }

@@ -35,6 +35,7 @@ MultiAlarm::~MultiAlarm() {
 void MultiAlarm::ShowList() {
   lv_obj_clean(lv_scr_act());
   editContainer = nullptr;
+  lblAmPm = nullptr; // destroyed by the clean above
   view = View::List;
 
   listContainer = lv_cont_create(lv_scr_act(), nullptr);
@@ -78,7 +79,8 @@ void MultiAlarm::ShowList() {
 void MultiAlarm::SetRowText(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm) {
   const char* suffix;
   const uint8_t shown = SplitHour(alarm.hour, settingsController.GetClockType(), &suffix);
-  lv_label_set_text_fmt(rowTime[i], "%2d:%02d", shown, alarm.minute);
+  // 12h drops the leading zero ("9:05"); 24h keeps it ("09:05").
+  lv_label_set_text_fmt(rowTime[i], suffix != nullptr ? "%d:%02d" : "%02d:%02d", shown, alarm.minute);
 
   const char* mode = alarm.mode == Mode::Daily ? "Daily" : "Once";
   if (suffix != nullptr) {

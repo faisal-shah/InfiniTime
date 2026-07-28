@@ -35,9 +35,9 @@ DateTime::DateTime(Controllers::Settings& settingsController) : settingsControll
   timeKnown = false; // the line above is a placeholder, not a known time
 }
 
-void DateTime::SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t) {
+void DateTime::SetCurrentTime(std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> t, bool known) {
   xSemaphoreTake(mutex, portMAX_DELAY);
-  timeKnown = true;
+  timeKnown = known;
   this->currentDateTime = t;
   UpdateTime(previousSystickCounter, true); // Update internal state without updating the time
   xSemaphoreGive(mutex);
