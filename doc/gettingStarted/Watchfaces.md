@@ -29,3 +29,8 @@ InfiniTime has 6 apps on the `main` branch at the time of writing.
 
 ### Casio G7710
 ![Casio G7710 face](/doc/gettingStarted/Watchfaces/CasioG7710.png)
+    - Top left: the date over the weekday.
+    - Top right: the prayer window you are currently in, over the time the next
+      prayer starts. Between sunrise and dhuhr no window is open and it shows
+      `----`; with no prayer location set it shows `UNSET`.
+    - Bottom centre: today's completed / total tasks.

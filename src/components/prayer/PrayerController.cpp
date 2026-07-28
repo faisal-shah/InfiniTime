@@ -40,9 +40,8 @@ time_t PrayerController::Now() const {
   return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
 }
 
-PrayerRules::Times PrayerController::ComputeToday() const {
-  const time_t now = Now();
-  tm local = *std::localtime(&now);
+PrayerRules::Times PrayerController::ComputeFor(time_t dayAnchor) const {
+  tm local = *std::localtime(&dayAnchor);
   return PrayerRules::Compute(static_cast<uint16_t>(local.tm_year + 1900),
                               static_cast<uint8_t>(local.tm_mon + 1),
                               static_cast<uint8_t>(local.tm_mday),
@@ -51,6 +50,77 @@ PrayerRules::Times PrayerController::ComputeToday() const {
                               settings.utcOffsetQuarters / 4.0f,
                               static_cast<PrayerRules::Method>(settings.method),
                               static_cast<PrayerRules::Madhab>(settings.asrMadhab));
+}
+
+PrayerRules::Times PrayerController::ComputeToday() const {
+  return ComputeFor(Now());
+}
+
+bool PrayerController::CurrentWindow(Window& out) const {
+  // Every boundary has to be real: near the poles Compute() can leave all but
+  // Dhuhr unset, and a partial ring would place the window arbitrarily.
+  constexpr uint8_t needed = (1u << PrayerRules::Fajr) | (1u << PrayerRules::Sunrise) | (1u << PrayerRules::Dhuhr) |
+                             (1u << PrayerRules::Asr) | (1u << PrayerRules::Maghrib) | (1u << PrayerRules::Isha);
+
+  // No location configured. 0,0 is the struct default and open ocean, so
+  // treating it as "unset" costs nothing real and keeps the face from
+  // confidently displaying Null Island's prayer times.
+  if (settings.latE2 == 0 && settings.lonE2 == 0) {
+    return false;
+  }
+
+  const PrayerRules::Times times = ComputeToday();
+  if ((times.validMask & needed) != needed) {
+    return false;
+  }
+
+  // The day's windows in order. Sunrise opens the one stretch that belongs to
+  // no prayer, so it carries no name -- and is never itself a "next prayer".
+  struct Boundary {
+    PrayerRules::Prayer opens;
+    const char* name;
+    PrayerRules::Prayer nextPrayer;
+  };
+
+  static constexpr Boundary ring[6] = {
+    {PrayerRules::Fajr, "Fajr", PrayerRules::Dhuhr},
+    {PrayerRules::Sunrise, nullptr, PrayerRules::Dhuhr},
+    {PrayerRules::Dhuhr, "Dhuhr", PrayerRules::Asr},
+    {PrayerRules::Asr, "Asr", PrayerRules::Maghrib},
+    {PrayerRules::Maghrib, "Maghrib", PrayerRules::Isha},
+    {PrayerRules::Isha, "Isha", PrayerRules::Fajr},
+  };
+
+  const time_t now = Now();
+  tm local = *std::localtime(&now);
+  const uint16_t nowMinutes = static_cast<uint16_t>(local.tm_hour * 60 + local.tm_min);
+
+  // The last boundary at or before now. Falling off the front means the small
+  // hours: still inside the Isha window that opened yesterday evening.
+  int8_t index = 5;
+  while (index >= 0 && nowMinutes < times.minutes[ring[index].opens]) {
+    index--;
+  }
+  if (index < 0) {
+    index = 5;
+  }
+
+  const Boundary& window = ring[index];
+  out.name = window.name;
+
+  // Isha's window ends at tomorrow's Fajr, which drifts a minute or two from
+  // today's -- recompute rather than display yesterday's answer all night.
+  uint16_t next = times.minutes[window.nextPrayer];
+  if (window.nextPrayer == PrayerRules::Fajr) {
+    const PrayerRules::Times tomorrow = ComputeFor(now + 24 * 60 * 60);
+    if ((tomorrow.validMask & (1u << PrayerRules::Fajr)) != 0) {
+      next = tomorrow.minutes[PrayerRules::Fajr];
+    }
+  }
+
+  out.nextHour = static_cast<uint8_t>(next / 60);
+  out.nextMinute = static_cast<uint8_t>(next % 60);
+  return true;
 }
 
 void PrayerController::SetSettings(const Settings& newSettings) {
@@ -83,15 +153,8 @@ void PrayerController::CommitStaged() {
 // dayAnchor. A time-of-day smaller than Dhuhr's belongs to the NEXT civil day
 // (near-polar wrap, see PrayerRules.h).
 uint8_t PrayerController::DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_t (&prayer)[5]) const {
+  const PrayerRules::Times times = ComputeFor(dayAnchor);
   tm local = *std::localtime(&dayAnchor);
-  const PrayerRules::Times times = PrayerRules::Compute(static_cast<uint16_t>(local.tm_year + 1900),
-                                                        static_cast<uint8_t>(local.tm_mon + 1),
-                                                        static_cast<uint8_t>(local.tm_mday),
-                                                        settings.latE2 / 100.0f,
-                                                        settings.lonE2 / 100.0f,
-                                                        settings.utcOffsetQuarters / 4.0f,
-                                                        static_cast<PrayerRules::Method>(settings.method),
-                                                        static_cast<PrayerRules::Madhab>(settings.asrMadhab));
   tm midnight = local;
   midnight.tm_hour = 0;
   midnight.tm_min = 0;
