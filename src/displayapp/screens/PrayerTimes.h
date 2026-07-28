@@ -12,6 +12,7 @@ namespace Pinetime {
   namespace Controllers {
     class PrayerController;
     class DateTime;
+    class Settings;
   }
 
   namespace Applications {
@@ -21,7 +22,9 @@ namespace Pinetime {
       // Settings -> Prayer and in the companion app.
       class PrayerTimes : public Screen {
       public:
-        PrayerTimes(Controllers::PrayerController& prayerController, Controllers::DateTime& dateTimeController);
+        PrayerTimes(Controllers::PrayerController& prayerController,
+                    Controllers::DateTime& dateTimeController,
+                    Controllers::Settings& settingsController);
         ~PrayerTimes() override;
 
         void Refresh() override;
@@ -29,6 +32,7 @@ namespace Pinetime {
       private:
         Controllers::PrayerController& prayerController;
         Controllers::DateTime& dateTimeController;
+        Controllers::Settings& settingsController;
 
         std::array<lv_obj_t*, Controllers::PrayerRules::Prayer::Count> nameLabels {};
         std::array<lv_obj_t*, Controllers::PrayerRules::Prayer::Count> timeLabels {};
@@ -44,7 +48,7 @@ namespace Pinetime {
       static constexpr const char* icon = Screens::Symbols::moon;
 
       static Screens::Screen* Create(AppControllers& controllers) {
-        return new Screens::PrayerTimes(controllers.prayerController, controllers.dateTimeController);
+        return new Screens::PrayerTimes(controllers.prayerController, controllers.dateTimeController, controllers.settingsController);
       };
 
       static bool IsAvailable(Pinetime::Controllers::FS& /*filesystem*/) {

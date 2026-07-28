@@ -15,7 +15,9 @@ namespace Pinetime {
       // Read-only paged view of the upcoming schedule occurrences (14 days).
       class ScheduleList : public Screen {
       public:
-        ScheduleList(DisplayApp* app, Controllers::ScheduleController& scheduleController);
+        ScheduleList(DisplayApp* app,
+                     Controllers::ScheduleController& scheduleController,
+                     Controllers::Settings& settingsController);
         ~ScheduleList() override;
 
         bool OnTouchEvent(TouchEvents event) override;
@@ -32,6 +34,7 @@ namespace Pinetime {
 
         DisplayApp* app;
         Controllers::ScheduleController& scheduleController;
+        Controllers::Settings& settingsController;
 
         std::array<Controllers::ScheduleController::Occurrence, maxOccurrences> occurrences;
         uint8_t occurrenceCount;
@@ -49,7 +52,7 @@ namespace Pinetime {
       static constexpr const char* icon = Screens::Symbols::list;
 
       static Screens::Screen* Create(AppControllers& controllers) {
-        return new Screens::ScheduleList(controllers.displayApp, controllers.scheduleController);
+        return new Screens::ScheduleList(controllers.displayApp, controllers.scheduleController, controllers.settingsController);
       };
 
       static bool IsAvailable(Pinetime::Controllers::FS& /*filesystem*/) {

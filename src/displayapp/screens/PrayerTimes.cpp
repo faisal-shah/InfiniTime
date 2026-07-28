@@ -2,12 +2,16 @@
 #include "displayapp/InfiniTimeTheme.h"
 #include "components/prayer/PrayerController.h"
 #include "components/datetime/DateTimeController.h"
+#include "components/settings/Settings.h"
+#include "displayapp/screens/TimeFormat.h"
 
 using namespace Pinetime::Applications::Screens;
 using Pinetime::Controllers::PrayerRules::Prayer;
 
-PrayerTimes::PrayerTimes(Controllers::PrayerController& prayerController, Controllers::DateTime& dateTimeController)
-  : prayerController {prayerController}, dateTimeController {dateTimeController} {
+PrayerTimes::PrayerTimes(Controllers::PrayerController& prayerController,
+                         Controllers::DateTime& dateTimeController,
+                         Controllers::Settings& settingsController)
+  : prayerController {prayerController}, dateTimeController {dateTimeController}, settingsController {settingsController} {
 
   lv_obj_t* title = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_text_static(title, "Prayer times");
@@ -67,7 +71,9 @@ void PrayerTimes::Render() {
   for (uint8_t p = 0; p < Prayer::Count; p++) {
     if ((times.validMask & (1u << p)) != 0) {
       const bool estimated = (times.estimatedMask & (1u << p)) != 0;
-      lv_label_set_text_fmt(timeLabels[p], "%s%02u:%02u", estimated ? "~" : "", times.minutes[p] / 60, times.minutes[p] % 60);
+      char timeText[FormattedTimeSize];
+      FormatTime(timeText, sizeof(timeText), times.minutes[p] / 60, times.minutes[p] % 60, settingsController.GetClockType());
+      lv_label_set_text_fmt(timeLabels[p], "%s%s", estimated ? "~" : "", timeText);
     } else {
       lv_label_set_text_static(timeLabels[p], "--:--");
     }

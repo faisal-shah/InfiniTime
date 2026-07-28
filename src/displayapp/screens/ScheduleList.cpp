@@ -1,5 +1,6 @@
 #include "displayapp/screens/ScheduleList.h"
 #include "displayapp/DisplayApp.h"
+#include "displayapp/screens/TimeFormat.h"
 #include <ctime>
 
 using namespace Pinetime::Applications::Screens;
@@ -8,9 +9,12 @@ namespace {
   constexpr const char* dayNames[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 }
 
-ScheduleList::ScheduleList(DisplayApp* app, Controllers::ScheduleController& scheduleController)
+ScheduleList::ScheduleList(DisplayApp* app,
+                           Controllers::ScheduleController& scheduleController,
+                           Controllers::Settings& settingsController)
   : app {app},
     scheduleController {scheduleController},
+    settingsController {settingsController},
     occurrenceCount {scheduleController.ComputeUpcoming(occurrences.data(), maxOccurrences)},
     pageIndicator(0, PageCount(occurrenceCount)) {
 
@@ -55,12 +59,13 @@ void ScheduleList::RenderPage() {
     const auto& occurrence = occurrences[idx];
     const time_t when = occurrence.when;
     const tm local = *std::localtime(&when);
+    char timeText[FormattedTimeSize];
+    FormatTime(timeText, sizeof(timeText), local.tm_hour, local.tm_min, settingsController.GetClockType());
     lv_label_set_text_fmt(rowLabels[i],
-                          "#999999 %s %d  %02d:%02d#\n%s",
+                          "#999999 %s %d  %s#\n%s",
                           dayNames[local.tm_wday],
                           local.tm_mday,
-                          local.tm_hour,
-                          local.tm_min,
+                          timeText,
                           occurrence.title);
   }
 }
