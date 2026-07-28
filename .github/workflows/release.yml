@@ -46,12 +46,11 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           version=$(sed -n 's/^project(pinetime VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
-          suffix=$(sed -n 's/^set(PROJECT_VERSION_SUFFIX "\([^"]*\)".*/\1/p' CMakeLists.txt)
-          expected="v${version}${suffix}"
+          expected="v${version}"
           echo "tag=$TAG  firmware=$expected"
           if [ "$TAG" != "$expected" ]; then
             echo "::error::Release tag '$TAG' does not match the firmware version '$expected'."
-            echo "::error::Update PROJECT_VERSION / PROJECT_VERSION_SUFFIX in CMakeLists.txt, or retag."
+            echo "::error::Bump PROJECT_VERSION in CMakeLists.txt, or retag."
             exit 1
           fi
 

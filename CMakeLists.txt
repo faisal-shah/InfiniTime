@@ -3,15 +3,11 @@ cmake_minimum_required(VERSION 3.10)
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose Debug or Release")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-project(pinetime VERSION 1.16.0 LANGUAGES C CXX ASM)
-
-# Fork build identifier, appended to the reported version string. THIS IS THE
-# SOURCE OF TRUTH for what the watch reports over BLE and shows in Sys Info, so
-# the release tag must be "v${PROJECT_VERSION}${PROJECT_VERSION_SUFFIX}" --
-# .github/workflows/release.yml fails the build if they disagree. Without it
-# every fork build reported a bare "1.16.0", so releases were indistinguishable
-# on the watch and the companion's post-update check could never confirm one.
-set(PROJECT_VERSION_SUFFIX "-family.6" CACHE STRING "Fork build identifier, e.g. -family.6")
+# Bump this for every release. It is what the watch reports over BLE and shows
+# in Sys Info, and the release tag must be "v${PROJECT_VERSION}" to match --
+# .github/workflows/release.yml fails the build if they disagree. The fork
+# tracks upstream 1.16.x, so its own releases run from 1.17.0.
+project(pinetime VERSION 1.17.0 LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
