@@ -30,6 +30,8 @@ namespace Pinetime {
         void ShowList();
         void ShowEditor(uint8_t index);
         void SaveEditor();
+        void SetRowText(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm);
+        void UpdateEditorAmPm();
 
         Controllers::MultiAlarmController& multiAlarmController;
         Controllers::Settings& settingsController;
@@ -46,6 +48,7 @@ namespace Pinetime {
         lv_obj_t* btnMode = nullptr;
         lv_obj_t* txtMode = nullptr;
         lv_obj_t* btnSave = nullptr;
+        lv_obj_t* lblAmPm = nullptr; // 12h mode only
         Controllers::MultiAlarmController::Mode editMode = Controllers::MultiAlarmController::Mode::Daily;
         Widgets::Counter hourCounter = Widgets::Counter(0, 23, jetbrains_mono_42);
         Widgets::Counter minuteCounter = Widgets::Counter(0, 59, jetbrains_mono_42);

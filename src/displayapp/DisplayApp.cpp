@@ -599,7 +599,7 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
       break;
     case Apps::PendingAlerts:
       currentScreen =
-        std::make_unique<Screens::PendingAlerts>(this, alertQueue, scheduleController, *systemTask, motorController);
+        std::make_unique<Screens::PendingAlerts>(this, alertQueue, scheduleController, *systemTask, motorController, settingsController);
       break;
 
     case Apps::Notifications:
