@@ -35,7 +35,8 @@ MultiAlarm::~MultiAlarm() {
 void MultiAlarm::ShowList() {
   lv_obj_clean(lv_scr_act());
   editContainer = nullptr;
-  lblAmPm = nullptr; // destroyed by the clean above
+  btnAmPm = nullptr; // destroyed by the clean above
+  lblAmPm = nullptr;
   view = View::List;
 
   listContainer = lv_cont_create(lv_scr_act(), nullptr);
@@ -125,13 +126,23 @@ void MultiAlarm::ShowEditor(uint8_t index) {
   hourCounter.SetValue(alarm.hour);
   lv_obj_align(hourCounter.GetObject(), nullptr, LV_ALIGN_IN_TOP_LEFT, 20, 20);
 
+  btnAmPm = nullptr;
   lblAmPm = nullptr;
   if (twelveHour) {
     hourCounter.SetValueChangedEventCallback(this, [](void* userData) {
       static_cast<MultiAlarm*>(userData)->UpdateEditorAmPm();
     });
-    lblAmPm = lv_label_create(lv_scr_act(), nullptr);
-    lv_obj_align(lblAmPm, nullptr, LV_ALIGN_IN_TOP_LEFT, 20, 120);
+    // A real button, in the gap between the two counters: rolling the hour
+    // counter through twelve just to flip AM/PM is not a control anyone would
+    // find. Tapping it moves the hour by 12, which is all AM/PM means here.
+    btnAmPm = lv_btn_create(lv_scr_act(), nullptr);
+    btnAmPm->user_data = this;
+    lv_obj_set_event_cb(btnAmPm, editorEventHandler);
+    lv_obj_set_size(btnAmPm, 52, 38);
+    lv_obj_align(btnAmPm, nullptr, LV_ALIGN_IN_BOTTOM_MID, 0, -74);
+    lv_obj_set_style_local_border_width(btnAmPm, LV_BTN_PART_MAIN, LV_STATE_DEFAULT, 2);
+    lv_obj_set_style_local_border_color(btnAmPm, LV_BTN_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
+    lblAmPm = lv_label_create(btnAmPm, nullptr);
     UpdateEditorAmPm();
   }
 
@@ -163,17 +174,28 @@ void MultiAlarm::ShowEditor(uint8_t index) {
 }
 
 void MultiAlarm::UpdateEditorAmPm() {
-  if (lblAmPm == nullptr) {
+  if (lblAmPm == nullptr || btnAmPm == nullptr) {
     return;
   }
-  lv_label_set_text_static(lblAmPm, hourCounter.GetValue() < 12 ? "AM" : "PM");
+  const bool pm = hourCounter.GetValue() >= 12;
+  lv_label_set_text_static(lblAmPm, pm ? "PM" : "AM");
+  // Inverted polarity between the two states, so which one is active reads at
+  // a glance: PM is filled white-on-black, AM is outlined white-on-black.
+  lv_obj_set_style_local_bg_color(btnAmPm, LV_BTN_PART_MAIN, LV_STATE_DEFAULT, pm ? LV_COLOR_WHITE : LV_COLOR_BLACK);
+  lv_obj_set_style_local_text_color(lblAmPm, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, pm ? LV_COLOR_BLACK : LV_COLOR_WHITE);
 }
 
 void MultiAlarm::OnEditorEvent(lv_obj_t* obj, lv_event_t event) {
   if (event != LV_EVENT_CLICKED) {
     return;
   }
-  if (obj == btnMode) {
+  if (obj == btnAmPm) {
+    // AM <-> PM is a 12-hour shift of the stored value; the counter keeps
+    // showing the same digits in twelve-hour mode.
+    const int shifted = (hourCounter.GetValue() + 12) % 24;
+    hourCounter.SetValue(shifted);
+    UpdateEditorAmPm();
+  } else if (obj == btnMode) {
     editMode = editMode == Mode::Daily ? Mode::Once : Mode::Daily;
     lv_label_set_text_static(txtMode, editMode == Mode::Daily ? "Daily" : "Once");
   } else if (obj == btnSave) {

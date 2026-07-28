@@ -49,7 +49,8 @@ namespace Pinetime {
         lv_obj_t* btnMode = nullptr;
         lv_obj_t* txtMode = nullptr;
         lv_obj_t* btnSave = nullptr;
-        lv_obj_t* lblAmPm = nullptr; // 12h mode only
+        lv_obj_t* btnAmPm = nullptr; // 12h mode only
+        lv_obj_t* lblAmPm = nullptr;
         Controllers::MultiAlarmController::Mode editMode = Controllers::MultiAlarmController::Mode::Daily;
         Widgets::Counter hourCounter = Widgets::Counter(0, 23, jetbrains_mono_42);
         Widgets::Counter minuteCounter = Widgets::Counter(0, 59, jetbrains_mono_42);
