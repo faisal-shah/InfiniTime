@@ -1,6 +1,7 @@
 #include "displayapp/screens/ScheduleList.h"
 #include "displayapp/DisplayApp.h"
 #include "displayapp/screens/TimeFormat.h"
+#include "components/datetime/DateTimeController.h"
 #include <ctime>
 
 using namespace Pinetime::Applications::Screens;
@@ -11,10 +12,12 @@ namespace {
 
 ScheduleList::ScheduleList(DisplayApp* app,
                            Controllers::ScheduleController& scheduleController,
-                           Controllers::Settings& settingsController)
+                           Controllers::Settings& settingsController,
+                           Controllers::DateTime& dateTimeController)
   : app {app},
     scheduleController {scheduleController},
     settingsController {settingsController},
+    dateTimeController {dateTimeController},
     occurrenceCount {scheduleController.ComputeUpcoming(occurrences.data(), maxOccurrences)},
     pageIndicator(0, PageCount(occurrenceCount)) {
 
@@ -27,7 +30,16 @@ ScheduleList::ScheduleList(DisplayApp* app,
 
   if (occurrenceCount == 0) {
     emptyLabel = lv_label_create(lv_scr_act(), nullptr);
-    lv_label_set_text_static(emptyLabel, "No upcoming\nevents");
+    // Occurrences are computed in a window around *now*, so an unset clock
+    // hides every event -- and after a cold boot the clock sits at 1 January of
+    // the build year, months behind. Saying "no upcoming events" there is a
+    // plain lie: the events are still on the watch, just unreachable.
+    if (!dateTimeController.IsTimeKnown() && scheduleController.GetCount() > 0) {
+      lv_label_set_text_static(emptyLabel, "Watch clock\nnot set.\n\nOpen the phone\napp to sync it.");
+      lv_obj_set_style_local_text_color(emptyLabel, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_ORANGE);
+    } else {
+      lv_label_set_text_static(emptyLabel, "No upcoming\nevents");
+    }
     lv_label_set_align(emptyLabel, LV_LABEL_ALIGN_CENTER);
     lv_obj_align(emptyLabel, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
     return;

@@ -17,7 +17,8 @@ namespace Pinetime {
       public:
         ScheduleList(DisplayApp* app,
                      Controllers::ScheduleController& scheduleController,
-                     Controllers::Settings& settingsController);
+                     Controllers::Settings& settingsController,
+                     Controllers::DateTime& dateTimeController);
         ~ScheduleList() override;
 
         bool OnTouchEvent(TouchEvents event) override;
@@ -35,6 +36,7 @@ namespace Pinetime {
         DisplayApp* app;
         Controllers::ScheduleController& scheduleController;
         Controllers::Settings& settingsController;
+        Controllers::DateTime& dateTimeController;
 
         std::array<Controllers::ScheduleController::Occurrence, maxOccurrences> occurrences;
         uint8_t occurrenceCount;
@@ -52,7 +54,10 @@ namespace Pinetime {
       static constexpr const char* icon = Screens::Symbols::list;
 
       static Screens::Screen* Create(AppControllers& controllers) {
-        return new Screens::ScheduleList(controllers.displayApp, controllers.scheduleController, controllers.settingsController);
+        return new Screens::ScheduleList(controllers.displayApp,
+                                        controllers.scheduleController,
+                                        controllers.settingsController,
+                                        controllers.dateTimeController);
       };
 
       static bool IsAvailable(Pinetime::Controllers::FS& /*filesystem*/) {
