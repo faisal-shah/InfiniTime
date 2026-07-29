@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <task.h>
 #include "displayapp/screens/SystemInfo.h"
-#include "components/fs/FS.h"
 #include <lvgl/lvgl.h>
 #include "displayapp/DisplayApp.h"
 #include "displayapp/screens/Label.h"
@@ -65,9 +64,6 @@ SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
               },
               [this]() -> std::unique_ptr<Screen> {
                 return CreateScreen5();
-              },
-              [this]() -> std::unique_ptr<Screen> {
-                return CreateScreen6();
               }},
              Screens::ScreenListModes::UpDown} {
 }
@@ -100,7 +96,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen1() {
                         BootloaderVersion::VersionString());
   lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(0, 6, label);
+  return std::make_unique<Screens::Label>(0, 5, label);
 }
 
 std::unique_ptr<Screen> SystemInfo::CreateScreen2() {
@@ -179,7 +175,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen2() {
                         touchPanel.GetFwVersion(),
                         TARGET_DEVICE_NAME);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(1, 6, label);
+  return std::make_unique<Screens::Label>(1, 5, label);
 }
 
 extern int mallocFailedCount;
@@ -218,7 +214,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         mallocFailedCount,
                         stackOverflowCount);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(2, 6, label);
+  return std::make_unique<Screens::Label>(2, 5, label);
 }
 
 bool SystemInfo::sortById(const TaskStatus_t& lhs, const TaskStatus_t& rhs) {
@@ -284,7 +280,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen4() {
     }
     lv_table_set_cell_value(infoTask, i + 1, 3, buffer);
   }
-  return std::make_unique<Screens::Label>(3, 6, infoTask);
+  return std::make_unique<Screens::Label>(3, 5, infoTask);
 }
 
 std::unique_ptr<Screen> SystemInfo::CreateScreen5() {
@@ -301,27 +297,5 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen5() {
                            "#FFFF00 InfiniTime#");
   lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(4, 6, label);
-}
-
-// Breadcrumbs from the boot before this one. Their own page because screen 3
-// was already using every line the display has.
-std::unique_ptr<Screen> SystemInfo::CreateScreen6() {
-  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
-  lv_label_set_recolor(label, true);
-  lv_label_set_text_fmt(label,
-                        "#808080 Previous boot#\n"
-                        "\n"
-                        " #808080 Sys msg# %d\n"
-                        " #808080 FS ops# %lu\n"
-                        "\n"
-                        "#808080 This boot#\n"
-                        " #808080 Sys msg# %d\n"
-                        " #808080 FS ops# %lu",
-                        Controllers::NoInit_PrevBootSysMessage,
-                        static_cast<unsigned long>(Controllers::NoInit_PrevBootFsOps),
-                        Controllers::NoInit_LastSysMessage,
-                        static_cast<unsigned long>(Controllers::NoInit_FsOpsInMessage));
-  lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(5, 6, label);
+  return std::make_unique<Screens::Label>(4, 5, label);
 }
