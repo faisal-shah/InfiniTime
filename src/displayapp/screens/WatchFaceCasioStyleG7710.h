@@ -46,8 +46,8 @@ namespace Pinetime {
         static bool IsAvailable(Pinetime::Controllers::FS& filesystem);
 
       private:
-        // Both are on the once-a-minute path: the prayer window is trigonometry
-        // and the task counter reads flash.
+        // Both are on the once-a-minute path and both are RAM-only: the
+        // display task keeps rendering in always-on mode with the flash down.
         void RefreshPrayer();
         void RefreshTasks();
 
@@ -59,7 +59,7 @@ namespace Pinetime {
         Utility::DirtyValue<uint32_t> stepCount {};
         Utility::DirtyValue<uint8_t> heartbeat {};
         Utility::DirtyValue<bool> heartbeatRunning {};
-        Utility::DirtyValue<bool> notificationState {};
+        Utility::DirtyValue<uint8_t> notificationCount {};
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::days>> currentDate;
 
         lv_point_t line_icons_points[3] {{0, 5}, {117, 5}, {122, 0}};
