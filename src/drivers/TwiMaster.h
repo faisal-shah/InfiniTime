@@ -23,6 +23,8 @@ namespace Pinetime {
       ErrorCodes Read(uint8_t deviceAddress, uint8_t* buffer, size_t size, bool stop);
       ErrorCodes Write(uint8_t deviceAddress, const uint8_t* data, size_t size, bool stop);
       void FixHwFreezed();
+      /** Bounded wait for a TWI event; false means the bus wedged. */
+      bool WaitForEvent(volatile uint32_t& event);
       void ConfigurePins() const;
 
       NRF_TWIM_Type* twiBaseAddress;
