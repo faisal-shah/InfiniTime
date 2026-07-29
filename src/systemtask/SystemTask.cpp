@@ -102,7 +102,11 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
 
 void SystemTask::Start() {
   systemTasksMsgQueue = xQueueCreate(10, 1);
-  if (pdPASS != xTaskCreate(SystemTask::Process, "MAIN", 350, this, 1, &taskHandle)) {
+  // BISECT A: the only change on top of v1.18.4. If this build resets a few
+  // seconds after going to sleep, SystemTask's stack size is what destabilised
+  // v1.18.5 -- most likely by shifting the FreeRTOS heap layout rather than by
+  // the size itself.
+  if (pdPASS != xTaskCreate(SystemTask::Process, "MAIN", 600, this, 1, &taskHandle)) {
     APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
   }
 }
