@@ -34,7 +34,7 @@ std::unique_ptr<Screen> SettingPrayerMethod::CreateScreen(unsigned int screenNum
     screenNum,
     nScreens,
     "Prayer method",
-    Symbols::moon,
+    Symbols::mosque,
     prayerController.GetSettings().method,
     [&controller = prayerController](uint32_t index) {
       auto settings = controller.GetSettings();

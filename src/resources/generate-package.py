@@ -37,7 +37,10 @@ def main():
         with open(config_file, 'r') as fd:
             data = json.load(fd)
 
-        resource_names = set(data.keys())
+        # sorted, not set(): set iteration order varies per run under hash
+        # randomisation, which made the resources zip non-reproducible and
+        # defeated byte-comparing two builds to prove the contents matched.
+        resource_names = sorted(data.keys())
         for name in resource_names:
             resource = data[name]
             resource_files.append({
