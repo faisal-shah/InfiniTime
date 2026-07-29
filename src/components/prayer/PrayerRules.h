@@ -234,6 +234,89 @@ namespace Pinetime {
         }
         return result;
       }
+
+      // ---- window selection (display) ----------------------------------
+      //
+      // Which of the day's six windows contains a given moment, and when the
+      // next prayer starts. Kept pure and out of PrayerController so it can be
+      // frozen by host tests: the ordering here is subtle enough to have been
+      // got wrong once (see PrayerWindowTest.cpp).
+
+      // Every boundary must be real; in polar day/night only Dhuhr survives.
+      inline constexpr uint8_t WindowMask = (1u << Fajr) | (1u << Sunrise) | (1u << Dhuhr) | (1u << Asr) | (1u << Maghrib) | (1u << Isha);
+
+      // The six windows in opening order. Sunrise opens the one stretch that
+      // belongs to no prayer, so it has no name -- and, not being a prayer, is
+      // never the answer to "what is next".
+      inline constexpr Prayer WindowOpens[6] = {Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha};
+
+      inline const char* WindowName(uint8_t window) {
+        return window == 1 ? nullptr : Name(WindowOpens[window]);
+      }
+
+      struct Window {
+        uint8_t window;    // index into WindowOpens; 1 (sunrise) means "no prayer"
+        uint16_t nextHour; // start of the next prayer, local time of day
+        uint16_t nextMinute;
+      };
+
+      // `nowMinutes` is minutes since today 00:00. Yesterday and tomorrow are
+      // both required: after isha the next prayer is tomorrow's fajr, and in
+      // the small hours the window we are inside opened yesterday evening.
+      // Returns false if any of the three days is not fully computable.
+      inline bool SelectWindow(const Times& yesterday, const Times& today, const Times& tomorrow, int32_t nowMinutes, Window& out) {
+        const Times* days[3] = {&yesterday, &today, &tomorrow};
+
+        int32_t at[18];
+        uint8_t which[18];
+        uint8_t n = 0;
+        for (int8_t d = 0; d < 3; d++) {
+          const Times& t = *days[d];
+          if ((t.validMask & WindowMask) != WindowMask) {
+            return false;
+          }
+          for (uint8_t i = 0; i < 6; i++) {
+            int32_t minute = t.minutes[WindowOpens[i]];
+            // minutes[] is always a time of day, so a post-dhuhr entry smaller
+            // than dhuhr's belongs to the following civil day (see Compute).
+            // Without this a near-polar summer isha sorts before the maghrib
+            // it follows.
+            if (WindowOpens[i] > Dhuhr && minute < static_cast<int32_t>(t.minutes[Dhuhr])) {
+              minute += 24 * 60;
+            }
+            at[n] = minute + (d - 1) * 24 * 60;
+            which[n] = i;
+            n++;
+          }
+        }
+
+        // Latest boundary at or before now, earliest prayer strictly after.
+        // Scanned rather than indexed: the per-day shift keeps each day sorted
+        // but says nothing about how adjacent days interleave.
+        int8_t current = -1;
+        int8_t next = -1;
+        for (uint8_t i = 0; i < n; i++) {
+          if (at[i] <= nowMinutes) {
+            if (current < 0 || at[i] > at[current]) {
+              current = static_cast<int8_t>(i);
+            }
+          } else if (which[i] != 1) { // sunrise is not a prayer
+            if (next < 0 || at[i] < at[next]) {
+              next = static_cast<int8_t>(i);
+            }
+          }
+        }
+
+        if (current < 0 || next < 0) {
+          return false;
+        }
+
+        const int32_t timeOfDay = ((at[next] % (24 * 60)) + 24 * 60) % (24 * 60);
+        out.window = which[current];
+        out.nextHour = static_cast<uint16_t>(timeOfDay / 60);
+        out.nextMinute = static_cast<uint16_t>(timeOfDay % 60);
+        return true;
+      }
     }
   }
 }

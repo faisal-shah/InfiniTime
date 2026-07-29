@@ -139,11 +139,14 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_obj_set_style_local_text_color(label_prayer_next_ampm, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
   lv_label_set_text_static(label_prayer_next_ampm, "");
 
+  // Placed against the AM/PM label rather than the screen edge: in 24h mode
+  // that label is empty and zero-width, so the time closes up to the edge
+  // instead of hanging 28px short of the row above it.
   label_prayer_next = lv_label_create(lv_scr_act(), nullptr);
-  lv_obj_align(label_prayer_next, lv_scr_act(), LV_ALIGN_IN_TOP_RIGHT, -34, 72);
   lv_obj_set_style_local_text_color(label_prayer_next, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
   lv_obj_set_style_local_text_font(label_prayer_next, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_segment40);
   lv_label_set_text_static(label_prayer_next, "");
+  lv_obj_align(label_prayer_next, label_prayer_next_ampm, LV_ALIGN_OUT_LEFT_MID, -4, -4);
 
   line_prayer_next = lv_line_create(lv_scr_act(), nullptr);
   lv_line_set_points(line_prayer_next, line_prayer_next_points, 3);
@@ -192,10 +195,12 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_label_set_text_static(stepIcon, Symbols::shoe);
   lv_obj_align(stepIcon, stepValue, LV_ALIGN_OUT_LEFT_MID, -5, 0);
 
+  // Anchored to the step icon, not the screen centre: the step count grows
+  // leftwards and a five-digit day would otherwise run into a centred "10/20".
   label_tasks = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_text_color(label_tasks, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
   lv_label_set_text_static(label_tasks, "");
-  lv_obj_align(label_tasks, lv_scr_act(), LV_ALIGN_IN_BOTTOM_MID, 0, -2);
+  lv_obj_align(label_tasks, stepIcon, LV_ALIGN_OUT_LEFT_MID, -8, 0);
 
   taskRefresh = lv_task_create(RefreshTaskCallback, LV_DISP_DEF_REFR_PERIOD, LV_TASK_PRIO_MID, this);
   Refresh();
@@ -317,6 +322,7 @@ void WatchFaceCasioStyleG7710::Refresh() {
     lv_label_set_text_fmt(stepValue, "%lu", stepCount.Get());
     lv_obj_realign(stepValue);
     lv_obj_realign(stepIcon);
+    lv_obj_realign(label_tasks); // anchored to stepIcon, which just moved
   }
 }
 
@@ -329,8 +335,8 @@ void WatchFaceCasioStyleG7710::RefreshPrayer() {
     lv_label_set_text_static(label_prayer_next, "");
     lv_label_set_text_static(label_prayer_next_ampm, "");
     lv_obj_realign(label_prayer_window);
-    lv_obj_realign(label_prayer_next);
     lv_obj_realign(label_prayer_next_ampm);
+    lv_obj_realign(label_prayer_next);
     return;
   }
 
@@ -355,18 +361,20 @@ void WatchFaceCasioStyleG7710::RefreshPrayer() {
   lv_label_set_text(label_prayer_next_ampm, suffix != nullptr ? suffix : "");
 
   lv_obj_realign(label_prayer_window);
-  lv_obj_realign(label_prayer_next);
   lv_obj_realign(label_prayer_next_ampm);
+  lv_obj_realign(label_prayer_next);
 }
 
 void WatchFaceCasioStyleG7710::RefreshTasks() {
-  // CompletedCount() reads every task record from flash, so this is deliberately
-  // on the once-a-minute path rather than the per-frame one.
+  // Both accessors are RAM-only. This runs from the display task, which keeps
+  // rendering in always-on mode after SystemTask has powered the SPI flash
+  // down, so CompletedCount() -- which reads every record back -- must not be
+  // used here.
   const uint8_t total = taskController.GetCount();
   if (total == 0) {
     lv_label_set_text_static(label_tasks, "");
   } else {
-    lv_label_set_text_fmt(label_tasks, "%d/%d", taskController.CompletedCount(), total);
+    lv_label_set_text_fmt(label_tasks, "%d/%d", taskController.CompletedCountCached(), total);
   }
   lv_obj_realign(label_tasks);
 }
