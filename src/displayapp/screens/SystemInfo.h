@@ -44,7 +44,7 @@ namespace Pinetime {
         const Pinetime::Drivers::Cst816S& touchPanel;
         const Pinetime::Drivers::SpiNorFlash& spiNorFlash;
 
-        ScreenList<6> screens;
+        ScreenList<5> screens;
 
         static bool sortById(const TaskStatus_t& lhs, const TaskStatus_t& rhs);
 
@@ -53,7 +53,6 @@ namespace Pinetime {
         std::unique_ptr<Screen> CreateScreen3();
         std::unique_ptr<Screen> CreateScreen4();
         std::unique_ptr<Screen> CreateScreen5();
-        std::unique_ptr<Screen> CreateScreen6();
       };
     }
   }

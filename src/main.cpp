@@ -166,10 +166,7 @@ Pinetime::System::SystemTask systemTask(spi,
                                         touchHandler,
                                         buttonHandler);
 int mallocFailedCount = 0;
-// In no-init RAM: an overflow corrupts a task and the watchdog reboots us, so
-// a counter that resets to zero on boot can never be read back. Surviving the
-// reset is what makes "did we overflow a stack?" answerable from Sys Info.
-int stackOverflowCount __attribute__((section(".noinit")));
+int stackOverflowCount = 0;
 extern "C" {
 void vApplicationMallocFailedHook() {
   mallocFailedCount++;
@@ -184,10 +181,9 @@ void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char* /*pcTaskName*/)
 */
 extern uint32_t __start_noinit_data;
 extern uint32_t __stop_noinit_data;
-static constexpr uint32_t NoInit_MagicValue = 0xDEAD0002;
+static constexpr uint32_t NoInit_MagicValue = 0xDEAD0000;
 uint32_t NoInit_MagicWord __attribute__((section(".noinit")));
 std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime __attribute__((section(".noinit")));
-
 
 void nrfx_gpiote_evt_handler(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action) {
   if (pin == Pinetime::PinMap::Cst816sIrq) {
@@ -372,8 +368,6 @@ int main() {
   Pinetime::BootloaderVersion::SetVersion(NRF_TIMER2->CC[0]);
 
   if (NoInit_MagicWord == NoInit_MagicValue) {
-    // Before SystemTask starts consuming messages and overwriting them.
-    Pinetime::Controllers::FS::SnapshotBootBreadcrumbs();
     dateTimeController.SetCurrentTime(NoInit_BackUpTime);
   } else {
     // Clear Memory to known state

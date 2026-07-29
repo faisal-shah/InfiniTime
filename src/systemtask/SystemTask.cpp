@@ -22,10 +22,6 @@
 using namespace Pinetime::System;
 
 namespace {
-  Pinetime::Drivers::Watchdog* progressWatchdog = nullptr;
-}
-
-namespace {
   inline bool in_isr() {
     return (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0;
   }
@@ -106,12 +102,13 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
 
 void SystemTask::Start() {
   systemTasksMsgQueue = xQueueCreate(10, 1);
-  // 350 words was sized for upstream's SystemTask, which never wrote to the
-  // filesystem. This fork commits the schedule, task, prayer, beacon and alarm
-  // files here, and lfs_rename has the largest stack frame in littlefs (224 B);
-  // through lfs_dir_commit -> lfs_dir_compact -> lfs_dir_traverse, which
-  // recurses at 112 B a level, the chain passes 1200 B before this task's own
-  // frames and the Cortex-M4F context save.
+  // Measured on hardware: after churning the schedule and task lists this task
+  // peaked at 1308 of its 1400 bytes -- 23 words free, against a monitor that
+  // warns below 20. lfs_rename's compaction path is what eats it, and the
+  // simulator shows lfs_dir_traverse reaching four levels of recursion at 112
+  // bytes each, which is 1420 bytes and over the edge. Upstream sized this task
+  // for a SystemTask that never wrote to the filesystem; this fork commits five
+  // different files from it.
   if (pdPASS != xTaskCreate(SystemTask::Process, "MAIN", 600, this, 1, &taskHandle)) {
     APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
   }
@@ -126,17 +123,6 @@ void SystemTask::Process(void* instance) {
 void SystemTask::Work() {
   BootErrors bootError = BootErrors::None;
 
-  // Feed the watchdog whenever the filesystem makes progress: this task
-  // commits files inline in the loop that feeds it, so a slow-but-advancing
-  // commit would otherwise be indistinguishable from a lockup. The held-button
-  // check mirrors the loop below -- withholding the reload is the force-reboot
-  // escape hatch, and feeding it from here unconditionally would remove it.
-  progressWatchdog = &watchdog;
-  Controllers::FS::SetProgressHook([]() {
-    if (progressWatchdog != nullptr && nrf_gpio_pin_read(PinMap::Button) == 0) {
-      progressWatchdog->Reload();
-    }
-  });
   watchdog.Setup(7, Drivers::Watchdog::SleepBehaviour::Run, Drivers::Watchdog::HaltBehaviour::Pause);
   watchdog.Start();
   NRF_LOG_INFO("Last reset reason : %s", Pinetime::Drivers::ResetReasonToString(watchdog.GetResetReason()));
@@ -244,10 +230,6 @@ void SystemTask::Work() {
       waitTime = stateUpdatePeriod - elapsed;
     }
     if (xQueueReceive(systemTasksMsgQueue, &msg, waitTime) == pdTRUE) {
-        // Breadcrumb for post-mortem after a watchdog reboot: which message we
-        // were handling, and how much filesystem work it did (FS::ProgressTick).
-        Controllers::NoInit_LastSysMessage = static_cast<uint8_t>(msg);
-        Controllers::NoInit_FsOpsInMessage = 0;
       switch (msg) {
         case Messages::EnableSleeping:
           wakeLocksHeld--;
@@ -309,19 +291,12 @@ void SystemTask::Work() {
           scheduleController.Reschedule();
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
-        case Messages::ScheduleSyncReceived: {
-          // Same flash-wake bracket as the prayer/beacon/alarm commits. The
-          // BLE task releases its wake lock as soon as it queues this message,
-          // so do not rely on it still being held by the time we run.
-          FlashWakeScope flash(*this);
+        case Messages::ScheduleSyncReceived:
           scheduleController.CommitStaged();
           break;
-        }
-        case Messages::TaskSyncReceived: {
-          FlashWakeScope flash(*this);
+        case Messages::TaskSyncReceived:
           taskController.CommitStaged();
           break;
-        }
         case Messages::SetOffPrayerAlert:
           alertQueue.Push(Controllers::AlertQueue::Source::Prayer,
                           static_cast<uint32_t>(prayerController.LastFiredDue()),
@@ -507,15 +482,7 @@ void SystemTask::Work() {
     }
     elapsed = xTaskGetTickCount() - lastStateUpdate;
     if (elapsed >= stateUpdatePeriod) {
-      // UpdateMotion() drives an I2C transfer, and this whole block runs
-      // before watchdog.Reload() below. Mark the breadcrumb while we are in
-      // there so a reboot from a wedged bus is distinguishable from one inside
-      // a message handler; 0xF0 is outside the Messages enum. Restored after,
-      // so the normal reading stays the last real message.
-      const uint8_t breadcrumb = Controllers::NoInit_LastSysMessage;
-      Controllers::NoInit_LastSysMessage = 0xF0;
       UpdateMotion();
-      Controllers::NoInit_LastSysMessage = breadcrumb;
       if (isBleDiscoveryTimerRunning) {
         if (bleDiscoveryTimer == 0) {
           isBleDiscoveryTimerRunning = false;
