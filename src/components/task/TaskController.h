@@ -40,6 +40,7 @@ namespace Pinetime {
         char title[TitleSize];
         uint32_t lastModified;
       };
+
       static_assert(sizeof(Task) == 31, "Task layout is part of the BLE protocol");
       static_assert(MaxTasks <= 64, "StagedList uses a uint64_t received-bitmask");
 
@@ -50,24 +51,30 @@ namespace Pinetime {
       // --- definition staging (BLE task; TaskService holds the wake lock) ---
       bool BeginStaging(uint8_t count, uint32_t version);
       bool StageTask(uint8_t index, const Task& task);
+
       bool StagingComplete() const {
         return staged.Complete();
       }
+
       void DiscardStaging() {
         staged.Discard();
       }
+
       uint8_t GetStagedCount() const {
         return staged.StagedCount();
       }
+
       // SystemTask only, flash awake (renames the staging file to live).
       void CommitStaged();
 
       uint8_t GetCount() const {
         return staged.Count();
       }
+
       uint32_t GetVersion() const {
         return staged.Version();
       }
+
       bool ReadTask(uint8_t index, Task& out) const;
 
       // --- completion + streak (watch-only) ---
@@ -77,9 +84,21 @@ namespace Pinetime {
       void ToggleAt(uint8_t index);
       /** Number of current tasks ticked today. */
       uint8_t CompletedCount() const;
+
+      /** Completed count without touching the filesystem. CommitStaged()
+          prunes doneIds to the ids in the live list and RollOverDay() clears
+          it, so doneCount is exactly CompletedCount() -- but in RAM. Watch
+          faces must use this: the display task keeps rendering in always-on
+          mode with the SPI flash powered down, so a read there would come
+          back as garbage. */
+      uint8_t CompletedCountCached() const {
+        return doneCount;
+      }
+
       uint16_t GetStreak() const {
         return streak;
       }
+
       /** Phone override of the streak (parent forgives a day / sets a reward). */
       void SetStreak(uint16_t value);
       /** Evaluate the day that just ended into the streak, then clear the ticks. */
