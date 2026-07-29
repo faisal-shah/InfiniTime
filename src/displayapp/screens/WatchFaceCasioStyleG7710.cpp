@@ -385,7 +385,7 @@ void WatchFaceCasioStyleG7710::RefreshPrayer() {
   const uint8_t hour = SplitHour(window.nextHour, settingsController.GetClockType(), &suffix);
   lv_label_set_text_fmt(label_prayer_next, suffix != nullptr ? "%d:%02d" : "%02d:%02d", hour, window.nextMinute);
   lv_label_set_text(label_prayer_next_ampm, suffix != nullptr ? suffix : "");
-  lv_label_set_text_static(prayerIcon, Symbols::starAndCrescent);
+  lv_label_set_text_static(prayerIcon, Symbols::mosque);
 
   lv_obj_realign(label_prayer_window);
   lv_obj_realign(label_prayer_next_ampm);

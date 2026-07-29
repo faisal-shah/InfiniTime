@@ -49,7 +49,7 @@ namespace Pinetime {
     template <>
     struct AppTraits<Apps::Schedule> {
       static constexpr Apps app = Apps::Schedule;
-      static constexpr const char* icon = Screens::Symbols::list;
+      static constexpr const char* icon = Screens::Symbols::calendar;
 
       static Screens::Screen* Create(AppControllers& controllers) {
         return new Screens::ScheduleList(controllers.displayApp, controllers.scheduleController, controllers.settingsController);
