@@ -48,24 +48,6 @@ void TwiMaster::Init() {
   xSemaphoreGive(mutex);
 }
 
-
-// Bounded replacement for the bare spin loops below. The data phase already
-// had a cycle-count guard (HwFreezedDelay + FixHwFreezed); the start, stop and
-// suspend phases did not, and a bus wedged in one of those spins forever. That
-// hangs whichever task is driving the transfer -- and SystemTask drives one
-// from UpdateMotion(), inside the periodic block that reloads the watchdog, so
-// the watch reboots with reason "wdg" and no other trace.
-bool TwiMaster::WaitForEvent(volatile uint32_t& event) {
-  const uint32_t start = DWT->CYCCNT;
-  while (!event && !twiBaseAddress->EVENTS_ERROR) {
-    if ((DWT->CYCCNT - start) > HwFreezedDelay) {
-      FixHwFreezed();
-      return false;
-    }
-  }
-  return true;
-}
-
 TwiMaster::ErrorCodes TwiMaster::Read(uint8_t deviceAddress, uint8_t registerAddress, uint8_t* data, size_t size) {
   xSemaphoreTake(mutex, portMAX_DELAY);
   Wakeup();
@@ -96,9 +78,8 @@ TwiMaster::ErrorCodes TwiMaster::Read(uint8_t deviceAddress, uint8_t* buffer, si
 
   twiBaseAddress->TASKS_STARTRX = 1;
 
-  if (!WaitForEvent(twiBaseAddress->EVENTS_RXSTARTED)) {
-    return ErrorCodes::TransactionFailed;
-  }
+  while (!twiBaseAddress->EVENTS_RXSTARTED && !twiBaseAddress->EVENTS_ERROR)
+    ;
   twiBaseAddress->EVENTS_RXSTARTED = 0x0UL;
 
   txStartedCycleCount = DWT->CYCCNT;
@@ -114,15 +95,13 @@ TwiMaster::ErrorCodes TwiMaster::Read(uint8_t deviceAddress, uint8_t* buffer, si
 
   if (stop || twiBaseAddress->EVENTS_ERROR) {
     twiBaseAddress->TASKS_STOP = 0x1UL;
-    if (!WaitForEvent(twiBaseAddress->EVENTS_STOPPED)) {
-      return ErrorCodes::TransactionFailed;
-    }
+    while (!twiBaseAddress->EVENTS_STOPPED)
+      ;
     twiBaseAddress->EVENTS_STOPPED = 0x0UL;
   } else {
     twiBaseAddress->TASKS_SUSPEND = 0x1UL;
-    if (!WaitForEvent(twiBaseAddress->EVENTS_SUSPENDED)) {
-      return ErrorCodes::TransactionFailed;
-    }
+    while (!twiBaseAddress->EVENTS_SUSPENDED)
+      ;
     twiBaseAddress->EVENTS_SUSPENDED = 0x0UL;
   }
 
@@ -140,9 +119,8 @@ TwiMaster::ErrorCodes TwiMaster::Write(uint8_t deviceAddress, const uint8_t* dat
 
   twiBaseAddress->TASKS_STARTTX = 1;
 
-  if (!WaitForEvent(twiBaseAddress->EVENTS_TXSTARTED)) {
-    return ErrorCodes::TransactionFailed;
-  }
+  while (!twiBaseAddress->EVENTS_TXSTARTED && !twiBaseAddress->EVENTS_ERROR)
+    ;
   twiBaseAddress->EVENTS_TXSTARTED = 0x0UL;
 
   txStartedCycleCount = DWT->CYCCNT;
@@ -158,15 +136,13 @@ TwiMaster::ErrorCodes TwiMaster::Write(uint8_t deviceAddress, const uint8_t* dat
 
   if (stop || twiBaseAddress->EVENTS_ERROR) {
     twiBaseAddress->TASKS_STOP = 0x1UL;
-    if (!WaitForEvent(twiBaseAddress->EVENTS_STOPPED)) {
-      return ErrorCodes::TransactionFailed;
-    }
+    while (!twiBaseAddress->EVENTS_STOPPED)
+      ;
     twiBaseAddress->EVENTS_STOPPED = 0x0UL;
   } else {
     twiBaseAddress->TASKS_SUSPEND = 0x1UL;
-    if (!WaitForEvent(twiBaseAddress->EVENTS_SUSPENDED)) {
-      return ErrorCodes::TransactionFailed;
-    }
+    while (!twiBaseAddress->EVENTS_SUSPENDED)
+      ;
     twiBaseAddress->EVENTS_SUSPENDED = 0x0UL;
   }
 
