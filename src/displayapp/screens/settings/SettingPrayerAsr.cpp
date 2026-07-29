@@ -15,7 +15,7 @@ SettingPrayerAsr::SettingPrayerAsr(Pinetime::Controllers::PrayerController& pray
       0,
       1,
       "Asr madhab",
-      Symbols::moon,
+      Symbols::mosque,
       prayerController.GetSettings().asrMadhab,
       [&controller = prayerController](uint32_t index) {
         auto settings = controller.GetSettings();
