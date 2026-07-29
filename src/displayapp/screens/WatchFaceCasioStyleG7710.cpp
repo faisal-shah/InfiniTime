@@ -5,7 +5,6 @@
 #include <cctype>
 #include "displayapp/screens/BatteryIcon.h"
 #include "displayapp/screens/BleIcon.h"
-#include "displayapp/screens/NotificationIcon.h"
 #include "displayapp/screens/Symbols.h"
 #include "displayapp/screens/TimeFormat.h"
 #include "components/battery/BatteryController.h"
@@ -82,9 +81,12 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_label_set_text_static(bleIcon, Symbols::bluetooth);
   lv_obj_align(bleIcon, batteryPlug, LV_ALIGN_OUT_LEFT_MID, -5, 0);
 
+  // How many notifications are waiting, as "4!" -- there is no room for a
+  // badge circle in this row. Empty at zero. Aligned to the left of the BLE
+  // icon so it grows leftwards and leaves the rest of the row alone.
   notificationIcon = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_text_color(notificationIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
-  lv_label_set_text_static(notificationIcon, NotificationIcon::GetIcon(false));
+  lv_label_set_text_static(notificationIcon, "");
   lv_obj_align(notificationIcon, bleIcon, LV_ALIGN_OUT_LEFT_MID, -5, 0);
 
   label_day_of_week = lv_label_create(lv_scr_act(), nullptr);
@@ -249,16 +251,22 @@ void WatchFaceCasioStyleG7710::Refresh() {
   if (bleState.IsUpdated() || bleRadioEnabled.IsUpdated()) {
     lv_label_set_text_static(bleIcon, BleIcon::GetIcon(bleState.Get()));
   }
+  // Updated before the realigns below, not after: this label's width changes
+  // with the count, and realigning a stale width leaves it a frame behind.
+  notificationCount = static_cast<uint8_t>(notificatioManager.NbNotifications());
+  if (notificationCount.IsUpdated()) {
+    if (notificationCount.Get() == 0) {
+      lv_label_set_text_static(notificationIcon, "");
+    } else {
+      lv_label_set_text_fmt(notificationIcon, "%d!", notificationCount.Get());
+    }
+  }
+
   lv_obj_realign(label_battery_value);
   lv_obj_realign(batteryIcon.GetObject());
   lv_obj_realign(batteryPlug);
   lv_obj_realign(bleIcon);
   lv_obj_realign(notificationIcon);
-
-  notificationState = notificatioManager.AreNewNotificationsAvailable();
-  if (notificationState.IsUpdated()) {
-    lv_label_set_text_static(notificationIcon, NotificationIcon::GetIcon(notificationState.Get()));
-  }
 
   currentDateTime = std::chrono::time_point_cast<std::chrono::minutes>(dateTimeController.CurrentDateTime());
   if (currentDateTime.IsUpdated()) {
