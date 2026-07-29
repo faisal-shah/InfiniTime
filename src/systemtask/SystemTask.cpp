@@ -507,7 +507,15 @@ void SystemTask::Work() {
     }
     elapsed = xTaskGetTickCount() - lastStateUpdate;
     if (elapsed >= stateUpdatePeriod) {
+      // UpdateMotion() drives an I2C transfer, and this whole block runs
+      // before watchdog.Reload() below. Mark the breadcrumb while we are in
+      // there so a reboot from a wedged bus is distinguishable from one inside
+      // a message handler; 0xF0 is outside the Messages enum. Restored after,
+      // so the normal reading stays the last real message.
+      const uint8_t breadcrumb = Controllers::NoInit_LastSysMessage;
+      Controllers::NoInit_LastSysMessage = 0xF0;
       UpdateMotion();
+      Controllers::NoInit_LastSysMessage = breadcrumb;
       if (isBleDiscoveryTimerRunning) {
         if (bleDiscoveryTimer == 0) {
           isBleDiscoveryTimerRunning = false;
