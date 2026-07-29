@@ -70,12 +70,15 @@ FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
       .block_count = size / blockSize,
       .block_cycles = 1000u,
 
-      // 16 meant a metadata traversal ran as thousands of 16-byte SPI
-      // transactions. These are runtime buffers only -- no on-disk format
-      // change -- and 256 is a multiple of read_size/prog_size and a factor
-      // of block_size, as littlefs requires.
-      .cache_size = 256,
-      .lookahead_size = 64,
+      // Do NOT raise these without first giving littlefs static buffers.
+      // lfs_malloc() is newlib malloc, and this firmware links with
+      // __HeapBase == __HeapLimit -- a zero-byte newlib heap. 16-byte
+      // allocations survive; 256-byte ones fail, and every lfs_file_open then
+      // returns LFS_ERR_NOMEM, which breaks resource upload and every list
+      // sync while leaving RAM-only features looking fine. Shipped as v1.18.7
+      // and reverted in v1.18.8.
+      .cache_size = 16,
+      .lookahead_size = 16,
 
       .name_max = 50,
       .attr_max = 50,
