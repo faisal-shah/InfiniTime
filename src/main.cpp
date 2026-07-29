@@ -188,6 +188,7 @@ static constexpr uint32_t NoInit_MagicValue = 0xDEAD0001;
 uint32_t NoInit_MagicWord __attribute__((section(".noinit")));
 std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime __attribute__((section(".noinit")));
 
+
 void nrfx_gpiote_evt_handler(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action) {
   if (pin == Pinetime::PinMap::Cst816sIrq) {
     systemTask.PushMessage(Pinetime::System::Messages::OnTouchEvent);

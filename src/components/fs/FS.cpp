@@ -4,7 +4,43 @@
 #include <lvgl/lvgl.h>
 #include "nrf_assert.h"
 
+
+
 using namespace Pinetime::Controllers;
+
+namespace {
+#ifdef __arm__
+  #define FS_NOINIT __attribute__((section(".noinit")))
+#else
+  #define FS_NOINIT
+#endif
+  void (*progressHook)() = nullptr;
+}
+
+namespace Pinetime {
+  namespace Controllers {
+    // Breadcrumbs in no-init RAM: they survive the reboot they are meant to
+    // explain, and Sys Info reports them afterwards.
+    uint32_t NoInit_FsOpsInMessage FS_NOINIT;
+    uint8_t NoInit_LastSysMessage FS_NOINIT;
+  }
+}
+
+void FS::SetProgressHook(void (*hook)()) {
+  progressHook = hook;
+}
+
+// Called from every littlefs device callback, i.e. on every read/prog/erase.
+// Counts the device operations done inside the current SystemTask message, and
+// reloads the watchdog: SystemTask commits files inline in the loop that feeds
+// it, so a filesystem operation that is slow but still advancing would
+// otherwise look exactly like a lockup and reboot the watch.
+void FS::ProgressTick() {
+  Controllers::NoInit_FsOpsInMessage++;
+  if (progressHook != nullptr) {
+    progressHook();
+  }
+}
 
 FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
   : flashDriver {driver},
@@ -21,8 +57,12 @@ FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
       .block_count = size / blockSize,
       .block_cycles = 1000u,
 
-      .cache_size = 16,
-      .lookahead_size = 16,
+      // 16 meant a metadata traversal ran as thousands of 16-byte SPI
+      // transactions. These are runtime buffers only -- no on-disk format
+      // change -- and 256 is a multiple of read_size/prog_size and a factor
+      // of block_size, as littlefs requires.
+      .cache_size = 256,
+      .lookahead_size = 64,
 
       .name_max = 50,
       .attr_max = 50,
@@ -139,6 +179,7 @@ int FS::SectorSync(const struct lfs_config* /*c*/) {
 int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize);
+  FS::ProgressTick();
   lfs.flashDriver.SectorErase(address);
   return lfs.flashDriver.EraseFailed() ? -1 : 0;
 }
@@ -146,6 +187,7 @@ int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
 int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, const void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize) + off;
+  FS::ProgressTick();
   lfs.flashDriver.Write(address, (uint8_t*) buffer, size);
   return lfs.flashDriver.ProgramFailed() ? -1 : 0;
 }
@@ -153,6 +195,7 @@ int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off,
 int FS::SectorRead(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize) + off;
+  FS::ProgressTick();
   lfs.flashDriver.Read(address, static_cast<uint8_t*>(buffer), size);
   return 0;
 }
