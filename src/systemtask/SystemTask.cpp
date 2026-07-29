@@ -22,6 +22,10 @@
 using namespace Pinetime::System;
 
 namespace {
+  Pinetime::Drivers::Watchdog* progressWatchdog = nullptr;
+}
+
+namespace {
   inline bool in_isr() {
     return (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0;
   }
@@ -122,6 +126,17 @@ void SystemTask::Process(void* instance) {
 void SystemTask::Work() {
   BootErrors bootError = BootErrors::None;
 
+  // Feed the watchdog whenever the filesystem makes progress: this task
+  // commits files inline in the loop that feeds it, so a slow-but-advancing
+  // commit would otherwise be indistinguishable from a lockup. The held-button
+  // check mirrors the loop below -- withholding the reload is the force-reboot
+  // escape hatch, and feeding it from here unconditionally would remove it.
+  progressWatchdog = &watchdog;
+  Controllers::FS::SetProgressHook([]() {
+    if (progressWatchdog != nullptr && nrf_gpio_pin_read(PinMap::Button) == 0) {
+      progressWatchdog->Reload();
+    }
+  });
   watchdog.Setup(7, Drivers::Watchdog::SleepBehaviour::Run, Drivers::Watchdog::HaltBehaviour::Pause);
   watchdog.Start();
   NRF_LOG_INFO("Last reset reason : %s", Pinetime::Drivers::ResetReasonToString(watchdog.GetResetReason()));
@@ -229,6 +244,10 @@ void SystemTask::Work() {
       waitTime = stateUpdatePeriod - elapsed;
     }
     if (xQueueReceive(systemTasksMsgQueue, &msg, waitTime) == pdTRUE) {
+        // Breadcrumb for post-mortem after a watchdog reboot: which message we
+        // were handling, and how much filesystem work it did (FS::ProgressTick).
+        Controllers::NoInit_LastSysMessage = static_cast<uint8_t>(msg);
+        Controllers::NoInit_FsOpsInMessage = 0;
       switch (msg) {
         case Messages::EnableSleeping:
           wakeLocksHeld--;

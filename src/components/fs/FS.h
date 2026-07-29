@@ -8,6 +8,11 @@
 
 namespace Pinetime {
   namespace Controllers {
+    // No-init breadcrumbs; survive a watchdog reboot. Shown in Sys Info.
+    extern uint32_t NoInit_FsOpsInMessage;
+    extern uint8_t NoInit_LastSysMessage;
+  }
+  namespace Controllers {
     class FS {
     public:
       FS(Pinetime::Drivers::SpiNorFlash&);
@@ -38,6 +43,11 @@ namespace Pinetime {
       };
 
       void Init();
+
+      // Breadcrumbs for diagnosing a watchdog reboot during filesystem work.
+      // See FS.cpp.
+      static void SetProgressHook(void (*hook)());
+      static void ProgressTick();
 
       int FileOpen(lfs_file_t* file_p, const char* fileName, const int flags);
       int FileClose(lfs_file_t* file_p);

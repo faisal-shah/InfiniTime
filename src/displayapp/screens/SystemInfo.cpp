@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <task.h>
 #include "displayapp/screens/SystemInfo.h"
+#include "components/fs/FS.h"
 #include <lvgl/lvgl.h>
 #include "displayapp/DisplayApp.h"
 #include "displayapp/screens/Label.h"
@@ -198,7 +199,10 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         " #808080 Free# %d/%d\n"
                         " #808080 Min free# %d\n"
                         " #808080 Alloc err# %d\n"
-                        " #808080 Ovrfl err# %d",
+                        " #808080 Ovrfl err# %d\n"
+                        "\n"
+                        "#808080 Last sys msg# %d\n"
+                        " #808080 FS ops# %lu",
                         bleAddr[5],
                         bleAddr[4],
                         bleAddr[3],
@@ -212,7 +216,9 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         xPortGetHeapSize(),
                         xPortGetMinimumEverFreeHeapSize(),
                         mallocFailedCount,
-                        stackOverflowCount);
+                        stackOverflowCount,
+                        Controllers::NoInit_LastSysMessage,
+                        static_cast<unsigned long>(Controllers::NoInit_FsOpsInMessage));
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
   return std::make_unique<Screens::Label>(2, 5, label);
 }
