@@ -102,7 +102,13 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
 
 void SystemTask::Start() {
   systemTasksMsgQueue = xQueueCreate(10, 1);
-  if (pdPASS != xTaskCreate(SystemTask::Process, "MAIN", 350, this, 1, &taskHandle)) {
+  // 350 words was sized for upstream's SystemTask, which never wrote to the
+  // filesystem. This fork commits the schedule, task, prayer, beacon and alarm
+  // files here, and lfs_rename has the largest stack frame in littlefs (224 B);
+  // through lfs_dir_commit -> lfs_dir_compact -> lfs_dir_traverse, which
+  // recurses at 112 B a level, the chain passes 1200 B before this task's own
+  // frames and the Cortex-M4F context save.
+  if (pdPASS != xTaskCreate(SystemTask::Process, "MAIN", 600, this, 1, &taskHandle)) {
     APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
   }
 }
@@ -284,12 +290,19 @@ void SystemTask::Work() {
           scheduleController.Reschedule();
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
-        case Messages::ScheduleSyncReceived:
+        case Messages::ScheduleSyncReceived: {
+          // Same flash-wake bracket as the prayer/beacon/alarm commits. The
+          // BLE task releases its wake lock as soon as it queues this message,
+          // so do not rely on it still being held by the time we run.
+          FlashWakeScope flash(*this);
           scheduleController.CommitStaged();
           break;
-        case Messages::TaskSyncReceived:
+        }
+        case Messages::TaskSyncReceived: {
+          FlashWakeScope flash(*this);
           taskController.CommitStaged();
           break;
+        }
         case Messages::SetOffPrayerAlert:
           alertQueue.Push(Controllers::AlertQueue::Source::Prayer,
                           static_cast<uint32_t>(prayerController.LastFiredDue()),
