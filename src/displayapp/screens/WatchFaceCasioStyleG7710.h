@@ -85,9 +85,11 @@ namespace Pinetime {
         lv_obj_t* line_prayer_window;
         lv_obj_t* label_prayer_next;
         lv_obj_t* label_prayer_next_ampm;
+        lv_obj_t* prayerIcon;
         lv_obj_t* line_prayer_next;
         // Bottom centre, between heart rate and steps.
         lv_obj_t* label_tasks;
+        lv_obj_t* tasksIcon;
         lv_obj_t* backgroundLabel;
         lv_obj_t* bleIcon;
         lv_obj_t* batteryPlug;

@@ -54,7 +54,7 @@ namespace Pinetime {
     template <>
     struct AppTraits<Apps::Tasks> {
       static constexpr Apps app = Apps::Tasks;
-      static constexpr const char* icon = Screens::Symbols::check;
+      static constexpr const char* icon = Screens::Symbols::tasks;
 
       static Screens::Screen* Create(AppControllers& controllers) {
         return new Screens::Tasks(controllers.displayApp, controllers.tasksController);

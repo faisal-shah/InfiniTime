@@ -148,7 +148,16 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
   lv_obj_set_style_local_text_color(label_prayer_next, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
   lv_obj_set_style_local_text_font(label_prayer_next, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, font_segment40);
   lv_label_set_text_static(label_prayer_next, "");
-  lv_obj_align(label_prayer_next, label_prayer_next_ampm, LV_ALIGN_OUT_LEFT_MID, -4, -4);
+  lv_obj_align(label_prayer_next, label_prayer_next_ampm, LV_ALIGN_OUT_LEFT_MID, -2, -4);
+
+  prayerIcon = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_set_style_local_text_color(prayerIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_label_set_text_static(prayerIcon, "");
+  // Fixed at the left of the row rather than hung off the time: the 7-segment
+  // digits have wildly different left side-bearings (a "1" carries ~15px, a
+  // "4" almost none), so following the label's edge made the visual gap swing
+  // from touching to a chasm depending on the hour.
+  lv_obj_align(prayerIcon, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 106, 74);
 
   line_prayer_next = lv_line_create(lv_scr_act(), nullptr);
   lv_line_set_points(line_prayer_next, line_prayer_next_points, 3);
@@ -199,10 +208,16 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
 
   // Anchored to the step icon, not the screen centre: the step count grows
   // leftwards and a five-digit day would otherwise run into a centred "10/20".
+  // The icon then hangs off the counter, so the whole group stays right-anchored.
   label_tasks = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_text_color(label_tasks, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
   lv_label_set_text_static(label_tasks, "");
   lv_obj_align(label_tasks, stepIcon, LV_ALIGN_OUT_LEFT_MID, -8, 0);
+
+  tasksIcon = lv_label_create(lv_scr_act(), nullptr);
+  lv_obj_set_style_local_text_color(tasksIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, color_text);
+  lv_label_set_text_static(tasksIcon, "");
+  lv_obj_align(tasksIcon, label_tasks, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 
   taskRefresh = lv_task_create(RefreshTaskCallback, LV_DISP_DEF_REFR_PERIOD, LV_TASK_PRIO_MID, this);
   Refresh();
@@ -258,7 +273,7 @@ void WatchFaceCasioStyleG7710::Refresh() {
     if (notificationCount.Get() == 0) {
       lv_label_set_text_static(notificationIcon, "");
     } else {
-      lv_label_set_text_fmt(notificationIcon, "%d!", notificationCount.Get());
+      lv_label_set_text_fmt(notificationIcon, "%d%s", notificationCount.Get(), Symbols::bell);
     }
   }
 
@@ -331,6 +346,7 @@ void WatchFaceCasioStyleG7710::Refresh() {
     lv_obj_realign(stepValue);
     lv_obj_realign(stepIcon);
     lv_obj_realign(label_tasks); // anchored to stepIcon, which just moved
+    lv_obj_realign(tasksIcon);   // and the icon hangs off label_tasks
   }
 }
 
@@ -342,9 +358,11 @@ void WatchFaceCasioStyleG7710::RefreshPrayer() {
     lv_label_set_text_static(label_prayer_window, "UNSET");
     lv_label_set_text_static(label_prayer_next, "");
     lv_label_set_text_static(label_prayer_next_ampm, "");
+    lv_label_set_text_static(prayerIcon, "");
     lv_obj_realign(label_prayer_window);
     lv_obj_realign(label_prayer_next_ampm);
     lv_obj_realign(label_prayer_next);
+    lv_obj_realign(prayerIcon);
     return;
   }
 
@@ -367,10 +385,12 @@ void WatchFaceCasioStyleG7710::RefreshPrayer() {
   const uint8_t hour = SplitHour(window.nextHour, settingsController.GetClockType(), &suffix);
   lv_label_set_text_fmt(label_prayer_next, suffix != nullptr ? "%d:%02d" : "%02d:%02d", hour, window.nextMinute);
   lv_label_set_text(label_prayer_next_ampm, suffix != nullptr ? suffix : "");
+  lv_label_set_text_static(prayerIcon, Symbols::starAndCrescent);
 
   lv_obj_realign(label_prayer_window);
   lv_obj_realign(label_prayer_next_ampm);
   lv_obj_realign(label_prayer_next);
+  lv_obj_realign(prayerIcon);
 }
 
 void WatchFaceCasioStyleG7710::RefreshTasks() {
@@ -381,10 +401,13 @@ void WatchFaceCasioStyleG7710::RefreshTasks() {
   const uint8_t total = taskController.GetCount();
   if (total == 0) {
     lv_label_set_text_static(label_tasks, "");
+    lv_label_set_text_static(tasksIcon, "");
   } else {
     lv_label_set_text_fmt(label_tasks, "%d/%d", taskController.CompletedCountCached(), total);
+    lv_label_set_text_static(tasksIcon, Symbols::tasks);
   }
   lv_obj_realign(label_tasks);
+  lv_obj_realign(tasksIcon); // anchored to label_tasks, whose width just changed
 }
 
 bool WatchFaceCasioStyleG7710::IsAvailable(Pinetime::Controllers::FS& filesystem) {
