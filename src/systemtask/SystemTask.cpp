@@ -1,4 +1,5 @@
 #include "systemtask/SystemTask.h"
+#include "components/fs/FS.h"
 #include <hal/nrf_rtc.h>
 #include <libraries/gpiote/app_gpiote.h>
 #include <libraries/log/nrf_log.h>
@@ -230,6 +231,8 @@ void SystemTask::Work() {
       waitTime = stateUpdatePeriod - elapsed;
     }
     if (xQueueReceive(systemTasksMsgQueue, &msg, waitTime) == pdTRUE) {
+        Controllers::NoInit_LastSysMessage = static_cast<uint8_t>(msg);
+        Controllers::NoInit_FsOpsInMessage = 0;
       switch (msg) {
         case Messages::EnableSleeping:
           wakeLocksHeld--;
@@ -482,7 +485,12 @@ void SystemTask::Work() {
     }
     elapsed = xTaskGetTickCount() - lastStateUpdate;
     if (elapsed >= stateUpdatePeriod) {
+      // 240 (0xF0) is outside the Messages enum: it marks a death inside
+      // UpdateMotion(), which drives I2C, as distinct from one in a handler.
+      const uint8_t breadcrumb = Controllers::NoInit_LastSysMessage;
+      Controllers::NoInit_LastSysMessage = 0xF0;
       UpdateMotion();
+      Controllers::NoInit_LastSysMessage = breadcrumb;
       if (isBleDiscoveryTimerRunning) {
         if (bleDiscoveryTimer == 0) {
           isBleDiscoveryTimerRunning = false;

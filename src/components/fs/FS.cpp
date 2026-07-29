@@ -6,6 +6,36 @@
 
 using namespace Pinetime::Controllers;
 
+namespace {
+#ifdef __arm__
+  #define FS_NOINIT __attribute__((section(".noinit")))
+#else
+  #define FS_NOINIT
+#endif
+}
+
+namespace Pinetime {
+  namespace Controllers {
+    // Diagnostic breadcrumbs in no-init RAM: they survive the reboot they
+    // exist to explain. Counting only -- nothing here changes behaviour.
+    uint32_t NoInit_FsOpsInMessage FS_NOINIT;
+    uint8_t NoInit_LastSysMessage FS_NOINIT;
+    uint32_t NoInit_PrevBootFsOps FS_NOINIT;
+    uint8_t NoInit_PrevBootSysMessage FS_NOINIT;
+  }
+}
+
+void FS::SnapshotBootBreadcrumbs() {
+  Controllers::NoInit_PrevBootSysMessage = Controllers::NoInit_LastSysMessage;
+  Controllers::NoInit_PrevBootFsOps = Controllers::NoInit_FsOpsInMessage;
+  Controllers::NoInit_LastSysMessage = 0xFF;
+  Controllers::NoInit_FsOpsInMessage = 0;
+}
+
+void FS::ProgressTick() {
+  Controllers::NoInit_FsOpsInMessage++;
+}
+
 FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
   : flashDriver {driver},
     lfsConfig {
@@ -139,6 +169,7 @@ int FS::SectorSync(const struct lfs_config* /*c*/) {
 int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize);
+  FS::ProgressTick();
   lfs.flashDriver.SectorErase(address);
   return lfs.flashDriver.EraseFailed() ? -1 : 0;
 }
@@ -146,6 +177,7 @@ int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
 int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, const void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize) + off;
+  FS::ProgressTick();
   lfs.flashDriver.Write(address, (uint8_t*) buffer, size);
   return lfs.flashDriver.ProgramFailed() ? -1 : 0;
 }
@@ -153,6 +185,7 @@ int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off,
 int FS::SectorRead(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize) + off;
+  FS::ProgressTick();
   lfs.flashDriver.Read(address, static_cast<uint8_t*>(buffer), size);
   return 0;
 }

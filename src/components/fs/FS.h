@@ -8,6 +8,12 @@
 
 namespace Pinetime {
   namespace Controllers {
+    extern uint32_t NoInit_FsOpsInMessage;
+    extern uint8_t NoInit_LastSysMessage;
+    extern uint32_t NoInit_PrevBootFsOps;
+    extern uint8_t NoInit_PrevBootSysMessage;
+  }
+  namespace Controllers {
     class FS {
     public:
       FS(Pinetime::Drivers::SpiNorFlash&);
@@ -38,6 +44,8 @@ namespace Pinetime {
       };
 
       void Init();
+      static void ProgressTick();
+      static void SnapshotBootBreadcrumbs();
 
       int FileOpen(lfs_file_t* file_p, const char* fileName, const int flags);
       int FileClose(lfs_file_t* file_p);

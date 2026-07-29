@@ -166,7 +166,7 @@ Pinetime::System::SystemTask systemTask(spi,
                                         touchHandler,
                                         buttonHandler);
 int mallocFailedCount = 0;
-int stackOverflowCount = 0;
+int stackOverflowCount __attribute__((section(".noinit")));
 extern "C" {
 void vApplicationMallocFailedHook() {
   mallocFailedCount++;
@@ -181,7 +181,7 @@ void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char* /*pcTaskName*/)
 */
 extern uint32_t __start_noinit_data;
 extern uint32_t __stop_noinit_data;
-static constexpr uint32_t NoInit_MagicValue = 0xDEAD0000;
+static constexpr uint32_t NoInit_MagicValue = 0xDEAD0003;
 uint32_t NoInit_MagicWord __attribute__((section(".noinit")));
 std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime __attribute__((section(".noinit")));
 
@@ -368,6 +368,7 @@ int main() {
   Pinetime::BootloaderVersion::SetVersion(NRF_TIMER2->CC[0]);
 
   if (NoInit_MagicWord == NoInit_MagicValue) {
+    Pinetime::Controllers::FS::SnapshotBootBreadcrumbs();
     dateTimeController.SetCurrentTime(NoInit_BackUpTime);
   } else {
     // Clear Memory to known state
