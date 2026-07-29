@@ -7,7 +7,7 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 # in Sys Info, and the release tag must be "v${PROJECT_VERSION}" to match --
 # .github/workflows/release.yml fails the build if they disagree. The fork
 # tracks upstream 1.16.x, so its own releases run from 1.17.0.
-project(pinetime VERSION 1.18.1 LANGUAGES C CXX ASM)
+project(pinetime VERSION 1.18.2 LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
