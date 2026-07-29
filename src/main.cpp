@@ -184,7 +184,7 @@ void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char* /*pcTaskName*/)
 */
 extern uint32_t __start_noinit_data;
 extern uint32_t __stop_noinit_data;
-static constexpr uint32_t NoInit_MagicValue = 0xDEAD0001;
+static constexpr uint32_t NoInit_MagicValue = 0xDEAD0002;
 uint32_t NoInit_MagicWord __attribute__((section(".noinit")));
 std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime __attribute__((section(".noinit")));
 
@@ -372,6 +372,8 @@ int main() {
   Pinetime::BootloaderVersion::SetVersion(NRF_TIMER2->CC[0]);
 
   if (NoInit_MagicWord == NoInit_MagicValue) {
+    // Before SystemTask starts consuming messages and overwriting them.
+    Pinetime::Controllers::FS::SnapshotBootBreadcrumbs();
     dateTimeController.SetCurrentTime(NoInit_BackUpTime);
   } else {
     // Clear Memory to known state

@@ -23,7 +23,20 @@ namespace Pinetime {
     // explain, and Sys Info reports them afterwards.
     uint32_t NoInit_FsOpsInMessage FS_NOINIT;
     uint8_t NoInit_LastSysMessage FS_NOINIT;
+    // Snapshot of the two above taken at boot, before SystemTask starts
+    // handling messages. The live pair is overwritten within milliseconds of a
+    // reboot -- by the time you have navigated to Sys Info it only ever reads
+    // OnTouchEvent -- so these are what actually survive to be read.
+    uint32_t NoInit_PrevBootFsOps FS_NOINIT;
+    uint8_t NoInit_PrevBootSysMessage FS_NOINIT;
   }
+}
+
+void FS::SnapshotBootBreadcrumbs() {
+  Controllers::NoInit_PrevBootSysMessage = Controllers::NoInit_LastSysMessage;
+  Controllers::NoInit_PrevBootFsOps = Controllers::NoInit_FsOpsInMessage;
+  Controllers::NoInit_LastSysMessage = 0xFF; // "nothing handled yet this boot"
+  Controllers::NoInit_FsOpsInMessage = 0;
 }
 
 void FS::SetProgressHook(void (*hook)()) {
