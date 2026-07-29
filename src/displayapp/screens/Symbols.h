@@ -17,6 +17,9 @@ namespace Pinetime {
         static constexpr const char* list = "\xEF\x80\xBA";
         static constexpr const char* sun = "\xEF\x86\x85";
         static constexpr const char* check = "\xEF\x95\xA0";
+        static constexpr const char* tasks = "\xEF\x82\xAE";           // fa-tasks: checkmarks beside lines
+        static constexpr const char* starAndCrescent = "\xEF\x9A\x99"; // fa-star-and-crescent
+        static constexpr const char* mosque = "\xEF\x99\xB8";          // fa-mosque
         static constexpr const char* music = "\xEF\x80\x81";
         static constexpr const char* tachometer = "\xEF\x8F\xBD";
         static constexpr const char* paintbrush = "\xEF\x87\xBC";

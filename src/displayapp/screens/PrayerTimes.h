@@ -45,7 +45,7 @@ namespace Pinetime {
     template <>
     struct AppTraits<Apps::Prayer> {
       static constexpr Apps app = Apps::Prayer;
-      static constexpr const char* icon = Screens::Symbols::moon;
+      static constexpr const char* icon = Screens::Symbols::mosque;
 
       static Screens::Screen* Create(AppControllers& controllers) {
         return new Screens::PrayerTimes(controllers.prayerController, controllers.dateTimeController, controllers.settingsController);
