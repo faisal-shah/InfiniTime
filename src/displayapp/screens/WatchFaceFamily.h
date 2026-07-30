@@ -8,6 +8,8 @@
 #include "displayapp/screens/BatteryIcon.h"
 #include "components/datetime/DateTimeController.h"
 #include "components/ble/BleController.h"
+#include "components/ble/SimpleWeatherService.h"
+#include <optional>
 #include "utility/DirtyValue.h"
 #include "displayapp/apps/Apps.h"
 #include "displayapp/Controllers.h"
@@ -54,7 +56,14 @@ namespace Pinetime {
         Utility::DirtyValue<int> heartbeat {};
         Utility::DirtyValue<bool> heartbeatRunning {};
         Utility::DirtyValue<uint32_t> stepCount {};
-        Utility::DirtyValue<bool> notificationState {};
+        Utility::DirtyValue<size_t> notificationCount {};
+        Utility::DirtyValue<uint8_t> taskTotal {};
+        Utility::DirtyValue<uint8_t> taskDone {};
+        Utility::DirtyValue<uint8_t> batteryPercent {};
+        Utility::DirtyValue<bool> powerPresent {};
+        Utility::DirtyValue<bool> bleConnected {};
+        Utility::DirtyValue<bool> alarmEnabled {};
+        Utility::DirtyValue<std::optional<Pinetime::Controllers::SimpleWeatherService::CurrentWeather>> currentWeather {};
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::minutes>> currentDateTime {};
 
         lv_obj_t* label_time;
@@ -108,12 +117,15 @@ namespace Pinetime {
 
         lv_task_t* taskRefresh;
 
-        void RefreshTime();
+        // Each returns true when it changed something whose width the status
+        // band layout depends on.
+        bool RefreshTime();
         void RefreshPrayer();
-        void RefreshTasks();
-        void RefreshWeather();
+        bool RefreshTasks();
+        bool RefreshWeather();
+        void FitStatusBand();
         void RefreshStatus();
-        void RefreshNotifications();
+        bool RefreshNotifications();
       };
     }
 

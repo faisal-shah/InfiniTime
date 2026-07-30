@@ -34,6 +34,7 @@ namespace {
   constexpr lv_coord_t bannerTop = 142;
   constexpr lv_coord_t bannerHeight = 30;
   constexpr lv_coord_t timeTop = 52;
+  constexpr lv_coord_t suffixDrop = 62; // below the 61-tall digit box
   constexpr lv_coord_t dateTop = 180;
 
   lv_obj_t* MakeLabel(lv_obj_t* parent, const lv_font_t* font, lv_color_t colour) {
@@ -118,8 +119,8 @@ WatchFaceFamily::WatchFaceFamily(Controllers::DateTime& dateTimeController,
   // --- Clock, centred in the band between the status row and the banner.
   label_time = MakeLabel(lv_scr_act(), &jetbrains_mono_extrabold_compressed, LV_COLOR_WHITE);
   label_time_ampm = MakeLabel(lv_scr_act(), &jetbrains_mono_bold_20, LV_COLOR_WHITE);
+  // Positions are set in RefreshTime, which knows the suffix width.
   lv_obj_align(label_time, nullptr, LV_ALIGN_IN_TOP_MID, 0, timeTop);
-  lv_obj_align(label_time_ampm, nullptr, LV_ALIGN_IN_TOP_RIGHT, -4, timeTop - 4);
 
   // --- Prayer banner: a filled band, so the prayer window reads as a region
   // rather than one more row of small text.
@@ -172,10 +173,10 @@ WatchFaceFamily::~WatchFaceFamily() {
   lv_obj_clean(lv_scr_act());
 }
 
-void WatchFaceFamily::RefreshTime() {
+bool WatchFaceFamily::RefreshTime() {
   currentDateTime = std::chrono::time_point_cast<std::chrono::minutes>(dateTimeController.CurrentDateTime());
   if (!currentDateTime.IsUpdated()) {
-    return;
+    return false;
   }
 
   const char* suffix = nullptr;
@@ -183,14 +184,20 @@ void WatchFaceFamily::RefreshTime() {
   lv_label_set_text_fmt(label_time, suffix != nullptr ? "%d:%02d" : "%02d:%02d", hour, dateTimeController.Minutes());
   lv_label_set_text(label_time_ampm, suffix != nullptr ? suffix : "");
 
+  // The suffix goes *under* the digits, not beside them. Measured: "12:00" in
+  // this font is 240 px wide on its own, so at 10, 11 and 12 o'clock there is
+  // no horizontal room left and anything placed to the right is overrun. There
+  // are 30 px of clear band below the digits, which is where it lives.
+  lv_obj_align(label_time, nullptr, LV_ALIGN_IN_TOP_MID, 0, timeTop);
+  lv_obj_align(label_time_ampm, nullptr, LV_ALIGN_IN_TOP_RIGHT, -6, timeTop + suffixDrop);
+
   lv_label_set_text_fmt(label_date,
                         "%s %d %s",
                         dateTimeController.DayOfWeekShortToString(),
                         dateTimeController.Day(),
                         dateTimeController.MonthShortToString());
-  lv_obj_realign(label_time);
-  lv_obj_realign(label_time_ampm);
   lv_obj_realign(label_date);
+  return true;
 }
 
 void WatchFaceFamily::RefreshPrayer() {
@@ -233,23 +240,33 @@ void WatchFaceFamily::RefreshPrayer() {
   lv_obj_realign(prayerTimeIcon);
 }
 
-void WatchFaceFamily::RefreshTasks() {
+bool WatchFaceFamily::RefreshTasks() {
   // Both accessors are RAM-only. This runs from the display task, which keeps
   // rendering in always-on mode after SystemTask has powered the SPI flash
   // down, so CompletedCount() -- which reads every record back -- must not be
   // used here.
-  const uint8_t total = taskController.GetCount();
+  taskTotal = taskController.GetCount();
+  taskDone = taskController.CompletedCountCached();
+  if (!taskTotal.IsUpdated() && !taskDone.IsUpdated()) {
+    return false;
+  }
+  const uint8_t total = taskTotal.Get();
   if (total == 0) {
     lv_label_set_text_static(tasksIcon, "");
     lv_label_set_text_static(label_tasks, "");
   } else {
     lv_label_set_text_static(tasksIcon, Symbols::tasks);
-    lv_label_set_text_fmt(label_tasks, "%d/%d", taskController.CompletedCountCached(), total);
+    lv_label_set_text_fmt(label_tasks, "%d/%d", taskDone.Get(), total);
   }
+  return true;
 }
 
-void WatchFaceFamily::RefreshWeather() {
-  const auto optCurrentWeather = weatherService.Current();
+bool WatchFaceFamily::RefreshWeather() {
+  currentWeather = weatherService.Current();
+  if (!currentWeather.IsUpdated()) {
+    return false;
+  }
+  const auto optCurrentWeather = currentWeather.Get();
   if (!optCurrentWeather) {
     lv_label_set_text_static(weatherIcon, "");
     lv_label_set_text_static(temperature, "");
@@ -279,11 +296,15 @@ void WatchFaceFamily::RefreshWeather() {
     lv_label_set_text_fmt(label_date, "%d %s", dateTimeController.Day(), dateTimeController.MonthShortToString());
     lv_obj_realign(label_date);
   }
+  return true;
 }
 
-void WatchFaceFamily::RefreshNotifications() {
-  notificationState = notificationManager.AreNewNotificationsAvailable();
-  const size_t count = notificationManager.NbNotifications();
+bool WatchFaceFamily::RefreshNotifications() {
+  notificationCount = notificationManager.NbNotifications();
+  if (!notificationCount.IsUpdated()) {
+    return false;
+  }
+  const size_t count = notificationCount.Get();
   if (count == 0) {
     lv_label_set_text_static(notificationIcon, "");
     lv_label_set_text_static(label_notification, "");
@@ -293,16 +314,30 @@ void WatchFaceFamily::RefreshNotifications() {
   }
   lv_obj_realign(notificationIcon);
   lv_obj_realign(label_notification);
+  return true;
 }
 
 void WatchFaceFamily::RefreshStatus() {
-  const uint8_t percent = batteryController.PercentRemaining();
-  lv_obj_set_hidden(bleIcon, !(bleController.IsConnected() && bleController.IsRadioEnabled()));
-  lv_obj_set_hidden(plugIcon, !batteryController.IsPowerPresent());
-  lv_obj_set_hidden(alarmIcon, !multiAlarmController.AnyEnabled());
+  batteryPercent = batteryController.PercentRemaining();
+  powerPresent = batteryController.IsPowerPresent();
+  bleConnected = bleController.IsConnected() && bleController.IsRadioEnabled();
+  alarmEnabled = multiAlarmController.AnyEnabled();
+  if (!batteryPercent.IsUpdated() && !powerPresent.IsUpdated() && !bleConnected.IsUpdated() && !alarmEnabled.IsUpdated()) {
+    return;
+  }
+
+  const uint8_t percent = batteryPercent.Get();
+  lv_obj_set_hidden(bleIcon, !bleConnected.Get());
+  lv_obj_set_hidden(plugIcon, !powerPresent.Get());
+  lv_obj_set_hidden(alarmIcon, !alarmEnabled.Get());
   lv_label_set_text_fmt(label_battery, "%d%%", percent);
   batteryIcon.SetBatteryPercentage(percent);
+  FitStatusBand();
+}
 
+// Re-runs the measured yield rules. Only called when something in the band
+// actually changed width; it is pure layout and does no controller work.
+void WatchFaceFamily::FitStatusBand() {
   // The number always wins; the drawn icon yields. Measure the row with the icon
   // shown and drop it only if the status group would reach the notification
   // group sharing this band.
@@ -328,12 +363,21 @@ void WatchFaceFamily::RefreshStatus() {
 }
 
 void WatchFaceFamily::Refresh() {
-  RefreshNotifications();
-  RefreshTime();
-  RefreshPrayer();
-  RefreshTasks();
+  bool bandChanged = RefreshNotifications();
+
+  // RefreshPrayer runs three full prayer computations, so it is gated on the
+  // minute exactly as the Casio face gates its own. Calling it every refresh
+  // period would be 150 of them a second.
+  if (RefreshTime()) {
+    RefreshPrayer();
+  }
+
+  bandChanged |= RefreshTasks();
   RefreshWeather();
-  RefreshStatus(); // last: it measures against the groups above
+  RefreshStatus();
+  if (bandChanged) {
+    FitStatusBand();
+  }
 
   heartbeat = heartRateController.HeartRate();
   heartbeatRunning = heartRateController.State() != Controllers::HeartRateController::States::Stopped;
