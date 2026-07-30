@@ -66,6 +66,7 @@ namespace Pinetime {
       Infineat,
       CasioStyleG7710,
       PrideFlag,
+      Family,
     };
 
     template <Apps>
