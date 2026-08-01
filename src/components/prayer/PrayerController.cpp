@@ -79,6 +79,7 @@ bool PrayerController::CurrentWindow(Window& out) const {
   out.name = PrayerRules::WindowName(window.window);
   out.nextHour = static_cast<uint8_t>(window.nextHour);
   out.nextMinute = static_cast<uint8_t>(window.nextMinute);
+  out.nextIsSunrise = window.nextWindow == PrayerRules::Sunrise;
   return true;
 }
 

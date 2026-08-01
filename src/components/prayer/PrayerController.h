@@ -99,17 +99,21 @@ namespace Pinetime {
         return lastFiredDue;
       }
 
-      // Which prayer's window contains "now", and when the next prayer starts.
+      // Which prayer's window contains "now", and when the next boundary is.
       // For watch faces, so deliberately unlike DueTimesFor(): it counts
-      // Sunrise as a window boundary and ignores both AlertsEnabled() and
-      // SkipFajr(), because what is displayed must not depend on what vibrates.
+      // Sunrise on both sides and ignores both AlertsEnabled() and SkipFajr(),
+      // because what is displayed must not depend on what vibrates.
       struct Window {
         // Name of the window we are inside, or nullptr between Sunrise and
         // Dhuhr — that stretch belongs to no prayer.
         const char* name;
-        // Start of the next prayer, local time of day. Sunrise is never it.
+        // Start of the next boundary, local time of day. Inside the fajr window
+        // that is sunrise, which is when fajr closes; everywhere else a prayer.
         uint8_t nextHour;
         uint8_t nextMinute;
+        // Set when the time above is sunrise, so a face can mark it as the end
+        // of a window rather than the start of a prayer. It never alerts.
+        bool nextIsSunrise;
       };
 
       // False when there is no window to show: no location set, or the day's

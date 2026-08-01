@@ -246,8 +246,9 @@ namespace Pinetime {
       inline constexpr uint8_t WindowMask = (1u << Fajr) | (1u << Sunrise) | (1u << Dhuhr) | (1u << Asr) | (1u << Maghrib) | (1u << Isha);
 
       // The six windows in opening order. Sunrise opens the one stretch that
-      // belongs to no prayer, so it has no name -- and, not being a prayer, is
-      // never the answer to "what is next".
+      // belongs to no prayer, so it has no name. It is still a boundary worth
+      // knowing: it is when the fajr window closes, which makes it the honest
+      // answer to "what is next" for the whole of that window.
       inline constexpr Prayer WindowOpens[6] = {Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha};
 
       inline const char* WindowName(uint8_t window) {
@@ -255,8 +256,9 @@ namespace Pinetime {
       }
 
       struct Window {
-        uint8_t window;    // index into WindowOpens; 1 (sunrise) means "no prayer"
-        uint16_t nextHour; // start of the next prayer, local time of day
+        uint8_t window;     // index into WindowOpens; 1 (sunrise) means "no prayer"
+        uint8_t nextWindow; // index into WindowOpens of the boundary ahead
+        uint16_t nextHour;  // start of that boundary, local time of day
         uint16_t nextMinute;
       };
 
@@ -290,7 +292,9 @@ namespace Pinetime {
           }
         }
 
-        // Latest boundary at or before now, earliest prayer strictly after.
+        // Latest boundary at or before now, earliest boundary strictly after.
+        // Sunrise counts on both sides: it is not a prayer, but during the fajr
+        // window it is the next thing that matters, since it closes it.
         // Scanned rather than indexed: the per-day shift keeps each day sorted
         // but says nothing about how adjacent days interleave.
         int8_t current = -1;
@@ -300,10 +304,8 @@ namespace Pinetime {
             if (current < 0 || at[i] > at[current]) {
               current = static_cast<int8_t>(i);
             }
-          } else if (which[i] != 1) { // sunrise is not a prayer
-            if (next < 0 || at[i] < at[next]) {
-              next = static_cast<int8_t>(i);
-            }
+          } else if (next < 0 || at[i] < at[next]) {
+            next = static_cast<int8_t>(i);
           }
         }
 
@@ -313,6 +315,7 @@ namespace Pinetime {
 
         const int32_t timeOfDay = ((at[next] % (24 * 60)) + 24 * 60) % (24 * 60);
         out.window = which[current];
+        out.nextWindow = which[next];
         out.nextHour = static_cast<uint16_t>(timeOfDay / 60);
         out.nextMinute = static_cast<uint16_t>(timeOfDay % 60);
         return true;
