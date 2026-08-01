@@ -228,7 +228,9 @@ void WatchFaceFamily::RefreshPrayer() {
     }
     const char* suffix = nullptr;
     const uint8_t hour = SplitHour(window.nextHour, settingsController.GetClockType(), &suffix);
-    lv_label_set_text_static(prayerTimeIcon, Symbols::clock);
+    // A sun when the next time is sunrise: that is the fajr window closing, not
+    // a prayer starting, and it never alerts.
+    lv_label_set_text_static(prayerTimeIcon, window.nextIsSunrise ? Symbols::sun : Symbols::clock);
     lv_label_set_text_fmt(label_prayer_next, suffix != nullptr ? "%d:%02d" : "%02d:%02d", hour, window.nextMinute);
     lv_label_set_text(label_prayer_next_ampm, suffix != nullptr ? suffix : "");
   }

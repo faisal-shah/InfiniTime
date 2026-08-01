@@ -94,12 +94,14 @@ int main() {
     check(Select(NYC, 2026, 1, 15, 6 * 60 + 57, w), "NYC pre-fajr resolves");
     check(w.window == WIsha && w.nextHour == 6 && w.nextMinute == 58, "06:57 -> isha, fajr 06:58");
 
-    // One minute after fajr: the fajr window, ending at dhuhr (sunrise is not
-    // a prayer and must be skipped).
+    // One minute after fajr: the fajr window, whose next boundary is sunrise --
+    // the moment the window closes, and the thing worth knowing while it is
+    // open. Dhuhr is hours away and would be the wrong answer here.
     check(Select(NYC, 2026, 1, 15, 6 * 60 + 59, w), "NYC post-fajr resolves");
     check(w.window == WFajr, "06:59 is inside the fajr window");
     const Times jan15 = DayTimes(NYC, 2026, 1, 15, 0);
-    check(w.nextHour * 60 + w.nextMinute == jan15.minutes[Dhuhr], "fajr window's next prayer is dhuhr, not sunrise");
+    check(w.nextHour * 60 + w.nextMinute == jan15.minutes[Sunrise], "fajr window's next time is sunrise, not dhuhr");
+    check(w.nextWindow == WSunrise, "and it is flagged as sunrise so a face can mark it");
   }
 
   // ---- golden: the no-prayer stretch --------------------------------------
@@ -111,6 +113,7 @@ int main() {
     check(w.window == WSunrise, "sunrise..dhuhr belongs to no prayer");
     check(WindowName(w.window) == nullptr, "that window has no name");
     check(w.nextHour * 60 + w.nextMinute == t.minutes[Dhuhr], "and its next prayer is dhuhr");
+    check(w.nextWindow != WSunrise, "sunrise is behind us here, so it is not flagged");
   }
 
   // ---- golden: after isha, the next prayer is tomorrow's fajr -------------
@@ -220,7 +223,7 @@ int main() {
 
           int32_t earliestAhead = -1;
           for (uint8_t i = 0; i < n; i++) {
-            if (at[i] > minute && which[i] != WSunrise && (earliestAhead < 0 || at[i] < earliestAhead)) {
+            if (at[i] > minute && (earliestAhead < 0 || at[i] < earliestAhead)) {
               earliestAhead = at[i];
             }
           }
