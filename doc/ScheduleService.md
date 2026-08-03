@@ -44,7 +44,7 @@ Opens a sync transaction and clears any staged data from a previous incomplete t
  - [0] : Message type = `1`
  - [1] : Message version = `1`
  - [2] : Index of this record (0 .. count-1 from BeginSync)
- - [3]..[41] : Event record (39 bytes, layout below)
+ - [3]..[45] : Event record (43 bytes, layout below)
 
 Rejected (ATT error `0x0E`, "unlikely") if no transaction is open, the index is out of
 range, or the index was already received.
@@ -71,7 +71,7 @@ Discards the staged transaction. A BLE disconnect has the same effect.
 
 Read. Returns 7 bytes:
 
- - [0] : Protocol version = `1`
+ - [0] : Protocol version = `2`
  - [1] : Capacity (maximum number of events the watch can store)
  - [2] : Count of events in the active schedule
  - [3][4][5][6] : Schedule version of the active schedule (uint32 LE)
@@ -82,7 +82,7 @@ already matches their local value.
 ### Event Read (UUID 00060003-78fc-48fe-8e23-433b3a1942d0)
 
 Write then read: write a single byte (event index, 0 .. Digest count-1) to select, then
-read to receive that event's 39-byte record. Reading without a prior select, or after the
+read to receive that event's 43-byte record. Reading without a prior select, or after the
 schedule changed underneath the selection, returns the record at the last valid selected
 index (companions should select immediately before each read; the connection is exclusive,
 so nothing can interleave). Selecting an out-of-range index is rejected with ATT error
@@ -91,7 +91,7 @@ so nothing can interleave). Selecting an out-of-range index is rejected with ATT
 This is the pull half of multi-companion sync: a companion reads the watch's full schedule,
 merges it with its own (see "Multiple companions" below), and pushes the merged set.
 
-## Event record layout (39 bytes, little-endian)
+## Event record layout (43 bytes, little-endian)
 
 | Offset | Size | Field | Notes |
 |---|---|---|---|
@@ -106,9 +106,27 @@ merges it with its own (see "Multiple companions" below), and pushes the merged 
 | 10 | 1 | flags | bit 0 = enabled; other bits reserved, must be 0 |
 | 11 | 24 | title | UTF-8, NUL-padded; at most 23 bytes of text (watch forces `title[23] = 0`) |
 | 35 | 4 | lastModified | uint32 UNIX seconds (UTC) of the companion's last edit; opaque to the watch, used by companions to merge |
+| 39 | 2 | endYear | uint16, last year the rule may fire; **0 means it never ends** |
+| 41 | 1 | endMonth | 1–12, ignored when endYear is 0 |
+| 42 | 1 | endDay | 1–31, ignored when endYear is 0 |
 
 All dates and times are watch-local (the same clock the companion sets via the Current Time
 Service). There is no timezone or UTC conversion.
+
+The end date is **inclusive**: a rule ending on the 31st still fires on the 31st. It applies
+to the recurring kinds only — a OneShot ends at its anchor by definition. Once the end date
+has passed the event stops producing occurrences entirely, so it disappears from the watch's
+schedule screen and never fires again, while remaining stored until a companion deletes it.
+
+### Protocol version 2
+
+Version 2 added the end date, widening the record from 39 to 43 bytes and moving the
+RecordMessage version byte to `2`. A watch and companion on different versions will not
+interoperate: the watch rejects a RecordMessage whose version byte it does not recognise
+(`BLE_ATT_ERR_UNLIKELY`), and companions should compare the digest's protocol version before
+syncing and tell the user which side needs updating. On a firmware upgrade the watch's stored
+schedule is discarded, because the persisted format version no longer matches; companions
+detect the resulting empty list and offer to restore from their own copy.
 
 ### Recurrence semantics
 
@@ -172,28 +190,31 @@ Reference vectors for implementations and tests. All bytes hex.
 anchor 2026-07-13, enabled, title "Quran practice", lastModified 1784000000
 (`0x6A55AE00`):
 
-    01 01 00
+    01 02 00
     01 00 02 11 00 EA 07 07 0D 2A 01
     51 75 72 61 6E 20 70 72 61 63 74 69 63 65 00 00
     00 00 00 00 00 00 00 00
     00 AE 55 6A
+    00 00 00 00
 
 **EventRecord** — index 1; event id 2, EveryNDays N=1 (daily), 20:30, anchor 2026-01-01,
 enabled, title "Brush teeth", lastModified 0:
 
-    01 01 01
+    01 02 01
     02 00 01 14 1E EA 07 01 01 01 01
     42 72 75 73 68 20 74 65 65 74 68 00 00 00 00 00
     00 00 00 00 00 00 00 00
+    00 00 00 00
     00 00 00 00
 
 **EventRecord** — index 2; event id 3, OneShot 2026-08-01 09:15, enabled, title "Dentist",
 lastModified 0:
 
-    01 01 02
+    01 02 02
     03 00 00 09 0F EA 07 08 01 00 01
     44 65 6E 74 69 73 74 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00
+    00 00 00 00
     00 00 00 00
 
 **CommitSync** — 3 events:
@@ -227,7 +248,7 @@ down is a separate, watch-wide change.
 ## Storage
 
 Events live in littlefs, not RAM. The active schedule is `/.system/schedule.dat`
-(`[version u8 = 1][count u8][scheduleVersion u32 LE]` + `count` x 39-byte records); RAM
+(`[version u8 = 2][count u8][scheduleVersion u32 LE]` + `count` x 43-byte records); RAM
 holds only the digest fields and a cache of the next occurrence, so capacity is bounded
 by flash, not RAM. During a sync, records are staged into `/.system/schedule.stg` and
 CommitSync atomically renames it over the active file (littlefs renames are atomic), so

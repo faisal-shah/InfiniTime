@@ -151,11 +151,36 @@ int main() {
     }
   }
 
+  // ---- End date ----
+  {
+    // Daily at 08:00 from 1 Aug, ending 3 Aug inclusive.
+    Event e = Make(RuleKind::EveryNDays, 8, 0, 2026, 8, 1, 1);
+    e.endYear = 2026;
+    e.endMonth = 8;
+    e.endDay = 3;
+
+    check(Is(NextOccurrenceFrom(e, At(2026, 8, 1, 0, 0)), 2026, 8, 1, 8, 0), "end: first day fires");
+    check(Is(NextOccurrenceFrom(e, At(2026, 8, 3, 0, 0)), 2026, 8, 3, 8, 0), "end: the end date itself still fires");
+    check(!NextOccurrenceFrom(e, At(2026, 8, 3, 9, 0)).has_value(), "end: nothing after the last occurrence");
+    check(!NextOccurrenceFrom(e, At(2026, 8, 4, 0, 0)).has_value(), "end: nothing the day after");
+
+    check(!HasExpired(e, At(2026, 8, 3, 23, 0)), "end: not expired on the end date");
+    check(HasExpired(e, At(2026, 8, 4, 0, 1)), "end: expired once the day is over");
+
+    // Same rule with no end keeps going, so the bound is what stopped it.
+    Event forever = e;
+    forever.endYear = 0;
+    check(Is(NextOccurrenceFrom(forever, At(2026, 8, 4, 0, 0)), 2026, 8, 4, 8, 0), "end: unbounded rule still fires");
+    check(!HasExpired(forever, At(2030, 1, 1, 0, 0)), "end: unbounded rule never expires");
+  }
+
   // ---- Golden vector cross-check (doc/ScheduleService.md, EventRecord index 0) ----
   {
-    static constexpr uint8_t golden[39] = {0x01, 0x00, 0x02, 0x11, 0x00, 0xEA, 0x07, 0x07, 0x0D, 0x2A, 0x01, 0x51, 0x75,
+    // Trailing four bytes are the end date; all-zero means "never ends".
+    static constexpr uint8_t golden[43] = {0x01, 0x00, 0x02, 0x11, 0x00, 0xEA, 0x07, 0x07, 0x0D, 0x2A, 0x01, 0x51, 0x75,
                                            0x72, 0x61, 0x6E, 0x20, 0x70, 0x72, 0x61, 0x63, 0x74, 0x69, 0x63, 0x65, 0x00,
-                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE, 0x55, 0x6A};
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAE, 0x55, 0x6A,
+                                           0x00, 0x00, 0x00, 0x00};
     Event e;
     memcpy(&e, golden, sizeof(e));
     check(e.id == 1, "golden: id");
@@ -165,6 +190,7 @@ int main() {
     check(e.param == 0x2A && e.IsEnabled(), "golden: param/flags");
     check(strcmp(e.title, "Quran practice") == 0, "golden: title");
     check(e.lastModified == 1784000000u, "golden: lastModified");
+    check(!e.HasEnd(), "golden: no end date");
     // And the parsed rule behaves: Mon/Wed/Fri 17:00 from Tue -> Wed.
     check(Is(NextOccurrenceFrom(e, At(2026, 7, 14, 0, 0)), 2026, 7, 15, 17, 0), "golden: semantics");
   }
