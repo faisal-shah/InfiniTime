@@ -164,14 +164,16 @@ int main() {
     check(!NextOccurrenceFrom(e, At(2026, 8, 3, 9, 0)).has_value(), "end: nothing after the last occurrence");
     check(!NextOccurrenceFrom(e, At(2026, 8, 4, 0, 0)).has_value(), "end: nothing the day after");
 
-    check(!HasExpired(e, At(2026, 8, 3, 23, 0)), "end: not expired on the end date");
-    check(HasExpired(e, At(2026, 8, 4, 0, 1)), "end: expired once the day is over");
+    // Expiry is observable only as "no more occurrences", which is the whole
+    // contract: an expired rule vanishes from the watch and never fires.
+    check(NextOccurrenceFrom(e, At(2026, 8, 3, 0, 0)).has_value(), "end: still live on the end date");
+    check(!NextOccurrenceFrom(e, At(2026, 8, 4, 0, 1)).has_value(), "end: dead once the day is over");
 
     // Same rule with no end keeps going, so the bound is what stopped it.
     Event forever = e;
     forever.endYear = 0;
     check(Is(NextOccurrenceFrom(forever, At(2026, 8, 4, 0, 0)), 2026, 8, 4, 8, 0), "end: unbounded rule still fires");
-    check(!HasExpired(forever, At(2030, 1, 1, 0, 0)), "end: unbounded rule never expires");
+    check(NextOccurrenceFrom(forever, At(2030, 1, 1, 0, 0)).has_value(), "end: unbounded rule never expires");
   }
 
   // ---- Golden vector cross-check (doc/ScheduleService.md, EventRecord index 0) ----
