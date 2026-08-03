@@ -7,6 +7,12 @@ using namespace Pinetime::Applications::Screens;
 
 namespace {
   constexpr const char* dayNames[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+  // Header line colours, in LVGL's recolor syntax. Amber marks an occurrence
+  // that lands today; everything further out stays grey so the ones you can
+  // still act on are the ones that catch the eye.
+  constexpr const char* colourToday = "#ffb800";
+  constexpr const char* colourLater = "#999999";
 }
 
 ScheduleList::ScheduleList(DisplayApp* app,
@@ -50,6 +56,11 @@ ScheduleList::~ScheduleList() {
 
 void ScheduleList::RenderPage() {
   pageIndicator.SetPageIndicatorPosition(page);
+  // Copied out immediately: localtime returns a pointer to a shared buffer that
+  // the per-row call below would otherwise overwrite.
+  const time_t now = scheduleController.Now();
+  const tm today = *std::localtime(&now);
+
   for (uint8_t i = 0; i < rowsPerPage; i++) {
     const uint8_t idx = page * rowsPerPage + i;
     if (idx >= occurrenceCount) {
@@ -61,8 +72,10 @@ void ScheduleList::RenderPage() {
     const tm local = *std::localtime(&when);
     char timeText[FormattedTimeSize];
     FormatTime(timeText, sizeof(timeText), local.tm_hour, local.tm_min, settingsController.GetClockType());
+    const bool isToday = local.tm_year == today.tm_year && local.tm_yday == today.tm_yday;
     lv_label_set_text_fmt(rowLabels[i],
-                          "#999999 %s %d  %s#\n%s",
+                          "%s %s %d  %s#\n%s",
+                          isToday ? colourToday : colourLater,
                           dayNames[local.tm_wday],
                           local.tm_mday,
                           timeText,
