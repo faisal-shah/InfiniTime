@@ -34,13 +34,24 @@ namespace Pinetime {
         // companions use it to merge concurrent edits (doc/ScheduleService.md,
         // "Multiple companions").
         uint32_t lastModified;
+        // Last day the rule may fire, inclusive. endYear == 0 means it never
+        // ends, which is why a full date is stored rather than a day count: 0
+        // is then unambiguous and the field reads the same way as the anchor.
+        // Meaningless for OneShot, which ends at its anchor by definition.
+        uint16_t endYear;
+        uint8_t endMonth;
+        uint8_t endDay;
 
         bool IsEnabled() const {
           return (flags & 0x01) != 0;
         }
+
+        bool HasEnd() const {
+          return endYear != 0;
+        }
       };
 
-      static_assert(sizeof(Event) == 39, "Event layout is part of the BLE protocol");
+      static_assert(sizeof(Event) == 43, "Event layout is part of the BLE protocol");
 
       inline int LastDayOfMonth(int year, int month0) { // month0: 0..11, year: full year
         static constexpr uint8_t days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -52,7 +63,30 @@ namespace Pinetime {
       }
 
       // First occurrence of `event` at or after `from`, in local time.
-      inline std::optional<time_t> NextOccurrenceFrom(const Event& event, time_t from) {
+      // Midnight at the END of the event's last day, so an occurrence on the
+      // end date itself still counts. "Ends on the 31st" includes the 31st.
+      inline std::optional<time_t> EndBoundary(const Event& event) {
+        if (!event.HasEnd()) {
+          return std::nullopt;
+        }
+        tm endTm {};
+        endTm.tm_year = event.endYear - 1900;
+        endTm.tm_mon = event.endMonth - 1;
+        endTm.tm_mday = event.endDay + 1; // mktime normalizes a rolled-over day
+        endTm.tm_hour = 0;
+        endTm.tm_min = 0;
+        endTm.tm_sec = 0;
+        endTm.tm_isdst = -1;
+        return std::mktime(&endTm);
+      }
+
+      /** The rule is over: it has an end date and that date is behind us. */
+      inline bool HasExpired(const Event& event, time_t now) {
+        const auto end = EndBoundary(event);
+        return end.has_value() && now >= *end;
+      }
+
+      inline std::optional<time_t> NextOccurrenceUnbounded(const Event& event, time_t from) {
         if (!event.IsEnabled()) {
           return std::nullopt;
         }
@@ -160,6 +194,25 @@ namespace Pinetime {
           }
         }
         return std::nullopt;
+      }
+
+      /**
+       * The next time this event fires, or nothing if it never will again.
+       *
+       * The end date is applied here rather than inside each rule branch: every
+       * branch has its own early returns, and an end that only some of them
+       * honoured would be a rule that quietly keeps firing.
+       */
+      inline std::optional<time_t> NextOccurrenceFrom(const Event& event, time_t from) {
+        const auto next = NextOccurrenceUnbounded(event, from);
+        if (!next.has_value()) {
+          return std::nullopt;
+        }
+        const auto end = EndBoundary(event);
+        if (end.has_value() && *next >= *end) {
+          return std::nullopt;
+        }
+        return next;
       }
     }
   }

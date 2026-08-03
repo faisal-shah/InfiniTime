@@ -31,7 +31,7 @@ namespace Pinetime {
     public:
       // 64 recurrence rules (39 B each) cost ~2.5 KB of flash and no RAM.
       static constexpr uint8_t MaxEvents = 64;
-      static constexpr uint8_t ProtocolVersion = 1;
+      static constexpr uint8_t ProtocolVersion = 2;
       static constexpr size_t TitleSize = ScheduleRules::TitleSize;
 
       using RuleKind = ScheduleRules::RuleKind;
@@ -104,7 +104,7 @@ namespace Pinetime {
       uint8_t ComputeUpcoming(Occurrence* out, uint8_t max, uint16_t horizonDays = 14) const;
 
     private:
-      static constexpr uint8_t scheduleFormatVersion = 1;
+      static constexpr uint8_t scheduleFormatVersion = 2;
       static constexpr int graceSeconds = 60;
       // FreeRTOS timer periods are 32-bit ticks; cap each arm and re-check on expiry
       // so occurrences further out than one day can't overflow the period.

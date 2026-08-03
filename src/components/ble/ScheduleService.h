@@ -38,7 +38,7 @@ namespace Pinetime {
     private:
       enum class MessageType : uint8_t { BeginSync = 0, EventRecord = 1, CommitSync = 2, AbortSync = 3 };
       static constexpr uint8_t messageVersion = 0;     // BeginSync / CommitSync / AbortSync
-      static constexpr uint8_t eventRecordVersion = 1; // EventRecord (39-byte records)
+      static constexpr uint8_t eventRecordVersion = 2; // EventRecord (43-byte records, with end date)
 
       int OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt);
       int OnDigestRead(struct ble_gatt_access_ctxt* ctxt);
