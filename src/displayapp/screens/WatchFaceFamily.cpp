@@ -191,12 +191,6 @@ bool WatchFaceFamily::RefreshTime() {
   lv_obj_align(label_time, nullptr, LV_ALIGN_IN_TOP_MID, 0, timeTop);
   lv_obj_align(label_time_ampm, nullptr, LV_ALIGN_IN_TOP_RIGHT, -6, timeTop + suffixDrop);
 
-  lv_label_set_text_fmt(label_date,
-                        "%s %d %s",
-                        dateTimeController.DayOfWeekShortToString(),
-                        dateTimeController.Day(),
-                        dateTimeController.MonthShortToString());
-  lv_obj_realign(label_date);
   return true;
 }
 
@@ -289,16 +283,34 @@ bool WatchFaceFamily::RefreshWeather() {
   }
   lv_obj_realign(temperature);
   lv_obj_realign(weatherIcon);
+  return true;
+}
 
-  // Date and weather share this row. At the widest temperatures they touch, and
-  // the weekday is the cheapest thing to give up: the numeric date still tells
-  // you the day, a temperature cannot lose a digit.
+/**
+ * Lay out the date, which shares its row with the weather.
+ *
+ * Owns the date label outright. It used to be written by RefreshTime and then
+ * shortened here, inside the weather-changed branch -- so every minute the long
+ * form came back and, on the overwhelming majority of ticks where the weather
+ * had not changed, nothing shortened it again. The two overlapped until the next
+ * weather push, which is hourly.
+ *
+ * The weekday is the cheapest thing to give up: the numeric date still tells you
+ * the day, a temperature cannot lose a digit.
+ */
+void WatchFaceFamily::FitDateRow() {
+  lv_label_set_text_fmt(label_date,
+                        "%s %d %s",
+                        dateTimeController.DayOfWeekShortToString(),
+                        dateTimeController.Day(),
+                        dateTimeController.MonthShortToString());
+  lv_obj_realign(label_date);
+
   const lv_coord_t dateRight = lv_obj_get_x(label_date) + lv_obj_get_width(label_date);
   if (lv_obj_get_x(weatherIcon) < dateRight + 6) {
     lv_label_set_text_fmt(label_date, "%d %s", dateTimeController.Day(), dateTimeController.MonthShortToString());
     lv_obj_realign(label_date);
   }
-  return true;
 }
 
 bool WatchFaceFamily::RefreshNotifications() {
@@ -370,12 +382,17 @@ void WatchFaceFamily::Refresh() {
   // RefreshPrayer runs three full prayer computations, so it is gated on the
   // minute exactly as the Casio face gates its own. Calling it every refresh
   // period would be 150 of them a second.
-  if (RefreshTime()) {
+  const bool timeChanged = RefreshTime();
+  if (timeChanged) {
     RefreshPrayer();
   }
 
   bandChanged |= RefreshTasks();
-  RefreshWeather();
+  const bool weatherChanged = RefreshWeather();
+  // Either side of the shared row moving can create or clear the overlap.
+  if (timeChanged || weatherChanged) {
+    FitDateRow();
+  }
   RefreshStatus();
   if (bandChanged) {
     FitStatusBand();

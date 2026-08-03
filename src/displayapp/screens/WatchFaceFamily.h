@@ -123,6 +123,7 @@ namespace Pinetime {
         void RefreshPrayer();
         bool RefreshTasks();
         bool RefreshWeather();
+        void FitDateRow();
         void FitStatusBand();
         void RefreshStatus();
         bool RefreshNotifications();
