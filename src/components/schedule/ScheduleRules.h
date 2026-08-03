@@ -65,6 +65,8 @@ namespace Pinetime {
       // First occurrence of `event` at or after `from`, in local time.
       // Midnight at the END of the event's last day, so an occurrence on the
       // end date itself still counts. "Ends on the 31st" includes the 31st.
+      // Only NextOccurrenceFrom needs this: an expired rule yields no
+      // occurrences, which is all any caller has ever had to ask.
       inline std::optional<time_t> EndBoundary(const Event& event) {
         if (!event.HasEnd()) {
           return std::nullopt;
@@ -78,12 +80,6 @@ namespace Pinetime {
         endTm.tm_sec = 0;
         endTm.tm_isdst = -1;
         return std::mktime(&endTm);
-      }
-
-      /** The rule is over: it has an end date and that date is behind us. */
-      inline bool HasExpired(const Event& event, time_t now) {
-        const auto end = EndBoundary(event);
-        return end.has_value() && now >= *end;
       }
 
       inline std::optional<time_t> NextOccurrenceUnbounded(const Event& event, time_t from) {
