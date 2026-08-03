@@ -103,6 +103,15 @@ namespace Pinetime {
       // events again.
       uint8_t ComputeUpcoming(Occurrence* out, uint8_t max, uint16_t horizonDays = 14) const;
 
+      /**
+       * The clock the occurrences above were computed against.
+       *
+       * Public so a screen asking "is this one today?" compares against the very
+       * same instant, rather than reading the clock again and risking a skew
+       * across midnight between the list and the highlighting of it.
+       */
+      time_t Now() const;
+
     private:
       static constexpr uint8_t scheduleFormatVersion = 2;
       static constexpr int graceSeconds = 60;
@@ -113,7 +122,6 @@ namespace Pinetime {
       static constexpr const char* stagePath = "/.system/schedule.stg";
       static_assert(MaxEvents <= 64, "StagedList uses a uint64_t received-bitmask");
 
-      time_t Now() const;
       void ArmTimer(int64_t seconds);
       // Sequential-scan wrappers over `staged`; the caller holds one FS::Lock
       // across OpenForScan..close (see StagedList).
