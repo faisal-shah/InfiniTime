@@ -94,6 +94,15 @@ namespace {
   void BeaconTransitionHandler(struct ble_npl_event* ev) {
     static_cast<NimbleController*>(ble_npl_event_get_arg(ev))->DoBeaconTransition();
   }
+
+  // Advertising recovery is decided on SystemTask but performed here, for the
+  // same reason: fastAdvCount, beaconActive and the GAP calls all belong to the
+  // "ble" task, and driving them from two tasks is a race.
+  struct ble_npl_event advertisingRecoveryEvent;
+
+  void AdvertisingRecoveryHandler(struct ble_npl_event* ev) {
+    static_cast<NimbleController*>(ble_npl_event_get_arg(ev))->DoAdvertisingRecovery();
+  }
 }
 
 void NimbleController::Init() {
@@ -168,6 +177,7 @@ void NimbleController::Init() {
   // Initialise the beacon-transition event once; it is posted to the host task
   // by RequestBeaconMode.
   ble_npl_event_init(&beaconTransitionEvent, BeaconTransitionHandler, this);
+  ble_npl_event_init(&advertisingRecoveryEvent, AdvertisingRecoveryHandler, this);
 
   StartAdvertising();
 }
@@ -238,6 +248,11 @@ void NimbleController::StartAdvertising() {
  * Rather than enumerate the ways a start can fail, this asserts the invariant
  * every 100 ms: radio on, nothing connected and not beaconing means
  * advertising is running.
+ *
+ * Runs on SystemTask, so it only counts and then hands the work to the "ble"
+ * task. ble_gap_adv_active is a plain read of the slave state, which NimBLE
+ * itself treats as atomic; everything that mutates advertising stays on the one
+ * task that owns it.
  */
 void NimbleController::EnsureAdvertising() {
   const bool shouldAdvertise = bleController.IsRadioEnabled() && !bleController.IsConnected() && !beaconActive;
@@ -252,6 +267,18 @@ void NimbleController::EnsureAdvertising() {
   }
 
   advertisingIdleTicks = 0;
+  // Coalesces if one is already queued, so a busy host task cannot pile these up.
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &advertisingRecoveryEvent);
+}
+
+void NimbleController::DoAdvertisingRecovery() {
+  // Re-test here rather than trusting the decision made on the other task up to
+  // a tick ago: a connection or a radio-off could have landed in between, and
+  // starting to advertise after either of those is worse than doing nothing.
+  if (!bleController.IsRadioEnabled() || bleController.IsConnected() || beaconActive || ble_gap_adv_active()) {
+    return;
+  }
+
   bleController.RecordAdvertisingRecovery();
   // Recovering means someone is probably waiting to connect right now, so come
   // back on the fast interval rather than the 1 second idle one.
