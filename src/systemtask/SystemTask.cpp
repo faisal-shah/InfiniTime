@@ -493,6 +493,7 @@ void SystemTask::Work() {
           bleDiscoveryTimer--;
         }
       }
+      nimbleController.EnsureAdvertising();
       monitor.Process();
       NoInit_BackUpTime = dateTimeController.CurrentDateTime();
       if (nrf_gpio_pin_read(PinMap::Button) == 0) {

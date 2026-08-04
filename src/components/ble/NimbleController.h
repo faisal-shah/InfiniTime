@@ -65,6 +65,10 @@ namespace Pinetime {
       int OnGAPEvent(ble_gap_event* event);
       void StartDiscovery();
 
+      // Re-arm advertising if it has stopped while it should be running. Called
+      // periodically by SystemTask; see the definition for why this is needed.
+      void EnsureAdvertising();
+
       Pinetime::Controllers::MusicService& music() {
         return musicService;
       };
@@ -157,6 +161,14 @@ namespace Pinetime {
       uint16_t connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       uint8_t fastAdvCount = 0;
       uint8_t bondId[16] = {0};
+
+      // Consecutive EnsureAdvertising ticks that found the radio idle when it
+      // should have been advertising. Advertising legitimately goes idle for an
+      // instant between a burst ending and BLE_GAP_EVENT_ADV_COMPLETE re-arming
+      // it, and the "ble" task can be stalled for far longer than that by a
+      // bond write to flash, so only a sustained gap counts as stuck.
+      uint8_t advertisingIdleTicks = 0;
+      static constexpr uint8_t advertisingIdleLimit = 30; // 30 x 100 ms
 
       // Beacon-mode radio state, owned by and only touched on the "ble" task.
       bool beaconActive = false;

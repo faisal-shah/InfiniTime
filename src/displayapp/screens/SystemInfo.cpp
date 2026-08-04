@@ -193,7 +193,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         " %02x:%02x:%02x:%02x:%02x:%02x\n"
                         "\n"
                         "#808080 SPI Flash# %02x-%02x-%02x\n"
-                        "\n"
+                        "#808080 Adv recover# %d\n"
                         "#808080 Memory heap#\n"
                         " #808080 Free# %d/%d\n"
                         " #808080 Min free# %d\n"
@@ -208,6 +208,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         spiFlashId.manufacturer,
                         spiFlashId.type,
                         spiFlashId.density,
+                        bleController.AdvertisingRecoveries(),
                         xPortGetFreeHeapSize(),
                         xPortGetHeapSize(),
                         xPortGetMinimumEverFreeHeapSize(),
