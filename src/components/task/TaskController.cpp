@@ -1,6 +1,6 @@
 #include "components/task/TaskController.h"
+#include "components/task/TaskRules.h"
 #include "components/fs/FS.h"
-#include "systemtask/SystemTask.h"
 #include <cstring>
 #include <libraries/log/nrf_log.h>
 
@@ -10,8 +10,7 @@ TaskController::TaskController(Controllers::DateTime& dateTimeController, Contro
   : dateTimeController {dateTimeController}, fs {fs}, staged {fs, "TaskController", datPath, stagePath, sizeof(Task), MaxTasks, formatVersion} {
 }
 
-void TaskController::Init(System::SystemTask* systemTask) {
-  this->systemTask = systemTask;
+void TaskController::Init() {
   fs.FileDelete(stagePath); // leftover staging from a power loss mid-sync
   staged.Load();
   LoadState();
@@ -130,13 +129,17 @@ void TaskController::SetStreak(uint16_t value) {
 }
 
 void TaskController::RollOverDay() {
-  // Evaluate the day that is ending: a full-completion day extends the streak,
-  // any incomplete day breaks it. A day with no tasks leaves the streak alone.
-  if (GetCount() > 0) {
-    streak = (CompletedCount() == GetCount()) ? static_cast<uint16_t>(streak + 1) : 0;
-  }
+  const uint32_t today = TodayKey();
+  const auto gap = TaskRules::Classify(stateDateKey, today, TaskRules::PreviousDay(today));
+  // Only a day that ended yesterday needs its completion count, and that count
+  // costs a flash read per task; a skipped or backwards day is decided without
+  // touching the filesystem.
+  const bool hadTasks = gap == TaskRules::DayGap::Contiguous && GetCount() > 0;
+  const bool allCompleted = hadTasks && CompletedCount() == GetCount();
+
+  streak = TaskRules::NextStreak(streak, gap, hadTasks, allCompleted);
   doneCount = 0;
-  stateDateKey = TodayKey();
+  stateDateKey = today;
   SaveState();
 }
 
@@ -159,12 +162,15 @@ void TaskController::LoadState() {
 }
 
 void TaskController::SaveState() {
-  // Best-effort: skip when the SPI flash is asleep (e.g. a midnight rollover
-  // with the screen off). RAM stays correct and the on-load date check
-  // re-derives it after the next boot.
-  if (systemTask != nullptr && systemTask->IsSleeping()) {
-    return;
-  }
+  // Every caller guarantees the flash is powered: CommitStaged and SetStreak
+  // hold a SyncWakeLock (which waits for Running), ToggleAt runs from the UI
+  // with the screen on, and RollOverDay runs either at boot or inside
+  // SystemTask's FlashWakeScope.
+  //
+  // This used to skip the write whenever the *system* was sleeping, which is a
+  // different question from whether the *flash* is powered -- FlashWakeScope
+  // wakes the flash without leaving the sleep state -- so the midnight rollover
+  // computed a new streak and then silently threw it away.
   FS::Lock lock(fs);
   lfs_dir systemDir;
   if (fs.DirOpen("/.system", &systemDir) != LFS_ERR_OK) {

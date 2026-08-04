@@ -46,7 +46,7 @@ namespace Pinetime {
 
       TaskController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);
 
-      void Init(System::SystemTask* systemTask);
+      void Init();
 
       // --- definition staging (BLE task; TaskService holds the wake lock) ---
       bool BeginStaging(uint8_t count, uint32_t version);
@@ -127,7 +127,6 @@ namespace Pinetime {
       Controllers::DateTime& dateTimeController;
       Controllers::FS& fs;
       StagedList staged;
-      System::SystemTask* systemTask = nullptr;
 
       // Completion state (mirrors statePath).
       uint32_t stateDateKey = 0;
