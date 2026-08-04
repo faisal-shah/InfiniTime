@@ -67,7 +67,9 @@ namespace Pinetime {
 
       // Re-arm advertising if it has stopped while it should be running. Called
       // periodically by SystemTask; see the definition for why this is needed.
+      // The restart itself is deferred to the "ble" task via DoAdvertisingRecovery.
       void EnsureAdvertising();
+      void DoAdvertisingRecovery();
 
       Pinetime::Controllers::MusicService& music() {
         return musicService;
