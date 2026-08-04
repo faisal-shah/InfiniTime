@@ -153,7 +153,7 @@ void SystemTask::Work() {
   motionSensor.SoftReset();
   multiAlarmController.Init(this);
   scheduleController.Init(this);
-  taskController.Init(this);
+  taskController.Init();
   prayerController.Init(this);
   beaconController.Init();
 
