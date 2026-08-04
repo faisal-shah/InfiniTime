@@ -59,6 +59,10 @@ void ImmediateAlertService::Init() {
 int ImmediateAlertService::OnAlertLevelChanged(uint16_t attributeHandle, ble_gatt_access_ctxt* context) {
   if (attributeHandle == alertLevelHandle) {
     if (context->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+      // A client may write an empty value, and this reads the first byte.
+      if (context->om->om_len < 1) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
       auto alertLevel = static_cast<Levels>(context->om->om_data[0]);
       auto* alertString = ToString(alertLevel);
 

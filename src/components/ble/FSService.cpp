@@ -75,6 +75,12 @@ int FSService::OnFSServiceRequested(uint16_t connectionHandle, uint16_t attribut
 }
 
 int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
+  // A client may write an empty value, and this reads the first byte. Bail
+  // before the wake-up below, so an empty write cannot pull the watch out of
+  // sleep either.
+  if (om->om_len < 1) {
+    return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+  }
   auto command = static_cast<commands>(om->om_data[0]);
   NRF_LOG_INFO("[FS_S] -> FSCommandHandler Command %d", command);
   // Just always make sure we are awake...
