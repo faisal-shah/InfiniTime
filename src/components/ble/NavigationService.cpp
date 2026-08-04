@@ -17,8 +17,13 @@
 */
 
 #include "components/ble/NavigationService.h"
+#include <algorithm>
 
 namespace {
+  // Longest navigation string kept. These are short turn instructions, and the
+  // cap is what stops the stack buffer in OnCommand being sized by the peer.
+  constexpr size_t MaxStringSize {40};
+
   // 0001yyxx-78fc-48fe-8e23-433b3a1942d0
   constexpr ble_uuid128_t CharUuid(uint8_t x, uint8_t y) {
     return ble_uuid128_t {.u = {.type = BLE_UUID_TYPE_128},
@@ -82,8 +87,12 @@ void Pinetime::Controllers::NavigationService::Init() {
 int Pinetime::Controllers::NavigationService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {
 
   if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
-    size_t notifSize = OS_MBUF_PKTLEN(ctxt->om);
-    uint8_t data[notifSize + 1];
+    // Cap before sizing the buffer. This is a variable-length array on the ble
+    // task's stack, and notifSize is however many bytes the peer wrote -- an
+    // attribute write can carry far more than these short strings ever need.
+    // MusicService already caps the same pattern; this one did not.
+    const size_t notifSize = std::min<size_t>(OS_MBUF_PKTLEN(ctxt->om), MaxStringSize);
+    uint8_t data[MaxStringSize + 1];
     data[notifSize] = '\0';
     os_mbuf_copydata(ctxt->om, 0, notifSize, data);
     char* s = (char*) &data[0];
