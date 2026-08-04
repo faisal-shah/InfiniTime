@@ -153,24 +153,30 @@ int DfuService::WritePacketHandler(uint16_t connectionHandle, os_mbuf* om) {
     }
       return 0;
     case States::Init: {
-      uint16_t deviceType = om->om_data[0] + (om->om_data[1] << 8);
-      uint16_t deviceRevision = om->om_data[2] + (om->om_data[3] << 8);
-      uint32_t applicationVersion = om->om_data[4] + (om->om_data[5] << 8) + (om->om_data[6] << 16) + (om->om_data[7] << 24);
-      uint16_t softdeviceArrayLength = om->om_data[8] + (om->om_data[9] << 8);
-      uint16_t sd[softdeviceArrayLength];
-      for (int i = 0; i < softdeviceArrayLength; i++) {
-        sd[i] = om->om_data[10 + (i * 2)] + (om->om_data[10 + (i * 2) + 1] << 8);
+      // Every byte here is whatever the connected device chose to send. The
+      // softdevice count used to size a variable-length array on this task's
+      // stack and index into the mbuf unchecked, so two bytes were enough to
+      // run off the end of both -- and the array existed only to print its
+      // first element, which was read even when the count was zero.
+      static constexpr uint16_t minimumInitPacketSize = 12; // 10 header + CRC
+      if (om->om_len < minimumInitPacketSize) {
+        NRF_LOG_WARNING("[DFU] -> Init packet too short (%d bytes), ignored", om->om_len);
+        return 0;
       }
-      expectedCrc = om->om_data[10 + (softdeviceArrayLength * 2)] + (om->om_data[10 + (softdeviceArrayLength * 2) + 1] << 8);
+      const uint16_t softdeviceArrayLength = om->om_data[8] + (om->om_data[9] << 8);
+      const uint32_t crcOffset = 10 + (static_cast<uint32_t>(softdeviceArrayLength) * 2);
+      if (crcOffset + 1 >= om->om_len) {
+        NRF_LOG_WARNING("[DFU] -> Init packet claims %d softdevices, more than it carries", softdeviceArrayLength);
+        return 0;
+      }
+      expectedCrc = om->om_data[crcOffset] + (om->om_data[crcOffset + 1] << 8);
 
-      NRF_LOG_INFO(
-        "[DFU] -> Init data received : deviceType = %d, deviceRevision = %d, applicationVersion = %d, nb SD = %d, First SD = %d, CRC = %u",
-        deviceType,
-        deviceRevision,
-        applicationVersion,
-        softdeviceArrayLength,
-        sd[0],
-        expectedCrc);
+      NRF_LOG_INFO("[DFU] -> Init data received : deviceType = %d, deviceRevision = %d, applicationVersion = %d, nb SD = %d, CRC = %u",
+                   om->om_data[0] + (om->om_data[1] << 8),
+                   om->om_data[2] + (om->om_data[3] << 8),
+                   om->om_data[4] + (om->om_data[5] << 8) + (om->om_data[6] << 16) + (om->om_data[7] << 24),
+                   softdeviceArrayLength,
+                   expectedCrc);
 
       return 0;
     }
@@ -380,7 +386,15 @@ void DfuService::DfuImage::Init(size_t chunkSize, size_t totalSize, uint16_t exp
 void DfuService::DfuImage::Append(uint8_t* data, size_t size) {
   if (!ready)
     return;
-  ASSERT(size <= 20);
+  // These bytes arrive straight off the DFU packet characteristic, so the size
+  // is whatever the connected device chose to send. The flush below triggers on
+  // an exact match with bufferSize, which only ever lines up while every chunk
+  // is the full 20 bytes; one short chunk part-way through the image would step
+  // over the boundary and keep copying past the end of tempBuffer. ASSERT does
+  // not stop that -- it compiles out in release.
+  if (size > chunkSize || bufferWriteIndex + size > bufferSize) {
+    return;
+  }
 
   std::memcpy(tempBuffer + bufferWriteIndex, data, size);
   bufferWriteIndex += size;
