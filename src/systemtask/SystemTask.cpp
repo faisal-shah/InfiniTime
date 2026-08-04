@@ -439,7 +439,15 @@ void SystemTask::Work() {
         case Messages::OnNewDay:
           motionSensor.ResetStepCounter();
           motionController.AdvanceDay();
-          taskController.RollOverDay();
+          // RollOverDay counts yesterday's completed tasks to decide the streak,
+          // and that count comes from the task file. Midnight almost always
+          // arrives while asleep with the flash powered down, where reads return
+          // garbage on hardware -- so the streak would be computed from noise and
+          // then written back. Same bracket as the OnNewTime rescan.
+          {
+            FlashWakeScope flash(*this);
+            taskController.RollOverDay();
+          }
           break;
         case Messages::OnNewHour:
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
