@@ -57,6 +57,21 @@ namespace Pinetime {
         addressType = t;
       }
 
+      // Times the radio had to be nudged back into advertising after it stopped
+      // without anything asking it to. Surfaced in Sys Info because the symptom
+      // -- a watch no scan can see, with a working screen -- is otherwise
+      // indistinguishable from a phone-side Bluetooth problem. Any non-zero
+      // value means the watch hit that state and recovered itself.
+      void RecordAdvertisingRecovery() {
+        if (advertisingRecoveries < UINT8_MAX) {
+          advertisingRecoveries++;
+        }
+      }
+
+      uint8_t AdvertisingRecoveries() const {
+        return advertisingRecoveries;
+      }
+
       void SetPairingKey(uint32_t k) {
         pairingKey = k;
       }
@@ -75,6 +90,7 @@ namespace Pinetime {
       BleAddress address;
       AddressTypes addressType;
       uint32_t pairingKey = 0;
+      uint8_t advertisingRecoveries = 0;
     };
   }
 }

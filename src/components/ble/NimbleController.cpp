@@ -213,8 +213,50 @@ void NimbleController::StartAdvertising() {
   rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
   ASSERT(rc == 0);
 
-  rc = ble_gap_adv_start(addrType, NULL, 2000, &adv_params, GAPEventCallback, this);
-  ASSERT(rc == 0);
+  // A failure here is not fatal and must not be asserted on: ASSERT compiles to
+  // nothing in release builds, so the old ASSERT(rc == 0) only ever documented
+  // an intent. ble_gap_adv_start legitimately fails with BLE_HS_ENOMEM while a
+  // connection object still exists (BLE_MAX_CONNECTIONS is 1), with
+  // BLE_HS_EDISABLED while the host is resetting, and with BLE_HS_EALREADY if a
+  // burst is already running. The first two are terminal on their own, because
+  // the only thing that would try again is the BLE_GAP_EVENT_ADV_COMPLETE that
+  // a failed start never produces. EnsureAdvertising is what recovers them.
+  ble_gap_adv_start(addrType, NULL, 2000, &adv_params, GAPEventCallback, this);
+}
+
+/**
+ * Restart advertising if it has silently stopped.
+ *
+ * Advertising runs in 2 second bursts that re-arm from ADV_COMPLETE, so every
+ * period depends on the previous one having started successfully. Any single
+ * failed start therefore ends advertising for good: the watch keeps working,
+ * the radio setting still reads "on", and it is simply invisible to every
+ * scan until it is rebooted. Toggling Bluetooth off and on does not reliably
+ * clear it either, because disabling drops the connection asynchronously and
+ * re-enabling can run before the controller has released the connection slot.
+ *
+ * Rather than enumerate the ways a start can fail, this asserts the invariant
+ * every 100 ms: radio on, nothing connected and not beaconing means
+ * advertising is running.
+ */
+void NimbleController::EnsureAdvertising() {
+  const bool shouldAdvertise = bleController.IsRadioEnabled() && !bleController.IsConnected() && !beaconActive;
+  if (!shouldAdvertise || ble_gap_adv_active()) {
+    advertisingIdleTicks = 0;
+    return;
+  }
+
+  if (advertisingIdleTicks < advertisingIdleLimit) {
+    advertisingIdleTicks++;
+    return;
+  }
+
+  advertisingIdleTicks = 0;
+  bleController.RecordAdvertisingRecovery();
+  // Recovering means someone is probably waiting to connect right now, so come
+  // back on the fast interval rather than the 1 second idle one.
+  fastAdvCount = 0;
+  StartAdvertising();
 }
 
 int NimbleController::OnGAPEvent(ble_gap_event* event) {
@@ -264,17 +306,20 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       scheduleService.OnDisconnect();
       taskService.OnDisconnect();
       connectionHandle = BLE_HS_CONN_HANDLE_NONE;
-      if (bleController.IsConnected()) {
-        bleController.Disconnect();
-        fastAdvCount = 0;
+      bleController.Disconnect();
+      fastAdvCount = 0;
+      // Whether to advertise again is a question about the radio setting, not
+      // about whether we still believed we were connected. DisableRadio clears
+      // the connected flag as soon as it asks for the terminate, so testing the
+      // flag here used to skip the restart for any disconnect that DisableRadio
+      // had already accounted for -- including ones it raced with.
+      if (beaconActive) {
         // If beacon mode was requested, this disconnect was our own terminate
         // (the connection had to drop before we could swap the address); start
         // beacon advertising here rather than the normal connectable path.
-        if (beaconActive) {
-          StartBeaconAdvertising();
-        } else {
-          StartAdvertising();
-        }
+        StartBeaconAdvertising();
+      } else if (bleController.IsRadioEnabled()) {
+        StartAdvertising();
       }
       break;
 
