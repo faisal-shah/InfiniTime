@@ -57,6 +57,20 @@ int main() {
   check(Settle(12, 20260804, 20260101, true, false) == 12, "a backwards clock leaves the streak untouched");
   check(Classify(20260804, 20260101, PreviousDay(20260101)) == DayGap::Backwards, "an earlier today is classified backwards");
 
+  // The streak survives the *sequence*, not just the single jump. Preserving it
+  // across a backwards clock is pointless if the bogus date gets recorded: the
+  // next real date then looks like a long gap and ends the streak anyway.
+  check(!ShouldReanchor(Classify(20260804, 20260101, PreviousDay(20260101))), "a backwards clock does not move the recorded day");
+  check(ShouldReanchor(Classify(20260803, 20260804, 20260803)), "an ordinary midnight does move it");
+  check(ShouldReanchor(Classify(20260801, 20260804, 20260803)), "a skipped day still moves it");
+  {
+    // Recorded day stays 4 Aug through an unset-clock boot, so when the
+    // companion sets the real date the day after, it is an ordinary midnight.
+    const DayKey recorded = 20260804;
+    check(Settle(12, recorded, 20260101, false, false) == 12, "unset clock keeps the streak");
+    check(Settle(12, recorded, 20260805, true, true) == 13, "and the next real day extends it, not resets it");
+  }
+
   // ---- first boot, no history ----
   check(Settle(0, 0, 20260804, true, true) == 0, "an empty state file starts at zero");
 
