@@ -172,6 +172,18 @@ namespace Pinetime {
       uint8_t advertisingIdleTicks = 0;
       static constexpr uint8_t advertisingIdleLimit = 30; // 30 x 100 ms
 
+      // When the advertising state machine last did anything: a burst ending, a
+      // connection arriving, a link dropping, or a start being issued.
+      //
+      // Advertising runs in 2 second bursts, so a healthy radio produces one of
+      // these constantly. Asking NimBLE whether it thinks it is advertising is
+      // not enough on its own -- if the host believes a burst is running while
+      // nothing is on the air, that answer keeps the watch unreachable for good
+      // and no scan or direct connection can bring it back. Silence for far
+      // longer than a burst is the evidence that the state is a fiction.
+      uint32_t lastAdvEventTick = 0;
+      static constexpr uint32_t advSilenceMs = 15000; // bursts are 2 s
+
       // Beacon-mode radio state, owned by and only touched on the "ble" task.
       bool beaconActive = false;
       // Whether the device identity is a random address (PineTime: yes). If so,

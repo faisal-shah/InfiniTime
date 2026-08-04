@@ -231,6 +231,7 @@ void NimbleController::StartAdvertising() {
   // burst is already running. The first two are terminal on their own, because
   // the only thing that would try again is the BLE_GAP_EVENT_ADV_COMPLETE that
   // a failed start never produces. EnsureAdvertising is what recovers them.
+  lastAdvEventTick = xTaskGetTickCount();
   ble_gap_adv_start(addrType, NULL, 2000, &adv_params, GAPEventCallback, this);
 }
 
@@ -256,7 +257,17 @@ void NimbleController::StartAdvertising() {
  */
 void NimbleController::EnsureAdvertising() {
   const bool shouldAdvertise = bleController.IsRadioEnabled() && !bleController.IsConnected() && !beaconActive;
-  if (!shouldAdvertise || ble_gap_adv_active()) {
+  if (!shouldAdvertise) {
+    advertisingIdleTicks = 0;
+    return;
+  }
+
+  // Two ways to be unreachable, and the second is the one that never recovered:
+  // NimBLE reporting no advertising, or NimBLE reporting advertising while the
+  // radio has gone quiet. Bursts end every 2 seconds, so silence for far longer
+  // means the reported state is not the real one.
+  const bool silent = (xTaskGetTickCount() - lastAdvEventTick) > pdMS_TO_TICKS(advSilenceMs);
+  if (ble_gap_adv_active() && !silent) {
     advertisingIdleTicks = 0;
     return;
   }
@@ -275,9 +286,14 @@ void NimbleController::DoAdvertisingRecovery() {
   // Re-test here rather than trusting the decision made on the other task up to
   // a tick ago: a connection or a radio-off could have landed in between, and
   // starting to advertise after either of those is worse than doing nothing.
-  if (!bleController.IsRadioEnabled() || bleController.IsConnected() || beaconActive || ble_gap_adv_active()) {
+  if (!bleController.IsRadioEnabled() || bleController.IsConnected() || beaconActive) {
     return;
   }
+
+  // Stop first. If the host still believes a burst is running, ble_gap_adv_start
+  // answers BLE_HS_EALREADY and changes nothing -- which is how a stuck state
+  // stayed stuck. Stopping an idle radio is harmless (BLE_HS_EALREADY, ignored).
+  ble_gap_adv_stop();
 
   bleController.RecordAdvertisingRecovery();
   // Recovering means someone is probably waiting to connect right now, so come
@@ -289,6 +305,7 @@ void NimbleController::DoAdvertisingRecovery() {
 int NimbleController::OnGAPEvent(ble_gap_event* event) {
   switch (event->type) {
     case BLE_GAP_EVENT_ADV_COMPLETE:
+      lastAdvEventTick = xTaskGetTickCount();
       NRF_LOG_INFO("Advertising event : BLE_GAP_EVENT_ADV_COMPLETE");
       NRF_LOG_INFO("reason=%d; status=%0X", event->adv_complete.reason, event->connect.status);
       // Beacon advertising uses BLE_HS_FOREVER so this does not fire while
@@ -299,6 +316,7 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       break;
 
     case BLE_GAP_EVENT_CONNECT:
+      lastAdvEventTick = xTaskGetTickCount();
       /* A new connection was established or a connection attempt failed. */
       NRF_LOG_INFO("Connect event : BLE_GAP_EVENT_CONNECT");
       NRF_LOG_INFO("connection %s; status=%0X ", event->connect.status == 0 ? "established" : "failed", event->connect.status);
@@ -320,6 +338,7 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       break;
 
     case BLE_GAP_EVENT_DISCONNECT:
+      lastAdvEventTick = xTaskGetTickCount();
       /* Connection terminated; resume advertising. */
       NRF_LOG_INFO("Disconnect event : BLE_GAP_EVENT_DISCONNECT");
       NRF_LOG_INFO("disconnect reason=%d", event->disconnect.reason);
