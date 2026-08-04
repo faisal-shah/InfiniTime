@@ -1,5 +1,6 @@
 #include "components/ble/NimbleController.h"
 #include <cstring>
+#include <cstddef>
 
 #include <nrf_log.h>
 #define min // workaround: nimble's min/max macros conflict with libstdc++
@@ -172,7 +173,7 @@ void NimbleController::Init() {
   rc = ble_gatts_start();
   ASSERT(rc == 0);
 
-  RestoreBond();
+  RestoreBonds();
 
   // Initialise the beacon-transition event once; it is posted to the host task
   // by RequestBeaconMode.
@@ -344,7 +345,7 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       NRF_LOG_INFO("disconnect reason=%d", event->disconnect.reason);
 
       if (event->disconnect.conn.sec_state.bonded) {
-        PersistBond(event->disconnect.conn);
+        PersistBonds();
       }
 
       currentTimeClient.Reset();
@@ -394,7 +395,7 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
         struct ble_gap_conn_desc desc;
         ble_gap_conn_find(event->enc_change.conn_handle, &desc);
         if (desc.sec_state.bonded) {
-          PersistBond(desc);
+          PersistBonds();
         }
 
         NRF_LOG_INFO("new state: encrypted=%d authenticated=%d bonded=%d key_size=%d",
@@ -633,87 +634,195 @@ void NimbleController::ExitBeaconMode() {
   StartAdvertising();
 }
 
-void NimbleController::PersistBond(struct ble_gap_conn_desc& desc) {
-  union ble_store_key key;
-  union ble_store_value our_sec, peer_sec, peer_cccd_set[MYNEWT_VAL(BLE_STORE_MAX_CCCDS)] = {0};
-  int rc;
+namespace {
+  // The legacy file began with a ble_store_value_sec, whose first byte is an
+  // address type (0 or 1). This magic cannot collide with that, so the format
+  // is recognisable without a migration flag anywhere else.
+  constexpr uint8_t bondFileMagic = 0xB0;
+  // Telling the two formats apart rests entirely on this: the legacy file began
+  // with a ble_store_value_sec, so its first byte was the peer address type,
+  // and the defined address types are 0 to 3. If that struct ever gains a
+  // leading field, the check silently starts reading new files as old ones.
+  static_assert(offsetof(struct ble_store_value_sec, peer_addr) == 0,
+                "legacy bond files are recognised by the address type being the first byte");
+  static_assert(bondFileMagic > 3, "the magic must not collide with a BLE address type");
+  constexpr uint8_t bondFileVersion = 1;
+  constexpr const char* bondFilePath = "/bond.dat";
 
-  memset(&key, 0, sizeof key);
-  memset(&our_sec, 0, sizeof our_sec);
-  key.sec.peer_addr = desc.peer_id_addr;
-  rc = ble_store_read_our_sec(&key.sec, &our_sec.sec);
+  void FoldInto(uint32_t& digest, const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < size; i++) {
+      digest = (digest * 16777619u) ^ bytes[i];
+    }
+  }
+}
 
-  if (memcmp(&our_sec.sec, &bondId, sizeof bondId) == 0) {
+/** Checksum of every bond the host holds, in store order. */
+uint32_t NimbleController::BondDigest() const {
+  uint32_t digest = 2166136261u;
+  for (int i = 0; i < MYNEWT_VAL(BLE_STORE_MAX_BONDS); i++) {
+    // A zeroed peer address is BLE_ADDR_ANY, so the store skips the address
+    // filter and idx walks every record in turn. (The macro itself is a C
+    // compound literal and cannot be dereferenced here.)
+    struct ble_store_key_sec key {};
+    key.idx = i;
+    struct ble_store_value_sec value {};
+    if (ble_store_read_our_sec(&key, &value) != 0) {
+      break;
+    }
+    FoldInto(digest, &value, sizeof(value));
+  }
+  return digest;
+}
+
+void NimbleController::PersistBonds() {
+  const uint32_t digest = BondDigest();
+  if (digest == bondsDigest) {
+    return; // every reconnection raises an encryption event; most change nothing
+  }
+
+  /* Wakeup Spi and SpiNorFlash before accessing the file system
+   * This should be fixed in the FS driver
+   */
+  systemTask.PushMessage(Pinetime::System::Messages::DisableSleeping);
+  while (!systemTask.IsSleepDisabled()) {
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+
+  lfs_file_t file;
+  // O_TRUNC because the file shrinks when a bond is dropped; without it the tail
+  // of a longer previous write would be read back as an extra bond.
+  if (fs.FileOpen(&file, bondFilePath, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == 0) {
+    uint8_t header[3] = {bondFileMagic, bondFileVersion, 0};
+
+    // Count first: the count has to precede the records, and the records are
+    // streamed one at a time rather than gathered, because a full set of them
+    // does not belong on this task's stack.
+    for (int i = 0; i < MYNEWT_VAL(BLE_STORE_MAX_BONDS); i++) {
+      struct ble_store_key_sec key {};
+      key.idx = i;
+      struct ble_store_value_sec value {};
+      if (ble_store_read_our_sec(&key, &value) != 0) {
+        break;
+      }
+      header[2]++;
+    }
+    fs.FileWrite(&file, header, sizeof(header));
+
+    for (uint8_t i = 0; i < header[2]; i++) {
+      struct ble_store_key_sec key {};
+      key.idx = i;
+      struct ble_store_value_sec ourSec {};
+      if (ble_store_read_our_sec(&key, &ourSec) != 0) {
+        break;
+      }
+      // The peer half is keyed by identity address, not by index: the two
+      // stores are not guaranteed to be in the same order.
+      struct ble_store_key_sec peerKey {};
+      peerKey.peer_addr = ourSec.peer_addr;
+      struct ble_store_value_sec peerSec {};
+      ble_store_read_peer_sec(&peerKey, &peerSec);
+
+      fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&ourSec), sizeof(ourSec));
+      fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&peerSec), sizeof(peerSec));
+    }
+
+    uint8_t cccdCount = 0;
+    for (int i = 0; i < MYNEWT_VAL(BLE_STORE_MAX_CCCDS); i++) {
+      struct ble_store_key_cccd key {};
+      key.idx = i;
+      struct ble_store_value_cccd value {};
+      if (ble_store_read_cccd(&key, &value) != 0) {
+        break;
+      }
+      cccdCount++;
+    }
+    fs.FileWrite(&file, &cccdCount, 1);
+
+    for (uint8_t i = 0; i < cccdCount; i++) {
+      struct ble_store_key_cccd key {};
+      key.idx = i;
+      struct ble_store_value_cccd value {};
+      if (ble_store_read_cccd(&key, &value) != 0) {
+        break;
+      }
+      fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&value), sizeof(value));
+    }
+
+    fs.FileClose(&file);
+    bondsDigest = digest;
+    NRF_LOG_INFO("[BOND] Persisted %d bond(s), %d subscription(s)", header[2], cccdCount);
+  }
+  systemTask.PushMessage(Pinetime::System::Messages::EnableSleeping);
+}
+
+void NimbleController::RestoreBonds() {
+  lfs_file_t file;
+  if (fs.FileOpen(&file, bondFilePath, LFS_O_RDONLY) != 0) {
     return;
   }
 
-  memcpy(&bondId, &our_sec.sec, sizeof bondId);
+  uint8_t header[3] = {0, 0, 0};
+  if (fs.FileRead(&file, header, sizeof(header)) != sizeof(header)) {
+    fs.FileClose(&file);
+    return;
+  }
 
-  memset(&key, 0, sizeof key);
-  memset(&peer_sec, 0, sizeof peer_sec);
-  key.sec.peer_addr = desc.peer_id_addr;
-  rc += ble_store_read_peer_sec(&key.sec, &peer_sec.sec);
-
-  if (rc == 0) {
-    memset(&key, 0, sizeof key);
-    key.cccd.peer_addr = desc.peer_id_addr;
-    int peer_count = 0;
-    ble_store_util_count(BLE_STORE_OBJ_TYPE_CCCD, &peer_count);
-    for (int i = 0; i < peer_count; i++) {
-      key.cccd.idx = peer_count;
-      ble_store_read_cccd(&key.cccd, &peer_cccd_set[i].cccd);
+  if (header[0] != bondFileMagic) {
+    // A file written before bonds were kept as a set: one bond, then a count of
+    // subscriptions. Load it so the phone that owns this watch does not have to
+    // pair again; the next bond event rewrites the file in the current format,
+    // because bondsDigest starts at a value the real store will not match.
+    fs.FileClose(&file);
+    if (fs.FileOpen(&file, bondFilePath, LFS_O_RDONLY) != 0) {
+      return;
     }
-
-    /* Wakeup Spi and SpiNorFlash before accessing the file system
-     * This should be fixed in the FS driver
-     */
-    systemTask.PushMessage(Pinetime::System::Messages::DisableSleeping);
-
-    // This isn't quite correct
-    // SystemTask could receive EnableSleeping right after passing this check
-    // We need some guarantee that the SystemTask has processed the above message
-    // before we can continue
-    while (!systemTask.IsSleepDisabled()) {
-      vTaskDelay(pdMS_TO_TICKS(5));
-    }
-
-    lfs_file_t file_p;
-
-    rc = fs.FileOpen(&file_p, "/bond.dat", LFS_O_WRONLY | LFS_O_CREAT);
-    if (rc == 0) {
-      fs.FileWrite(&file_p, reinterpret_cast<uint8_t*>(&our_sec.sec), sizeof our_sec);
-      fs.FileWrite(&file_p, reinterpret_cast<uint8_t*>(&peer_sec.sec), sizeof peer_sec);
-      fs.FileWrite(&file_p, reinterpret_cast<const uint8_t*>(&peer_count), 1);
-      for (int i = 0; i < peer_count; i++) {
-        fs.FileWrite(&file_p, reinterpret_cast<uint8_t*>(&peer_cccd_set[i].cccd), sizeof(struct ble_store_value_cccd));
+    struct ble_store_value_sec sec {};
+    if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&sec), sizeof(sec)) == sizeof(sec)) {
+      ble_store_write_our_sec(&sec);
+      if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&sec), sizeof(sec)) == sizeof(sec)) {
+        ble_store_write_peer_sec(&sec);
+        uint8_t cccdCount = 0;
+        fs.FileRead(&file, &cccdCount, 1);
+        for (uint8_t i = 0; i < cccdCount; i++) {
+          struct ble_store_value_cccd cccd {};
+          if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&cccd), sizeof(cccd)) != sizeof(cccd)) {
+            break;
+          }
+          ble_store_write_cccd(&cccd);
+        }
       }
-      fs.FileClose(&file_p);
     }
-    systemTask.PushMessage(Pinetime::System::Messages::EnableSleeping);
+    fs.FileClose(&file);
+    NRF_LOG_INFO("[BOND] Migrated a single-bond file");
+    return;
   }
+
+  for (uint8_t i = 0; i < header[2] && i < MYNEWT_VAL(BLE_STORE_MAX_BONDS); i++) {
+    struct ble_store_value_sec ourSec {}, peerSec {};
+    if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&ourSec), sizeof(ourSec)) != sizeof(ourSec) ||
+        fs.FileRead(&file, reinterpret_cast<uint8_t*>(&peerSec), sizeof(peerSec)) != sizeof(peerSec)) {
+      break;
+    }
+    ble_store_write_our_sec(&ourSec);
+    ble_store_write_peer_sec(&peerSec);
+  }
+
+  uint8_t cccdCount = 0;
+  if (fs.FileRead(&file, &cccdCount, 1) == 1) {
+    for (uint8_t i = 0; i < cccdCount && i < MYNEWT_VAL(BLE_STORE_MAX_CCCDS); i++) {
+      struct ble_store_value_cccd cccd {};
+      if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&cccd), sizeof(cccd)) != sizeof(cccd)) {
+        break;
+      }
+      ble_store_write_cccd(&cccd);
+    }
+  }
+
+  fs.FileClose(&file);
+  // Deliberately not deleted. Deleting it meant that a watch which lost power
+  // before the next bond event came back knowing nobody.
+  bondsDigest = BondDigest();
+  NRF_LOG_INFO("[BOND] Restored %d bond(s), %d subscription(s)", header[2], cccdCount);
 }
 
-void NimbleController::RestoreBond() {
-  lfs_file_t file_p;
-  union ble_store_value sec, cccd;
-  uint8_t peer_count = 0;
-
-  if (fs.FileOpen(&file_p, "/bond.dat", LFS_O_RDONLY) == 0) {
-    memset(&sec, 0, sizeof sec);
-    fs.FileRead(&file_p, reinterpret_cast<uint8_t*>(&sec.sec), sizeof sec);
-    ble_store_write_our_sec(&sec.sec);
-
-    memset(&sec, 0, sizeof sec);
-    fs.FileRead(&file_p, reinterpret_cast<uint8_t*>(&sec.sec), sizeof sec);
-    ble_store_write_peer_sec(&sec.sec);
-
-    fs.FileRead(&file_p, &peer_count, 1);
-    for (int i = 0; i < peer_count; i++) {
-      fs.FileRead(&file_p, reinterpret_cast<uint8_t*>(&cccd.cccd), sizeof(struct ble_store_value_cccd));
-      ble_store_write_cccd(&cccd.cccd);
-    }
-
-    fs.FileClose(&file_p);
-    fs.FileDelete("/bond.dat");
-  }
-}

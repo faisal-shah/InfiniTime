@@ -60,17 +60,13 @@ namespace Pinetime {
       // Times the radio had to be nudged back into advertising after it stopped
       // without anything asking it to. Surfaced in Sys Info because the symptom
       // -- a watch no scan can see, with a working screen -- is otherwise
-      // indistinguishable from a phone-side Bluetooth problem. Any non-zero
-      // value means the watch hit that state and recovered itself.
-      void RecordAdvertisingRecovery() {
-        if (advertisingRecoveries < UINT8_MAX) {
-          advertisingRecoveries++;
-        }
-      }
-
-      uint8_t AdvertisingRecoveries() const {
-        return advertisingRecoveries;
-      }
+      // indistinguishable from a phone-side Bluetooth problem.
+      //
+      // The count lives in no-init RAM (main.cpp), not here: as an ordinary
+      // member it was reset by the very reboot people perform to get the watch
+      // back, so it read zero every time anyone thought to look.
+      void RecordAdvertisingRecovery();
+      uint16_t AdvertisingRecoveries() const;
 
       void SetPairingKey(uint32_t k) {
         pairingKey = k;
@@ -90,7 +86,6 @@ namespace Pinetime {
       BleAddress address;
       AddressTypes addressType;
       uint32_t pairingKey = 0;
-      uint8_t advertisingRecoveries = 0;
     };
   }
 }
