@@ -53,6 +53,20 @@ namespace Pinetime {
       }
 
       /**
+       * Whether the recorded day should move to today.
+       *
+       * A backwards clock is not a new day, it is an unset one: the watch reads
+       * 1 January of its build year until a companion sets the time. Recording
+       * that as the day reached would make the next real date look like a long
+       * gap and end the streak -- which is precisely what leaving the streak
+       * alone on a backwards jump is meant to avoid. Keep the day already
+       * recorded until the clock is worth believing again.
+       */
+      inline bool ShouldReanchor(DayGap gap) {
+        return gap != DayGap::Backwards;
+      }
+
+      /**
        * The streak once the recorded day has ended.
        *
        * A day counts only if it is the one directly before today. A longer gap

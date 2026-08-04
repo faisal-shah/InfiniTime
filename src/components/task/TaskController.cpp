@@ -131,9 +131,16 @@ void TaskController::SetStreak(uint16_t value) {
 void TaskController::RollOverDay() {
   const uint32_t today = TodayKey();
   const auto gap = TaskRules::Classify(stateDateKey, today, TaskRules::PreviousDay(today));
+
+  // Nothing to settle against a clock that has gone backwards, and recording
+  // that date would end the streak the moment a real one arrives.
+  if (!TaskRules::ShouldReanchor(gap)) {
+    return;
+  }
+
   // Only a day that ended yesterday needs its completion count, and that count
-  // costs a flash read per task; a skipped or backwards day is decided without
-  // touching the filesystem.
+  // costs a flash read per task; a skipped day is decided without touching the
+  // filesystem.
   const bool hadTasks = gap == TaskRules::DayGap::Contiguous && GetCount() > 0;
   const bool allCompleted = hadTasks && CompletedCount() == GetCount();
 
