@@ -33,8 +33,8 @@ namespace Pinetime {
         return active;
       }
 
-      // Intent flag, set on the SystemTask before the NimbleController posts the
-      // radio transition to the ble host task. RAM only.
+      // Intent flag, set on SystemTask before NimbleController posts radio
+      // reconciliation to the NimBLE host queue. RAM only.
       void SetActive(bool value) {
         active = value;
       }

@@ -1,0 +1,374 @@
+{
+  "schema_version": 1,
+  "custom_uuid_suffix": "78fc-48fe-8e23-433b3a1942d0",
+  "bond_policy": {
+    "active_connections": 1,
+    "retained_peers": 5,
+    "resolving_list_entries": 5,
+    "overflow_policy": "least_recently_used"
+  },
+  "records": {
+    "schedule": {
+      "protocol_version": 1,
+      "record_version": 2,
+      "record_size": 43,
+      "digest_size": 7,
+      "capacity": 64
+    },
+    "task": {
+      "protocol_version": 1,
+      "record_version": 1,
+      "record_size": 31,
+      "digest_size": 9,
+      "capacity": 20
+    },
+    "prayer_settings": {
+      "protocol_version": 1,
+      "record_size": 9
+    },
+    "multi_alarm": {
+      "record_size": 24,
+      "capacity": 5
+    },
+    "companion_management": {
+      "protocol_version": 1,
+      "status_size": 20,
+      "eviction_policy_lru": 1
+    }
+  },
+  "characteristics": [
+    {
+      "name": "schedule_sync",
+      "bridge_id": 0,
+      "service_uuid": "00060000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00060001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "schedule_digest",
+      "bridge_id": 1,
+      "service_uuid": "00060000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00060002-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "current_time",
+      "bridge_id": 2,
+      "service_uuid": "00001805-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "00002a2b-0000-1000-8000-00805f9b34fb",
+      "access": ["write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "new_alert",
+      "bridge_id": 3,
+      "service_uuid": "00001811-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "00002a46-0000-1000-8000-00805f9b34fb",
+      "access": ["write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "battery",
+      "bridge_id": 4,
+      "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+      "access": ["read", "notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "event_read",
+      "bridge_id": 5,
+      "service_uuid": "00060000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00060003-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "prayer_settings",
+      "bridge_id": 6,
+      "service_uuid": "00070000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00070001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "beacon_key",
+      "bridge_id": 7,
+      "service_uuid": "00080000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00080001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "beacon_control",
+      "bridge_id": 8,
+      "service_uuid": "00080000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00080002-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "multi_alarm",
+      "bridge_id": 9,
+      "service_uuid": "00090000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00090001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "dfu_control",
+      "bridge_id": 10,
+      "service_uuid": "00001530-1212-efde-1523-785feabcd123",
+      "characteristic_uuid": "00001531-1212-efde-1523-785feabcd123",
+      "access": ["write", "notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "dfu_packet",
+      "bridge_id": 11,
+      "service_uuid": "00001530-1212-efde-1523-785feabcd123",
+      "characteristic_uuid": "00001532-1212-efde-1523-785feabcd123",
+      "access": ["write_without_response"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "fs_transfer",
+      "bridge_id": 12,
+      "service_uuid": "0000febb-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "adaf0200-4669-6c65-5472-616e73666572",
+      "access": ["read", "write", "notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "firmware_revision",
+      "bridge_id": 13,
+      "service_uuid": "0000180a-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "00002a26-0000-1000-8000-00805f9b34fb",
+      "access": ["read"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "weather",
+      "bridge_id": 14,
+      "service_uuid": "00050000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00050001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "steps",
+      "bridge_id": 15,
+      "service_uuid": "00030000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00030001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "steps_yesterday",
+      "bridge_id": 16,
+      "service_uuid": "00030000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00030003-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_status",
+      "bridge_id": 17,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000002-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_artist",
+      "bridge_id": 18,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000003-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_track",
+      "bridge_id": 19,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000004-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_album",
+      "bridge_id": 20,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000005-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_position",
+      "bridge_id": 21,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000006-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_total_length",
+      "bridge_id": 22,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000007-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_track_number",
+      "bridge_id": 23,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000008-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_track_total",
+      "bridge_id": 24,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000009-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_playback_speed",
+      "bridge_id": 25,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "0000000a-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_repeat",
+      "bridge_id": 26,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "0000000b-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_shuffle",
+      "bridge_id": 27,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "0000000c-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "music_event",
+      "bridge_id": 28,
+      "service_uuid": "00000000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00000001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "call_event",
+      "bridge_id": 29,
+      "service_uuid": "00001811-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "00020001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "tasks_sync",
+      "bridge_id": 30,
+      "service_uuid": "000a0000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "000a0001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "tasks_digest",
+      "bridge_id": 31,
+      "service_uuid": "000a0000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "000a0002-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "task_read",
+      "bridge_id": 32,
+      "service_uuid": "000a0000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "000a0003-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "write"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "companion_status",
+      "bridge_id": 33,
+      "service_uuid": "000b0000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "000b0001-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read"],
+      "authenticated": false,
+      "persist_cccd": false
+    },
+    {
+      "name": "companion_verify",
+      "bridge_id": 34,
+      "service_uuid": "000b0000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "000b0002-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read"],
+      "authenticated": true,
+      "persist_cccd": false
+    },
+    {
+      "name": "heart_rate_measurement",
+      "bridge_id": null,
+      "service_uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+      "characteristic_uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+      "access": ["read", "notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    },
+    {
+      "name": "motion_values",
+      "bridge_id": null,
+      "service_uuid": "00030000-78fc-48fe-8e23-433b3a1942d0",
+      "characteristic_uuid": "00030002-78fc-48fe-8e23-433b3a1942d0",
+      "access": ["read", "notify"],
+      "authenticated": false,
+      "persist_cccd": true
+    }
+  ]
+}

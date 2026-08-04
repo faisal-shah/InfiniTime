@@ -52,15 +52,25 @@ two = top-two-bits of key byte 0 and a hint. Non-connectable, forever duration,
 enabled state is RAM-only and always OFF at boot (the key persists, so after a
 reboot the user only re-toggles, no re-provision).
 
-## Off-state safety
+## Radio sequencing and off-state safety
 
-The key file is separate from the global settings (no `settingsVersion` bump). The
-BeaconController is inert when off (one file read at boot, then nothing — no timer,
-no radio). The only shared-code change is in `NimbleController::OnGAPEvent` /
-`DisableRadio`, guarded by `IsBeaconing()`; with beacon off every branch is the
-stock code and normal advertising is unchanged. Entering beacon mode overwrites the
-identity random address, which `ExitBeaconMode` restores so normal advertising and
-existing bonds keep working.
+The key file is separate from the global settings (no `settingsVersion` bump).
+`BeaconController` is inert when off: one file read at boot, then no timer or
+radio work. SystemTask only changes the desired radio mode and posts a NimBLE
+host-queue event. The host queue owns advertising, connection termination, and
+address changes.
+
+Entering beacon mode stops connectable advertising or terminates the connection
+in one host event. A later host event installs the beacon random address and
+starts non-connectable `BLE_HS_FOREVER` advertising. Exiting follows the same
+stop-then-next-event rule and restores the identity random address before normal
+advertising starts. Turning the radio off while beaconing stops the beacon and
+restores the identity address without starting connectable advertising.
+
+A 60-second host-queue health callout checks NimBLE's advertising-active flag
+only while advertising is expected. An active procedure is left untouched; an
+inactive one is reconciled. Detecting a controller that reports active while no
+packets are transmitted remains a hardware RF test.
 
 ## Companion → location, end to end
 

@@ -88,6 +88,7 @@ namespace Pinetime {
 
       void Start();
       void PushMessage(Messages msg);
+      bool TryPushMessage(Messages msg);
 
       bool IsSleepDisabled() {
         return wakeLocksHeld > 0;
@@ -183,6 +184,10 @@ namespace Pinetime {
         const bool wasAsleep;
       };
       void UpdateMotion();
+      // Surface a firmware-originated notice (LRU eviction, Forget All done,
+      // legacy reset) through the normal notification path without inventing a
+      // device name. Title and body share one buffer separated by a null byte.
+      void ShowBondNotice(const char* title, const char* body);
       static constexpr TickType_t batteryMeasurementPeriod = pdMS_TO_TICKS(10 * 60 * 1000);
 
       SystemMonitor monitor;

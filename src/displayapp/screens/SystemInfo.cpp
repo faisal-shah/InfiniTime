@@ -187,18 +187,22 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
   const auto& bleAddr = bleController.Address();
+  const auto& bond = bleController.BondDiagnostics();
+  const auto& companion = bleController.CompanionStatus();
   auto spiFlashId = spiNorFlash.GetIdentification();
   lv_label_set_text_fmt(label,
                         "#808080 BLE MAC#\n"
                         " %02x:%02x:%02x:%02x:%02x:%02x\n"
-                        "\n"
                         "#808080 SPI Flash# %02x-%02x-%02x\n"
-                        "#808080 Adv recover# %d\n"
-                        "#808080 Memory heap#\n"
-                        " #808080 Free# %d/%d\n"
-                        " #808080 Min free# %d\n"
-                        " #808080 Alloc err# %d\n"
-                        " #808080 Ovrfl err# %d",
+                        "#808080 BLE radio# %s/%s\n"
+                        "#808080 GAP S/P/T# %d/%d/%d\n"
+                        "#808080 Retry/recov# %d/%d\n"
+                        "#808080 Bond G/D/P/I# %lu/%d%d/%d/%d\n"
+                        "#808080 Bond W/F/ms# %lu/%lu/%lu\n"
+                        "#808080 Paired# %d/%d Ep%lu Ev%lu\n"
+                        "#808080 Bond boot# %d inv%lu\n"
+                        "#808080 Heap free# %d/%d min %d\n"
+                        "#808080 Alloc/Ovf err# %d/%d",
                         bleAddr[5],
                         bleAddr[4],
                         bleAddr[3],
@@ -208,7 +212,27 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         spiFlashId.manufacturer,
                         spiFlashId.type,
                         spiFlashId.density,
+                        Pinetime::Controllers::BleRadioStateMachine::ToString(bleController.RadioDesiredMode()),
+                        Pinetime::Controllers::BleRadioStateMachine::ToString(bleController.RadioActualMode()),
+                        bleController.RadioLastStartResult(),
+                        bleController.RadioLastStopResult(),
+                        bleController.RadioLastTerminateResult(),
+                        bleController.RadioRetryCount(),
                         bleController.AdvertisingRecoveries(),
+                        static_cast<unsigned long>(bond.storeGeneration),
+                        bond.criticalDirty,
+                        bond.usageDirty,
+                        bond.pending,
+                        bond.inFlight,
+                        static_cast<unsigned long>(bond.writeSuccesses),
+                        static_cast<unsigned long>(bond.writeFailures),
+                        static_cast<unsigned long>(bond.lastWriteDurationMs),
+                        companion.bondedCount,
+                        companion.retainedCapacity,
+                        static_cast<unsigned long>(companion.resetEpoch),
+                        static_cast<unsigned long>(companion.evictionCount),
+                        static_cast<int>(bond.bootState),
+                        static_cast<unsigned long>(companion.invariantViolations),
                         xPortGetFreeHeapSize(),
                         xPortGetHeapSize(),
                         xPortGetMinimumEverFreeHeapSize(),

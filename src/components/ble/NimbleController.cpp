@@ -1,6 +1,8 @@
 #include "components/ble/NimbleController.h"
 #include <cstring>
 #include <cstddef>
+#include <limits>
+#include <utility>
 
 #include <nrf_log.h>
 #define min // workaround: nimble's min/max macros conflict with libstdc++
@@ -20,6 +22,7 @@
 #include "components/ble/NotificationManager.h"
 #include "components/beacon/BeaconController.h"
 #include "components/datetime/DateTimeController.h"
+#include "components/fs/AtomicFileReplace.h"
 #include "components/fs/FS.h"
 #include "systemtask/SystemTask.h"
 
@@ -63,47 +66,74 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     heartRateService {*this, heartRateController},
     motionService {*this, motionController},
     fsService {systemTask, fs},
-    serviceDiscovery({&currentTimeClient, &alertNotificationClient}) {
+    serviceDiscovery({&currentTimeClient, &alertNotificationClient}),
+    companionManagementService {*this} {
+}
+
+namespace {
+  struct ble_npl_event radioReconcileEvent;
+  struct ble_npl_callout fastAdvertisingCallout {};
+  struct ble_npl_callout radioRetryCallout {};
+  struct ble_npl_callout radioHealthCallout {};
+
+  void RadioReconcileHandler(struct ble_npl_event* event) {
+    static_cast<NimbleController*>(ble_npl_event_get_arg(event))->ReconcileRadio();
+  }
+
+  void FastAdvertisingTimeoutHandler(struct ble_npl_event* event) {
+    static_cast<NimbleController*>(ble_npl_event_get_arg(event))->OnFastAdvertisingTimeout();
+  }
+
+  void RadioRetryTimeoutHandler(struct ble_npl_event* event) {
+    static_cast<NimbleController*>(ble_npl_event_get_arg(event))->OnRadioRetryTimeout();
+  }
+
+  void RadioHealthCheckHandler(struct ble_npl_event* event) {
+    static_cast<NimbleController*>(ble_npl_event_get_arg(event))->OnRadioHealthCheck();
+  }
+
+  uint32_t BondNowMs() {
+    return ble_npl_time_ticks_to_ms32(ble_npl_time_get());
+  }
+
+  struct BondFileInfo {
+    uint32_t size = 0;
+    uint8_t type = 0;
+  };
+
+  [[gnu::noinline]] int StatBondFile(FS& fs, const char* path, BondFileInfo& output) {
+    lfs_info info {};
+    const int result = fs.Stat(path, &info);
+    if (result == LFS_ERR_OK) {
+      output.size = info.size;
+      output.type = info.type;
+    }
+    return result;
+  }
+
+  [[gnu::noinline]] bool ReadBondFile(FS& fs, const char* path, uint8_t* output, size_t size) {
+    FS::Lock lock(fs);
+    lfs_file_t file {};
+    if (fs.FileOpen(&file, path, LFS_O_RDONLY) != LFS_ERR_OK) {
+      return false;
+    }
+    const bool read = fs.FileRead(&file, output, size) == static_cast<int>(size);
+    return fs.FileClose(&file) == LFS_ERR_OK && read;
+  }
 }
 
 void nimble_on_reset(int reason) {
   NRF_LOG_INFO("Nimble lost sync, resetting state; reason=%d", reason);
+  nptr->OnHostReset();
 }
 
 void nimble_on_sync(void) {
-  int rc;
-
   NRF_LOG_INFO("Nimble is synced");
-
-  rc = ble_hs_util_ensure_addr(0);
-  ASSERT(rc == 0);
-
-  nptr->StartAdvertising();
+  nptr->OnHostSync();
 }
 
 int GAPEventCallback(struct ble_gap_event* event, void* arg) {
-  auto nimbleController = static_cast<NimbleController*>(arg);
-  return nimbleController->OnGAPEvent(event);
-}
-
-namespace {
-  // The Find My beacon transition runs on the "ble" host task; this static
-  // event carries it there. Initialised once in Init(), posted by
-  // RequestBeaconMode.
-  struct ble_npl_event beaconTransitionEvent;
-
-  void BeaconTransitionHandler(struct ble_npl_event* ev) {
-    static_cast<NimbleController*>(ble_npl_event_get_arg(ev))->DoBeaconTransition();
-  }
-
-  // Advertising recovery is decided on SystemTask but performed here, for the
-  // same reason: fastAdvCount, beaconActive and the GAP calls all belong to the
-  // "ble" task, and driving them from two tasks is a race.
-  struct ble_npl_event advertisingRecoveryEvent;
-
-  void AdvertisingRecoveryHandler(struct ble_npl_event* ev) {
-    static_cast<NimbleController*>(ble_npl_event_get_arg(ev))->DoAdvertisingRecovery();
-  }
+  return static_cast<NimbleController*>(arg)->OnGAPEvent(event);
 }
 
 void NimbleController::Init() {
@@ -114,7 +144,32 @@ void NimbleController::Init() {
   nptr = this;
   ble_hs_cfg.reset_cb = nimble_on_reset;
   ble_hs_cfg.sync_cb = nimble_on_sync;
-  ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
+
+  ble_npl_event_init(&bondPersistenceEvent, BondPersistenceEventHandler, this);
+  ble_npl_callout_init(&bondPersistenceCallout,
+                       nimble_port_get_dflt_eventq(),
+                       BondPersistenceTimerHandler,
+                       this);
+  ble_npl_event_init(&bondWriteCompleteEvent, BondWriteCompleteHandler, this);
+  ble_npl_event_init(&bondRestoreEvent, BondRestoreHandler, this);
+  ble_npl_event_init(&forgetAllEvent, ForgetAllHandler, this);
+  ASSERT(ble_npl_sem_init(&bondRestoreSemaphore, 0) == BLE_NPL_OK);
+  bondPersistenceEventsInitialized = true;
+
+  PrepareBondStoreRestore();
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondRestoreEvent);
+  if (ble_npl_sem_pend(&bondRestoreSemaphore, ble_npl_time_ms_to_ticks32(2000)) != BLE_NPL_OK ||
+      !bootBondRestoreSucceeded) {
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::HandshakeFailed);
+    PublishBondDiagnostics();
+    NRF_LOG_WARNING("[BLE store] host restore handshake failed; advertising disabled");
+    return;
+  }
+  if (!bootBondPersistenceReady) {
+    PublishBondDiagnostics();
+    NRF_LOG_WARNING("[BLE store] initial reset commit failed; advertising disabled");
+    return;
+  }
 
   ble_svc_gap_init();
   ble_svc_gatt_init();
@@ -137,24 +192,475 @@ void NimbleController::Init() {
   heartRateService.Init();
   motionService.Init();
   fsService.Init();
+  companionManagementService.Init();
 
-  int rc;
-  rc = ble_hs_util_ensure_addr(0);
-  ASSERT(rc == 0);
-  rc = ble_hs_id_infer_auto(0, &addrType);
-  ASSERT(rc == 0);
-  rc = ble_svc_gap_device_name_set(deviceName);
+  int rc = ble_svc_gap_device_name_set(deviceName);
   ASSERT(rc == 0);
   rc = ble_svc_gap_device_appearance_set(0xC2);
   ASSERT(rc == 0);
-  Pinetime::Controllers::Ble::BleAddress address;
-  rc = ble_hs_id_copy_addr(addrType, address.data(), nullptr);
+
+  rc = ble_gatts_start();
   ASSERT(rc == 0);
 
+  ble_npl_event_init(&radioReconcileEvent, RadioReconcileHandler, this);
+  ble_npl_callout_init(&fastAdvertisingCallout, nimble_port_get_dflt_eventq(), FastAdvertisingTimeoutHandler, this);
+  ble_npl_callout_init(&radioRetryCallout, nimble_port_get_dflt_eventq(), RadioRetryTimeoutHandler, this);
+  ble_npl_callout_init(&radioHealthCallout, nimble_port_get_dflt_eventq(), RadioHealthCheckHandler, this);
+  radioEventsInitialized = true;
+  OnHostSync();
+}
+
+void NimbleController::BondStoreDirtyCallback(void* arg) {
+  static_cast<NimbleController*>(arg)->QueueBondPersistenceEvent();
+}
+
+void NimbleController::BondPersistenceEventHandler(struct ble_npl_event* event) {
+  static_cast<NimbleController*>(ble_npl_event_get_arg(event))->ProcessBondPersistence();
+}
+
+void NimbleController::BondPersistenceTimerHandler(struct ble_npl_event* event) {
+  static_cast<NimbleController*>(ble_npl_event_get_arg(event))->ProcessBondPersistence();
+}
+
+void NimbleController::BondWriteCompleteHandler(struct ble_npl_event* event) {
+  static_cast<NimbleController*>(ble_npl_event_get_arg(event))->CompleteBondStoreWrite();
+}
+
+void NimbleController::BondRestoreHandler(struct ble_npl_event* event) {
+  static_cast<NimbleController*>(ble_npl_event_get_arg(event))->RestoreBondStoreOnHost();
+}
+
+void NimbleController::ForgetAllHandler(struct ble_npl_event* event) {
+  static_cast<NimbleController*>(ble_npl_event_get_arg(event))->ProcessForgetAll();
+}
+
+void NimbleController::QueueBondPersistenceEvent() {
+  if (bondPersistenceEventsInitialized) {
+    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondPersistenceEvent);
+  }
+}
+
+void NimbleController::ScheduleBondPersistenceTimer() {
+  uint32_t delay = bondPersistence.DelayUntilAction(BondNowMs());
+  // A latched, undelivered notice keeps a bounded retry running even when the
+  // persistence layer itself has nothing pending, so the notice is never lost
+  // and the host task never busy-loops on a full queue.
+  if (bondNotices.Pending() && delay > NoticeRetryMs) {
+    delay = NoticeRetryMs;
+  }
+  if (delay == std::numeric_limits<uint32_t>::max()) {
+    ble_npl_callout_stop(&bondPersistenceCallout);
+  } else if (delay == 0) {
+    QueueBondPersistenceEvent();
+  } else {
+    ble_npl_callout_reset(&bondPersistenceCallout, ble_npl_time_ms_to_ticks32(delay));
+  }
+}
+
+void NimbleController::ProcessBondPersistence() {
+  const uint32_t now = BondNowMs();
+  // This runs on the host task after every store mutation, so it is the safe
+  // point to notice an LRU eviction: the eviction increments the count during
+  // the pairing store write, and it must be surfaced even if that pairing later
+  // fails before the encryption event would have. Delivery is non-blocking, so
+  // it may leave the notice latched for the retry the timer below schedules.
+  NotifyEvictionIfChanged();
+  FlushBondNotices();
+  bondPersistence.ObserveDirty(bondStore.Dirty(), now, bleController.IsConnected());
+  if (!bondPersistenceWritesEnabled) {
+    PublishBondDiagnostics();
+    // Fail-closed: no writes, but a pending notice must still be retried.
+    if (bondNotices.Pending()) {
+      ble_npl_callout_reset(&bondPersistenceCallout, ble_npl_time_ms_to_ticks32(NoticeRetryMs));
+    } else {
+      ble_npl_callout_stop(&bondPersistenceCallout);
+    }
+    return;
+  }
+
+  switch (bondPersistence.Poll(now)) {
+    case BondPersistenceCoordinator::Action::Capture: {
+      if (!bondStore.CaptureSnapshot(bondSnapshotScratch) ||
+          !bondPersistence.Capture(bondSnapshotScratch)) {
+        bondPersistence.CaptureUnstable(now);
+        break;
+      }
+      [[fallthrough]];
+    }
+    case BondPersistenceCoordinator::Action::QueueWrite:
+      // Publish the immutable in-flight view before the queue handoff. If the
+      // bounded send fails, roll it back to pending and retry later.
+      bondPersistence.MarkWriteQueued();
+      if (!systemTask.TryPushMessage(Pinetime::System::Messages::PersistBleStore)) {
+        bondPersistence.QueueFailed(now);
+      }
+      break;
+    case BondPersistenceCoordinator::Action::None:
+      break;
+  }
+
+  PublishBondDiagnostics();
+  ScheduleBondPersistenceTimer();
+}
+
+void NimbleController::PersistBondStore() {
+  const auto write = bondPersistence.CurrentWrite();
+  if (!write) {
+    return;
+  }
+
+  const TickType_t started = xTaskGetTickCount();
+  const bool success = WriteBondStoreFile(write.data, write.size);
+  bondWriteCompletion.generation = write.generation;
+  bondWriteCompletion.durationMs = static_cast<uint32_t>((xTaskGetTickCount() - started) * portTICK_PERIOD_MS);
+  bondWriteCompletion.bytes = static_cast<uint32_t>(write.size);
+  bondWriteCompletion.success = success;
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondWriteCompleteEvent);
+}
+
+void NimbleController::CompleteBondStoreWrite() {
+  if (bondWriteCompletion.success) {
+    bondStore.AcknowledgePersisted(bondWriteCompletion.generation);
+  }
+  bondPersistence.WriteCompleted(bondWriteCompletion.success,
+                                 bondWriteCompletion.durationMs,
+                                 bondWriteCompletion.bytes,
+                                 bondStore.Dirty(),
+                                 BondNowMs(),
+                                 bleController.IsConnected());
+  // A Forget All is only durably complete once the empty snapshot that carried
+  // (or superseded) its generation reached flash. Until then the RAM store is
+  // clear but the on-watch notice must not claim success. On durable commit,
+  // resume the prior desired radio mode through the state machine and latch the
+  // notice. Durability and radio resume never depend on the notice being
+  // enqueued: the latched notice is delivered best-effort below and retried.
+  if (forgetAllState == ForgetAllState::AwaitingCommit && bondWriteCompletion.success &&
+      bondWriteCompletion.generation >= forgetAllGeneration) {
+    forgetAllState = ForgetAllState::Idle;
+    QueueRadioReconciliation();
+    bondNotices.LatchForgetAllComplete();
+  }
+  FlushBondNotices();
+  PublishBondDiagnostics();
+  QueueBondPersistenceEvent();
+}
+
+void NimbleController::RequestForgetAllBonds() {
+  QueueForgetAllEvent();
+}
+
+void NimbleController::QueueForgetAllEvent() {
+  if (bondPersistenceEventsInitialized) {
+    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &forgetAllEvent);
+  }
+}
+
+void NimbleController::ProcessForgetAll() {
+  // The UI/SystemTask only ever requests a wipe; the whole sequence runs here
+  // on the NimBLE host task and never calls GAP or the store from elsewhere.
+  // The radio transition goes through the state machine: ReconcileRadio forces
+  // the desired mode to Off while a forget is in progress (see forgetAllState),
+  // so this handler only decides *when* each step may happen. It is re-entered
+  // from the request, from disconnect/radio-command completion (via
+  // MaybeAdvanceForgetAll), and from the persistence completion, and is
+  // idempotent under repeated requests.
+  switch (forgetAllState) {
+    case ForgetAllState::Idle:
+      // Begin: ask the radio to go Off. The prior desired mode stays in
+      // requestedRadioMode and is resumed after the empty snapshot commits.
+      forgetAllState = ForgetAllState::StoppingRadio;
+      QueueRadioReconciliation();
+      PublishBondDiagnostics();
+      return;
+    case ForgetAllState::StoppingRadio:
+      // Clear only once the link is down and advertising is actually Off, so no
+      // peer keeps a live link over freshly-cleared keys. ReconcileRadio /
+      // MaybeAdvanceForgetAll re-post this event when the radio reaches Off.
+      if (connectionHandle != BLE_HS_CONN_HANDLE_NONE || radioState.Actual() != BleRadioStateMachine::Mode::Off) {
+        return;
+      }
+      // Clear every key, CCCD, and registry entry as one critical change,
+      // bumping the reset epoch. Marks the store dirty for the async writer.
+      bondStore.ForgetAll();
+      // A Forget All is the controlled recovery action that may replace an
+      // invalid file boot otherwise preserves, so re-enable persistence writes.
+      bondPersistenceWritesEnabled = true;
+      // The wipe left no bonds, so rebase the eviction-notice baseline: a wipe
+      // must never look like an LRU eviction.
+      evictionNoticeBaseline = bondStore.EvictionCount();
+      // Record the generation whose durable write means the wipe is complete.
+      forgetAllGeneration = bondStore.Generation();
+      forgetAllState = ForgetAllState::AwaitingCommit;
+      // Keep the radio Off (forgetAllState still active) and queue the empty
+      // snapshot write. Resume happens in CompleteBondStoreWrite on durability.
+      QueueBondPersistenceEvent();
+      PublishBondDiagnostics();
+      return;
+    case ForgetAllState::AwaitingCommit:
+      // Nothing to do until CompleteBondStoreWrite confirms durability.
+      return;
+  }
+}
+
+void NimbleController::MaybeAdvanceForgetAll() {
+  if (forgetAllState == ForgetAllState::StoppingRadio && connectionHandle == BLE_HS_CONN_HANDLE_NONE &&
+      radioState.Actual() == BleRadioStateMachine::Mode::Off) {
+    QueueForgetAllEvent();
+  }
+}
+
+void NimbleController::NotifyEvictionIfChanged() {
+  const uint32_t evictions = bondStore.EvictionCount();
+  if (evictions > evictionNoticeBaseline) {
+    evictionNoticeBaseline = evictions;
+    // Latch only: several evictions between deliveries coalesce into one notice.
+    bondNotices.LatchEviction();
+  }
+}
+
+void NimbleController::FlushBondNotices() {
+  // Non-blocking delivery on the host task: a full SystemTask queue leaves the
+  // notice latched for the next retry rather than blocking the BLE stack.
+  bondNotices.Flush([this](BondNoticeQueue::Notice notice) {
+    switch (notice) {
+      case BondNoticeQueue::Notice::ForgetAllComplete:
+        return systemTask.TryPushMessage(Pinetime::System::Messages::BondForgetAllCompleted);
+      case BondNoticeQueue::Notice::Eviction:
+        return systemTask.TryPushMessage(Pinetime::System::Messages::BondPeerEvicted);
+    }
+    return true;
+  });
+}
+
+CompanionManagementStatus NimbleController::GetCompanionStatus() const {
+  CompanionManagementStatus status;
+  status.bondedCount = bondStore.BondedCount();
+  status.resetEpoch = bondStore.ResetEpoch();
+  status.evictionCount = bondStore.EvictionCount();
+  status.cccdOverflowRejections = bondStore.CccdOverflowRejections();
+  status.invariantViolations = bondStore.InvariantViolations();
+
+  const auto& diagnostics = bondPersistence.GetDiagnostics();
+  uint32_t flags = 0;
+  if (diagnostics.legacyResetThisBoot) {
+    flags |= CompanionStatusFlag::LegacyResetThisBoot;
+  }
+  if (!bondPersistenceWritesEnabled) {
+    flags |= CompanionStatusFlag::StoreInvalid;
+  }
+  if (diagnostics.pending || diagnostics.inFlight) {
+    flags |= CompanionStatusFlag::WritePendingOrInFlight;
+  }
+  if (diagnostics.criticalDirty) {
+    flags |= CompanionStatusFlag::CriticalDirty;
+  }
+  if (diagnostics.usageDirty) {
+    flags |= CompanionStatusFlag::UsageDirty;
+  }
+  status.flags = flags;
+  return status;
+}
+
+bool NimbleController::WriteBondStoreFile(const uint8_t* data, size_t size) {
+  static constexpr const char* TempPath = "/.system/ble-store.tmp";
+  static constexpr const char* DataPath = "/.system/ble-store.dat";
+
+  FS::Lock lock(fs);
+  return AtomicFileReplace(fs, "/.system", TempPath, DataPath, data, size);
+}
+
+bool NimbleController::PrepareBondStoreRestore() {
+  static constexpr const char* DataPath = "/.system/ble-store.dat";
+  static constexpr const char* LegacyPath = "/bond.dat";
+
+  bootBondSnapshotReady = false;
+  bootBondPersistenceReady = true;
+  // True only when a valid, new-format store without the migration marker was
+  // intentionally discarded below. A fresh watch never sets this.
+  bool preMarkerDiscarded = false;
+  const auto prepareEmptyRestore = [this]() {
+    bondSnapshotScratch.Clear();
+    bootBondSnapshotReady = true;
+    return true;
+  };
+  bondSnapshotScratch.Clear();
+
+  BondFileInfo dataInfo;
+  BondFileInfo legacyInfo;
+  const bool legacyExists = StatBondFile(fs, LegacyPath, legacyInfo) == LFS_ERR_OK;
+  const int statResult = StatBondFile(fs, DataPath, dataInfo);
+
+  if (statResult == LFS_ERR_OK) {
+    if (dataInfo.type != LFS_TYPE_REG || dataInfo.size > BondStoreCodec::MaxEncodedSize ||
+        dataInfo.size < BondStoreCodec::HeaderSize) {
+      bondPersistenceWritesEnabled = false;
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid,
+                                 BondStoreCodec::DecodeError::Length);
+      return prepareEmptyRestore();
+    }
+
+    auto& encoded = bondPersistence.BootBuffer();
+    if (!ReadBondFile(fs, DataPath, encoded.data(), dataInfo.size)) {
+      bondPersistenceWritesEnabled = false;
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid,
+                                 BondStoreCodec::DecodeError::Length);
+      return prepareEmptyRestore();
+    }
+
+    const auto decoded = BondStoreCodec::Decode(encoded.data(), dataInfo.size, bondSnapshotScratch);
+    if (!decoded) {
+      bondPersistenceWritesEnabled = false;
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid, decoded.error);
+      return prepareEmptyRestore();
+    }
+    if (decoded.migrationComplete) {
+      bootBondSnapshotReady = true;
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Restored);
+      if (legacyExists) {
+        const int deleteResult = fs.FileDelete(LegacyPath);
+        if (deleteResult != LFS_ERR_OK && deleteResult != LFS_ERR_NOENT) {
+          NRF_LOG_WARNING("[BLE store] stale legacy file delete failed: %d", deleteResult);
+        }
+      }
+      return true;
+    }
+    // A valid new-format store that predates the migration marker: it is
+    // intentionally discarded and reset below, which is a genuine prior-pairing
+    // reset the watch should announce.
+    preMarkerDiscarded = true;
+  } else if (statResult != LFS_ERR_NOENT) {
+    bootBondPersistenceReady = false;
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
+    return false;
+  }
+
+  // First upgrade, or a valid pre-marker new-format image: intentionally reset
+  // rather than importing the raw legacy C-structure file.
+  const uint32_t previousResetEpoch = bondSnapshotScratch.registry.resetEpoch;
+  const uint64_t previousGeneration = bondSnapshotScratch.generation;
+  bondSnapshotScratch.Clear();
+  bondSnapshotScratch.registry.resetEpoch = previousResetEpoch + 1;
+  bondSnapshotScratch.generation = previousGeneration + 1;
+
+  if (!bondPersistence.Capture(bondSnapshotScratch)) {
+    bootBondPersistenceReady = false;
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
+    return false;
+  }
+  bondPersistence.MarkWriteQueued();
+  const auto write = bondPersistence.CurrentWrite();
+  const TickType_t started = xTaskGetTickCount();
+  const bool committed = write && WriteBondStoreFile(write.data, write.size);
+  const uint32_t duration = static_cast<uint32_t>((xTaskGetTickCount() - started) * portTICK_PERIOD_MS);
+  bondPersistence.WriteCompleted(committed,
+                                 duration,
+                                 write ? static_cast<uint32_t>(write.size) : 0,
+                                 {false, false, bondSnapshotScratch.generation},
+                                 BondNowMs(),
+                                 false);
+  if (!committed) {
+    bootBondPersistenceReady = false;
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
+    return false;
+  }
+
+  if (legacyExists) {
+    const int deleteResult = fs.FileDelete(LegacyPath);
+    if (deleteResult != LFS_ERR_OK && deleteResult != LFS_ERR_NOENT) {
+      NRF_LOG_WARNING("[BLE store] legacy file delete failed after reset commit: %d", deleteResult);
+    }
+  }
+  bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializedEmpty,
+                             BondStoreCodec::DecodeError::None,
+                             BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded));
+  bootBondSnapshotReady = true;
+  return true;
+}
+
+void NimbleController::RestoreBondStoreOnHost() {
+  bondStore.Init(BondStoreDirtyCallback, this);
+  bootBondRestoreSucceeded =
+    bootBondSnapshotReady && bondStore.RestoreSnapshot(bondSnapshotScratch);
+  if (!bootBondRestoreSucceeded) {
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
+  }
+  // Seed the eviction-notice baseline with the restored counter so a wipe or a
+  // reboot never re-fires the on-watch LRU notice; only a live eviction past
+  // this point does.
+  evictionNoticeBaseline = bondStore.EvictionCount();
+  bondPersistence.ObserveDirty(bondStore.Dirty(), BondNowMs(), false);
+  PublishBondDiagnostics();
+  ble_npl_sem_release(&bondRestoreSemaphore);
+}
+
+void NimbleController::OnHostReset() {
+  if (!radioEventsInitialized) {
+    return;
+  }
+
+  ble_npl_callout_stop(&fastAdvertisingCallout);
+  ble_npl_callout_stop(&radioRetryCallout);
+  ble_npl_callout_stop(&radioHealthCallout);
+  ble_npl_callout_stop(&bondPersistenceCallout);
+  currentTimeClient.Reset();
+  alertNotificationClient.Reset();
+  scheduleService.OnDisconnect();
+  taskService.OnDisconnect();
+  connectionHandle = BLE_HS_CONN_HANDLE_NONE;
+  bleController.Disconnect();
+  bondPersistence.OnDisconnect(bondStore.Dirty(), BondNowMs());
+  QueueBondPersistenceEvent();
+  hostSyncRequested.store(false);
+  radioState.OnHostReset();
+  PublishRadioDiagnostics();
+}
+
+void NimbleController::OnHostSync() {
+  if (!radioEventsInitialized) {
+    return;
+  }
+  hostSyncRequested.store(true);
+  QueueBondPersistenceEvent();
+  QueueRadioReconciliation();
+}
+
+void NimbleController::QueueRadioReconciliation() {
+  if (radioEventsInitialized) {
+    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &radioReconcileEvent);
+  }
+}
+
+bool NimbleController::PrepareIdentityAddress() {
+  int rc = ble_hs_util_ensure_addr(0);
+  if (rc != 0) {
+    NRF_LOG_WARNING("[BLE radio] ensure address failed: %d", rc);
+    return false;
+  }
+  if (identityAddressInitialized) {
+    if (addrType == BLE_OWN_ADDR_RANDOM) {
+      rc = ble_hs_id_set_rnd(bleController.Address().data());
+      if (rc != 0) {
+        NRF_LOG_WARNING("[BLE radio] restore address after sync failed: %d", rc);
+        return false;
+      }
+    }
+    return true;
+  }
+  rc = ble_hs_id_infer_auto(0, &addrType);
+  if (rc != 0) {
+    NRF_LOG_WARNING("[BLE radio] infer address failed: %d", rc);
+    return false;
+  }
+
+  Pinetime::Controllers::Ble::BleAddress address;
+  rc = ble_hs_id_copy_addr(addrType, address.data(), nullptr);
+  if (rc != 0) {
+    NRF_LOG_WARNING("[BLE radio] copy address failed: %d", rc);
+    return false;
+  }
+
   bleController.Address(std::move(address));
-  // Remember whether the identity address is random: beacon mode sets a random
-  // address, which would overwrite a random identity, so we restore it on exit.
-  identityAddrIsRandom = (addrType == BLE_OWN_ADDR_RANDOM);
+  radioState.SetIdentityAddressIsRandom(addrType == BLE_OWN_ADDR_RANDOM);
   switch (addrType) {
     case BLE_OWN_ADDR_PUBLIC:
       bleController.AddressType(Ble::AddressTypes::Public);
@@ -169,40 +675,58 @@ void NimbleController::Init() {
       bleController.AddressType(Ble::AddressTypes::RPA_Random);
       break;
   }
-
-  rc = ble_gatts_start();
-  ASSERT(rc == 0);
-
-  RestoreBonds();
-
-  // Initialise the beacon-transition event once; it is posted to the host task
-  // by RequestBeaconMode.
-  ble_npl_event_init(&beaconTransitionEvent, BeaconTransitionHandler, this);
-  ble_npl_event_init(&advertisingRecoveryEvent, AdvertisingRecoveryHandler, this);
-
-  StartAdvertising();
+  identityAddressInitialized = true;
+  return true;
 }
 
-void NimbleController::StartAdvertising() {
-  struct ble_gap_adv_params adv_params;
-  struct ble_hs_adv_fields fields;
-  struct ble_hs_adv_fields rsp_fields;
-
-  memset(&adv_params, 0, sizeof(adv_params));
-  memset(&fields, 0, sizeof(fields));
-  memset(&rsp_fields, 0, sizeof(rsp_fields));
-
-  adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
-  adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-  /* fast advertise for 30 sec */
-  if (fastAdvCount < 15) {
-    adv_params.itvl_min = 32;
-    adv_params.itvl_max = 47;
-    fastAdvCount++;
-  } else {
-    adv_params.itvl_min = 1636;
-    adv_params.itvl_max = 1651;
+void NimbleController::ReconcileRadio() {
+  // While a Forget All is in progress the effective desired mode is forced Off
+  // so the wipe happens against a quiescent radio. The user's real intent stays
+  // in requestedRadioMode and is resumed once the empty snapshot is committed.
+  const bool forgetActive = forgetAllState != ForgetAllState::Idle;
+  const auto desiredMode = forgetActive ? BleRadioStateMachine::DesiredMode::Off : requestedRadioMode.load();
+  const bool desiredModeChanged = desiredMode != radioState.Desired();
+  radioState.SetDesiredMode(desiredMode);
+  if (desiredModeChanged) {
+    ble_npl_callout_stop(&radioRetryCallout);
   }
+  const bool fastRequested = fastAdvertisingRequested.exchange(false);
+  const bool alreadyFast = radioState.Actual() == BleRadioStateMachine::Mode::FastConnectable;
+  if (fastRequested) {
+    radioState.RequestFastConnectable();
+    if (alreadyFast) {
+      ble_npl_callout_reset(&fastAdvertisingCallout, ble_npl_time_ms_to_ticks32(BleRadioStateMachine::FastDurationMs));
+    }
+  }
+
+  if (hostSyncRequested.load()) {
+    if (!PrepareIdentityAddress()) {
+      ble_npl_callout_reset(&radioRetryCallout, ble_npl_time_ms_to_ticks32(1000));
+      return;
+    }
+    hostSyncRequested.store(false);
+    radioState.OnHostSync();
+  }
+
+  PublishRadioDiagnostics();
+  const auto action = radioState.Step();
+  if (action.command != BleRadioStateMachine::Command::None) {
+    ExecuteRadioCommand(action.command);
+  }
+  // If a forget is waiting for the radio to fall silent, re-post its event now
+  // that this reconciliation may have reached the Off state.
+  MaybeAdvanceForgetAll();
+}
+
+int NimbleController::StartConnectableAdvertising(bool fast) {
+  struct ble_gap_adv_params params {};
+  struct ble_hs_adv_fields fields {};
+  struct ble_hs_adv_fields responseFields {};
+
+  params.conn_mode = BLE_GAP_CONN_MODE_UND;
+  params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+  params.itvl_min = fast ? BleRadioStateMachine::FastIntervalMin : BleRadioStateMachine::SlowIntervalMin;
+  params.itvl_max = fast ? BleRadioStateMachine::FastIntervalMax : BleRadioStateMachine::SlowIntervalMax;
 
   fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
   fields.uuids16 = &HeartRateService::heartRateServiceUuid;
@@ -213,140 +737,235 @@ void NimbleController::StartAdvertising() {
   fields.uuids128_is_complete = 1;
   fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
 
-  rsp_fields.name = reinterpret_cast<const uint8_t*>(deviceName);
-  rsp_fields.name_len = strlen(deviceName);
-  rsp_fields.name_is_complete = 1;
+  responseFields.name = reinterpret_cast<const uint8_t*>(deviceName);
+  responseFields.name_len = strlen(deviceName);
+  responseFields.name_is_complete = 1;
 
-  int rc;
-  rc = ble_gap_adv_set_fields(&fields);
-  ASSERT(rc == 0);
-
-  rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
-  ASSERT(rc == 0);
-
-  // A failure here is not fatal and must not be asserted on: ASSERT compiles to
-  // nothing in release builds, so the old ASSERT(rc == 0) only ever documented
-  // an intent. ble_gap_adv_start legitimately fails with BLE_HS_ENOMEM while a
-  // connection object still exists (BLE_MAX_CONNECTIONS is 1), with
-  // BLE_HS_EDISABLED while the host is resetting, and with BLE_HS_EALREADY if a
-  // burst is already running. The first two are terminal on their own, because
-  // the only thing that would try again is the BLE_GAP_EVENT_ADV_COMPLETE that
-  // a failed start never produces. EnsureAdvertising is what recovers them.
-  lastAdvEventTick = xTaskGetTickCount();
-  ble_gap_adv_start(addrType, NULL, 2000, &adv_params, GAPEventCallback, this);
+  int rc = ble_gap_adv_set_fields(&fields);
+  if (rc != 0) {
+    return rc;
+  }
+  rc = ble_gap_adv_rsp_set_fields(&responseFields);
+  if (rc != 0) {
+    return rc;
+  }
+  return ble_gap_adv_start(addrType, nullptr, BLE_HS_FOREVER, &params, GAPEventCallback, this);
 }
 
-/**
- * Restart advertising if it has silently stopped.
- *
- * Advertising runs in 2 second bursts that re-arm from ADV_COMPLETE, so every
- * period depends on the previous one having started successfully. Any single
- * failed start therefore ends advertising for good: the watch keeps working,
- * the radio setting still reads "on", and it is simply invisible to every
- * scan until it is rebooted. Toggling Bluetooth off and on does not reliably
- * clear it either, because disabling drops the connection asynchronously and
- * re-enabling can run before the controller has released the connection slot.
- *
- * Rather than enumerate the ways a start can fail, this asserts the invariant
- * every 100 ms: radio on, nothing connected and not beaconing means
- * advertising is running.
- *
- * Runs on SystemTask, so it only counts and then hands the work to the "ble"
- * task. ble_gap_adv_active is a plain read of the slave state, which NimBLE
- * itself treats as atomic; everything that mutates advertising stays on the one
- * task that owns it.
- */
-void NimbleController::EnsureAdvertising() {
-  const bool shouldAdvertise = bleController.IsRadioEnabled() && !bleController.IsConnected() && !beaconActive;
-  if (!shouldAdvertise) {
-    advertisingIdleTicks = 0;
-    return;
+int NimbleController::StartBeaconAdvertising() {
+  uint8_t payload[31];
+  beaconController.BuildPayload(payload);
+  int rc = ble_gap_adv_set_data(payload, sizeof(payload));
+  if (rc != 0) {
+    return rc;
   }
 
-  // Two ways to be unreachable, and the second is the one that never recovered:
-  // NimBLE reporting no advertising, or NimBLE reporting advertising while the
-  // radio has gone quiet. Bursts end every 2 seconds, so silence for far longer
-  // means the reported state is not the real one.
-  const bool silent = (xTaskGetTickCount() - lastAdvEventTick) > pdMS_TO_TICKS(advSilenceMs);
-  if (ble_gap_adv_active() && !silent) {
-    advertisingIdleTicks = 0;
-    return;
-  }
-
-  if (advertisingIdleTicks < advertisingIdleLimit) {
-    advertisingIdleTicks++;
-    return;
-  }
-
-  advertisingIdleTicks = 0;
-  // Coalesces if one is already queued, so a busy host task cannot pile these up.
-  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &advertisingRecoveryEvent);
+  struct ble_gap_adv_params params {};
+  params.conn_mode = BLE_GAP_CONN_MODE_NON;
+  params.disc_mode = BLE_GAP_DISC_MODE_NON;
+  params.itvl_min = 0x0640;
+  params.itvl_max = 0x0C80;
+  return ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, nullptr, BLE_HS_FOREVER, &params, GAPEventCallback, this);
 }
 
-void NimbleController::DoAdvertisingRecovery() {
-  // Re-test here rather than trusting the decision made on the other task up to
-  // a tick ago: a connection or a radio-off could have landed in between, and
-  // starting to advertise after either of those is worse than doing nothing.
-  if (!bleController.IsRadioEnabled() || bleController.IsConnected() || beaconActive) {
+int NimbleController::SetBeaconAddress() {
+  uint8_t address[6];
+  beaconController.BuildAddress(address);
+  return ble_hs_id_set_rnd(address);
+}
+
+int NimbleController::RestoreIdentityAddress() {
+  return ble_hs_id_set_rnd(bleController.Address().data());
+}
+
+void NimbleController::ExecuteRadioCommand(BleRadioStateMachine::Command command) {
+  using Command = BleRadioStateMachine::Command;
+  using Result = BleRadioStateMachine::Result;
+
+  int rc = 0;
+  switch (command) {
+    case Command::StopAdvertising:
+      ble_npl_callout_stop(&fastAdvertisingCallout);
+      ble_npl_callout_stop(&radioHealthCallout);
+      rc = ble_gap_adv_stop();
+      break;
+    case Command::StartFastAdvertising:
+      if (radioState.BeaconAddressActive()) {
+        rc = RestoreIdentityAddress();
+        radioState.OnAddressChanged(false, rc);
+      }
+      if (rc == 0) {
+        rc = StartConnectableAdvertising(true);
+      }
+      break;
+    case Command::StartSlowAdvertising:
+      if (radioState.BeaconAddressActive()) {
+        rc = RestoreIdentityAddress();
+        radioState.OnAddressChanged(false, rc);
+      }
+      if (rc == 0) {
+        rc = StartConnectableAdvertising(false);
+      }
+      break;
+    case Command::StartBeaconAdvertising:
+      if (!radioState.BeaconAddressActive()) {
+        rc = SetBeaconAddress();
+        radioState.OnAddressChanged(true, rc);
+      }
+      if (rc == 0) {
+        rc = StartBeaconAdvertising();
+      }
+      break;
+    case Command::TerminateConnection:
+      ble_npl_callout_stop(&fastAdvertisingCallout);
+      rc = ble_gap_terminate(connectionHandle, BLE_ERR_REM_USER_CONN_TERM);
+      break;
+    case Command::RestoreIdentityAddress:
+      rc = RestoreIdentityAddress();
+      radioState.OnAddressChanged(false, rc);
+      break;
+    case Command::None:
+      return;
+  }
+
+  const bool startCommand = command == Command::StartFastAdvertising || command == Command::StartSlowAdvertising ||
+                            command == Command::StartBeaconAdvertising;
+  Result result = rc == 0 ? Result::Success : Result::Failed;
+  if (command == Command::StopAdvertising && rc == BLE_HS_EALREADY) {
+    result = Result::AlreadyInactive;
+  } else if (command == Command::TerminateConnection && rc == BLE_HS_ENOTCONN) {
+    result = Result::AlreadyInactive;
+  } else if (startCommand && rc == BLE_HS_EALREADY) {
+    result = Result::AdvertisingActive;
+  }
+
+  radioState.Complete(command, rc, result);
+  NRF_LOG_INFO("[BLE radio] command=%d result=%d", static_cast<int>(command), rc);
+
+  if ((result == Result::Failed || result == Result::AdvertisingActive) && startCommand && radioState.RetryWaiting()) {
+    bleController.RecordAdvertisingRecovery();
+  }
+
+  PublishRadioDiagnostics();
+  if (result == Result::Success && command == Command::StartFastAdvertising) {
+    ble_npl_callout_reset(&fastAdvertisingCallout, ble_npl_time_ms_to_ticks32(BleRadioStateMachine::FastDurationMs));
+  } else if (result == Result::Success && startCommand) {
+    ble_npl_callout_stop(&fastAdvertisingCallout);
+  }
+  if (result == Result::Success && startCommand) {
+    ble_npl_callout_stop(&radioRetryCallout);
+    ble_npl_callout_reset(&radioHealthCallout, ble_npl_time_ms_to_ticks32(BleRadioStateMachine::HealthCheckIntervalMs));
+  }
+
+  if (radioState.RetryWaiting()) {
+    ble_npl_callout_reset(&radioRetryCallout, ble_npl_time_ms_to_ticks32(radioState.RetryDelayMs()));
     return;
   }
 
-  // Stop first. If the host still believes a burst is running, ble_gap_adv_start
-  // answers BLE_HS_EALREADY and changes nothing -- which is how a stuck state
-  // stayed stuck. Stopping an idle radio is harmless (BLE_HS_EALREADY, ignored).
-  ble_gap_adv_stop();
+  if (command == Command::StopAdvertising || command == Command::RestoreIdentityAddress ||
+      (command == Command::TerminateConnection && result == Result::AlreadyInactive)) {
+    QueueRadioReconciliation();
+  }
+}
+
+void NimbleController::OnFastAdvertisingTimeout() {
+  radioState.OnFastTimeout();
+  ReconcileRadio();
+}
+
+void NimbleController::OnRadioRetryTimeout() {
+  radioState.OnRetryTimeout();
+  ReconcileRadio();
+}
+
+void NimbleController::OnRadioHealthCheck() {
+  radioState.SetDesiredMode(requestedRadioMode.load());
+  if (!radioState.ExpectsAdvertising()) {
+    return;
+  }
+
+  const bool active = ble_gap_adv_active() != 0;
+  radioState.OnAdvertisingHealthCheck(active);
+  if (active) {
+    ble_npl_callout_reset(&radioHealthCallout, ble_npl_time_ms_to_ticks32(BleRadioStateMachine::HealthCheckIntervalMs));
+    return;
+  }
 
   bleController.RecordAdvertisingRecovery();
-  // Recovering means someone is probably waiting to connect right now, so come
-  // back on the fast interval rather than the 1 second idle one.
-  fastAdvCount = 0;
-  StartAdvertising();
+  PublishRadioDiagnostics();
+  ReconcileRadio();
+}
+
+void NimbleController::PublishRadioDiagnostics() {
+  bleController.RadioDiagnostics(radioState.Desired(),
+                                 radioState.Actual(),
+                                 radioState.LastStartResult(),
+                                 radioState.LastStopResult(),
+                                 radioState.LastTerminateResult(),
+                                 radioState.RetryCount());
+}
+
+void NimbleController::PublishBondDiagnostics() {
+  bleController.BondDiagnostics(bondPersistence.GetDiagnostics());
+  bleController.CompanionStatus(GetCompanionStatus());
 }
 
 int NimbleController::OnGAPEvent(ble_gap_event* event) {
   switch (event->type) {
     case BLE_GAP_EVENT_ADV_COMPLETE:
-      lastAdvEventTick = xTaskGetTickCount();
       NRF_LOG_INFO("Advertising event : BLE_GAP_EVENT_ADV_COMPLETE");
-      NRF_LOG_INFO("reason=%d; status=%0X", event->adv_complete.reason, event->connect.status);
-      // Beacon advertising uses BLE_HS_FOREVER so this does not fire while
-      // beaconing; the guard prevents any stray restart from stomping it.
-      if (bleController.IsRadioEnabled() && !bleController.IsConnected() && !beaconActive) {
-        StartAdvertising();
+      NRF_LOG_INFO("reason=%d", event->adv_complete.reason);
+      ble_npl_callout_stop(&fastAdvertisingCallout);
+      ble_npl_callout_stop(&radioRetryCallout);
+      ble_npl_callout_stop(&radioHealthCallout);
+      radioState.OnAdvertisingComplete();
+      if (requestedRadioMode.load() != BleRadioStateMachine::DesiredMode::Off) {
+        bleController.RecordAdvertisingRecovery();
       }
+      PublishRadioDiagnostics();
+      QueueRadioReconciliation();
       break;
 
     case BLE_GAP_EVENT_CONNECT:
-      lastAdvEventTick = xTaskGetTickCount();
       /* A new connection was established or a connection attempt failed. */
       NRF_LOG_INFO("Connect event : BLE_GAP_EVENT_CONNECT");
       NRF_LOG_INFO("connection %s; status=%0X ", event->connect.status == 0 ? "established" : "failed", event->connect.status);
 
       if (event->connect.status != 0) {
         /* Connection failed; resume advertising. */
+        ble_npl_callout_stop(&fastAdvertisingCallout);
+        ble_npl_callout_stop(&radioRetryCallout);
+        ble_npl_callout_stop(&radioHealthCallout);
         currentTimeClient.Reset();
         alertNotificationClient.Reset();
         connectionHandle = BLE_HS_CONN_HANDLE_NONE;
         bleController.Disconnect();
-        fastAdvCount = 0;
-        StartAdvertising();
+        radioState.OnConnectionFailed();
+        PublishRadioDiagnostics();
+        QueueRadioReconciliation();
       } else {
+        ble_npl_callout_stop(&fastAdvertisingCallout);
+        ble_npl_callout_stop(&radioRetryCallout);
+        ble_npl_callout_stop(&radioHealthCallout);
         connectionHandle = event->connect.conn_handle;
         bleController.Connect();
+        radioState.OnConnected();
+        // A phone that resolves to a retained identity is refreshed even when
+        // it never encrypts -- a battery-only reconnection still proves the
+        // bond is in use, so it must not be the one evicted next.
+        bondStore.OnConnection(connectionHandle);
+        PublishRadioDiagnostics();
         systemTask.PushMessage(Pinetime::System::Messages::BleConnected);
-        // Service discovery is deferred via systemtask
+        QueueRadioReconciliation();
       }
       break;
 
     case BLE_GAP_EVENT_DISCONNECT:
-      lastAdvEventTick = xTaskGetTickCount();
-      /* Connection terminated; resume advertising. */
       NRF_LOG_INFO("Disconnect event : BLE_GAP_EVENT_DISCONNECT");
       NRF_LOG_INFO("disconnect reason=%d", event->disconnect.reason);
-
-      if (event->disconnect.conn.sec_state.bonded) {
-        PersistBonds();
-      }
+      ble_npl_callout_stop(&fastAdvertisingCallout);
+      ble_npl_callout_stop(&radioRetryCallout);
+      ble_npl_callout_stop(&radioHealthCallout);
 
       currentTimeClient.Reset();
       alertNotificationClient.Reset();
@@ -354,20 +973,11 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       taskService.OnDisconnect();
       connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       bleController.Disconnect();
-      fastAdvCount = 0;
-      // Whether to advertise again is a question about the radio setting, not
-      // about whether we still believed we were connected. DisableRadio clears
-      // the connected flag as soon as it asks for the terminate, so testing the
-      // flag here used to skip the restart for any disconnect that DisableRadio
-      // had already accounted for -- including ones it raced with.
-      if (beaconActive) {
-        // If beacon mode was requested, this disconnect was our own terminate
-        // (the connection had to drop before we could swap the address); start
-        // beacon advertising here rather than the normal connectable path.
-        StartBeaconAdvertising();
-      } else if (bleController.IsRadioEnabled()) {
-        StartAdvertising();
-      }
+      radioState.OnDisconnected();
+      bondPersistence.OnDisconnect(bondStore.Dirty(), BondNowMs());
+      QueueBondPersistenceEvent();
+      PublishRadioDiagnostics();
+      QueueRadioReconciliation();
       break;
 
     case BLE_GAP_EVENT_CONN_UPDATE:
@@ -394,10 +1004,12 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       if (event->enc_change.status == 0) {
         struct ble_gap_conn_desc desc;
         ble_gap_conn_find(event->enc_change.conn_handle, &desc);
-        if (desc.sec_state.bonded) {
-          PersistBonds();
-        }
-
+        // Registry admission is NOT done here: NimBLE fires ENC_CHANGE before it
+        // persists keys, so the store writes -- and, for a sixth phone, the
+        // overflow eviction -- have not happened yet. Admission and the eviction
+        // notice are driven from the store write path instead
+        // (NimbleBondStoreAdapter::ReconcileBondFromStore and the post-store
+        // ProcessBondPersistence). This event only logs the negotiated state.
         NRF_LOG_INFO("new state: encrypted=%d authenticated=%d bonded=%d key_size=%d",
                      desc.sec_state.encrypted,
                      desc.sec_state.authenticated,
@@ -481,19 +1093,19 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
       NRF_LOG_INFO("Pairing event : BLE_GAP_EVENT_REPEAT_PAIRING");
       /* We already have a bond with the peer, but it is attempting to
        * establish a new secure link.  This app sacrifices security for
-       * convenience: just throw away the old bond and accept the new link.
+       * convenience: throw away this peer's old bond and accept the new link.
        */
 
-      /* Delete the old bond. */
-      struct ble_gap_conn_desc desc;
-      ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
-      ble_store_util_delete_peer(&desc.peer_id_addr);
-
-      /* Return BLE_GAP_REPEAT_PAIRING_RETRY to indicate that the host should
-       * continue with the pairing operation.
-       */
+      /* Delete only this peer's bond and drop it from the registry together, so
+       * the store and registry stay aligned even if the replacement pairing
+       * never completes. A repeat pairing replaces itself and never disturbs
+       * another phone's bond. If the delete fails, ignore the repeat pairing
+       * rather than retry with stale keys still present. */
+      if (bondStore.ForgetPeer(event->repeat_pairing.conn_handle)) {
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+      }
+      return BLE_GAP_REPEAT_PAIRING_IGNORE;
     }
-      return BLE_GAP_REPEAT_PAIRING_RETRY;
 
     case BLE_GAP_EVENT_NOTIFY_RX: {
       /* Peer sent us a notification or indication. */
@@ -542,287 +1154,35 @@ void NimbleController::NotifyBatteryLevel(uint8_t level) {
   }
 }
 
+void NimbleController::RequestFastAdvertising() {
+  fastAdvertisingRequested.store(true);
+  QueueRadioReconciliation();
+}
+
 void NimbleController::EnableRadio() {
   bleController.EnableRadio();
-  bleController.Disconnect();
-  fastAdvCount = 0;
-  StartAdvertising();
+  requestedRadioMode.store(BleRadioStateMachine::DesiredMode::Connectable);
+  fastAdvertisingRequested.store(true);
+  QueueRadioReconciliation();
 }
 
 void NimbleController::DisableRadio() {
-  // Turning the radio off also exits beacon mode cleanly (restores the identity
-  // address); otherwise a later EnableRadio would advertise the beacon address.
-  if (beaconActive) {
-    beaconController.SetActive(false);
-    ExitBeaconMode();
-  }
+  beaconController.SetActive(false);
   bleController.DisableRadio();
-  if (bleController.IsConnected()) {
-    ble_gap_terminate(connectionHandle, BLE_ERR_REM_USER_CONN_TERM);
-    bleController.Disconnect();
-  } else {
-    ble_gap_adv_stop();
-  }
+  requestedRadioMode.store(BleRadioStateMachine::DesiredMode::Off);
+  QueueRadioReconciliation();
 }
 
 bool NimbleController::IsBeaconing() const {
-  return beaconActive;
+  return requestedRadioMode.load() == BleRadioStateMachine::DesiredMode::Beacon;
 }
 
-// --- Find My beacon mode ---------------------------------------------------
-// The transition runs on the "ble" host task, serialized with GAP events, via
-// beaconTransitionEvent (defined at the top of this file). The enable/disable
-// intent is read from BeaconController, set by the SystemTask handler before
-// the event is posted.
-
-void NimbleController::RequestBeaconMode(bool /*enable*/) {
-  // The event is initialised once in Init(). ble_npl_eventq_put coalesces if the
-  // event is already queued, so rapid toggles collapse to one transition that
-  // reads the latest intent from BeaconController.
-  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &beaconTransitionEvent);
+void NimbleController::RequestBeaconMode(bool enable) {
+  requestedRadioMode.store(enable ? BleRadioStateMachine::DesiredMode::Beacon
+                                  : (bleController.IsRadioEnabled() ? BleRadioStateMachine::DesiredMode::Connectable
+                                                                    : BleRadioStateMachine::DesiredMode::Off));
+  if (!enable && bleController.IsRadioEnabled()) {
+    fastAdvertisingRequested.store(true);
+  }
+  QueueRadioReconciliation();
 }
-
-void NimbleController::DoBeaconTransition() {
-  if (beaconController.IsBeaconing()) {
-    // Enable. Drop any connection first; the address swap must not happen while
-    // a connection is live, so defer the beacon start to the disconnect event.
-    beaconActive = true;
-    if (bleController.IsConnected()) {
-      const int rc = ble_gap_terminate(connectionHandle, BLE_ERR_REM_USER_CONN_TERM);
-      if (rc != 0) {
-        // Already disconnected: no event will come, start now.
-        StartBeaconAdvertising();
-      }
-      // rc == 0: the DISCONNECT handler starts the beacon.
-    } else {
-      StartBeaconAdvertising();
-    }
-  } else {
-    ExitBeaconMode();
-  }
-}
-
-void NimbleController::StartBeaconAdvertising() {
-  ble_gap_adv_stop(); // may return BLE_HS_EALREADY when idle; ignore
-
-  uint8_t addr[6];
-  beaconController.BuildAddress(addr);
-  ble_hs_id_set_rnd(addr);
-
-  uint8_t payload[31];
-  beaconController.BuildPayload(payload);
-  ble_gap_adv_set_data(payload, sizeof(payload));
-
-  struct ble_gap_adv_params params {};
-
-  params.conn_mode = BLE_GAP_CONN_MODE_NON;
-  params.disc_mode = BLE_GAP_DISC_MODE_NON;
-  params.itvl_min = 0x0640; // ~1 s
-  params.itvl_max = 0x0C80; // ~2 s
-  ble_gap_adv_start(BLE_OWN_ADDR_RANDOM, NULL, BLE_HS_FOREVER, &params, GAPEventCallback, this);
-}
-
-void NimbleController::ExitBeaconMode() {
-  ble_gap_adv_stop(); // may return BLE_HS_EALREADY; ignore
-  beaconActive = false;
-  // Restore the identity random address that the beacon overwrote, so normal
-  // advertising and existing bonds use the original address again.
-  if (identityAddrIsRandom) {
-    ble_hs_id_set_rnd(bleController.Address().data());
-  }
-  fastAdvCount = 0;
-  StartAdvertising();
-}
-
-namespace {
-  // The legacy file began with a ble_store_value_sec, whose first byte is an
-  // address type (0 or 1). This magic cannot collide with that, so the format
-  // is recognisable without a migration flag anywhere else.
-  constexpr uint8_t bondFileMagic = 0xB0;
-  // Telling the two formats apart rests entirely on this: the legacy file began
-  // with a ble_store_value_sec, so its first byte was the peer address type,
-  // and the defined address types are 0 to 3. If that struct ever gains a
-  // leading field, the check silently starts reading new files as old ones.
-  static_assert(offsetof(struct ble_store_value_sec, peer_addr) == 0,
-                "legacy bond files are recognised by the address type being the first byte");
-  static_assert(bondFileMagic > 3, "the magic must not collide with a BLE address type");
-  constexpr uint8_t bondFileVersion = 1;
-  constexpr const char* bondFilePath = "/bond.dat";
-
-  void FoldInto(uint32_t& digest, const void* data, size_t size) {
-    const auto* bytes = static_cast<const uint8_t*>(data);
-    for (size_t i = 0; i < size; i++) {
-      digest = (digest * 16777619u) ^ bytes[i];
-    }
-  }
-}
-
-/** Checksum of every bond the host holds, in store order. */
-uint32_t NimbleController::BondDigest() const {
-  uint32_t digest = 2166136261u;
-  for (int i = 0; i < MYNEWT_VAL(BLE_STORE_MAX_BONDS); i++) {
-    // A zeroed peer address is BLE_ADDR_ANY, so the store skips the address
-    // filter and idx walks every record in turn. (The macro itself is a C
-    // compound literal and cannot be dereferenced here.)
-    struct ble_store_key_sec key {};
-    key.idx = i;
-    struct ble_store_value_sec value {};
-    if (ble_store_read_our_sec(&key, &value) != 0) {
-      break;
-    }
-    FoldInto(digest, &value, sizeof(value));
-  }
-  return digest;
-}
-
-void NimbleController::PersistBonds() {
-  const uint32_t digest = BondDigest();
-  if (digest == bondsDigest) {
-    return; // every reconnection raises an encryption event; most change nothing
-  }
-
-  /* Wakeup Spi and SpiNorFlash before accessing the file system
-   * This should be fixed in the FS driver
-   */
-  systemTask.PushMessage(Pinetime::System::Messages::DisableSleeping);
-  while (!systemTask.IsSleepDisabled()) {
-    vTaskDelay(pdMS_TO_TICKS(5));
-  }
-
-  lfs_file_t file;
-  // O_TRUNC because the file shrinks when a bond is dropped; without it the tail
-  // of a longer previous write would be read back as an extra bond.
-  if (fs.FileOpen(&file, bondFilePath, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == 0) {
-    uint8_t header[3] = {bondFileMagic, bondFileVersion, 0};
-
-    // Count first: the count has to precede the records, and the records are
-    // streamed one at a time rather than gathered, because a full set of them
-    // does not belong on this task's stack.
-    for (int i = 0; i < MYNEWT_VAL(BLE_STORE_MAX_BONDS); i++) {
-      struct ble_store_key_sec key {};
-      key.idx = i;
-      struct ble_store_value_sec value {};
-      if (ble_store_read_our_sec(&key, &value) != 0) {
-        break;
-      }
-      header[2]++;
-    }
-    fs.FileWrite(&file, header, sizeof(header));
-
-    for (uint8_t i = 0; i < header[2]; i++) {
-      struct ble_store_key_sec key {};
-      key.idx = i;
-      struct ble_store_value_sec ourSec {};
-      if (ble_store_read_our_sec(&key, &ourSec) != 0) {
-        break;
-      }
-      // The peer half is keyed by identity address, not by index: the two
-      // stores are not guaranteed to be in the same order.
-      struct ble_store_key_sec peerKey {};
-      peerKey.peer_addr = ourSec.peer_addr;
-      struct ble_store_value_sec peerSec {};
-      ble_store_read_peer_sec(&peerKey, &peerSec);
-
-      fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&ourSec), sizeof(ourSec));
-      fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&peerSec), sizeof(peerSec));
-    }
-
-    uint8_t cccdCount = 0;
-    for (int i = 0; i < MYNEWT_VAL(BLE_STORE_MAX_CCCDS); i++) {
-      struct ble_store_key_cccd key {};
-      key.idx = i;
-      struct ble_store_value_cccd value {};
-      if (ble_store_read_cccd(&key, &value) != 0) {
-        break;
-      }
-      cccdCount++;
-    }
-    fs.FileWrite(&file, &cccdCount, 1);
-
-    for (uint8_t i = 0; i < cccdCount; i++) {
-      struct ble_store_key_cccd key {};
-      key.idx = i;
-      struct ble_store_value_cccd value {};
-      if (ble_store_read_cccd(&key, &value) != 0) {
-        break;
-      }
-      fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&value), sizeof(value));
-    }
-
-    fs.FileClose(&file);
-    bondsDigest = digest;
-    NRF_LOG_INFO("[BOND] Persisted %d bond(s), %d subscription(s)", header[2], cccdCount);
-  }
-  systemTask.PushMessage(Pinetime::System::Messages::EnableSleeping);
-}
-
-void NimbleController::RestoreBonds() {
-  lfs_file_t file;
-  if (fs.FileOpen(&file, bondFilePath, LFS_O_RDONLY) != 0) {
-    return;
-  }
-
-  uint8_t header[3] = {0, 0, 0};
-  if (fs.FileRead(&file, header, sizeof(header)) != sizeof(header)) {
-    fs.FileClose(&file);
-    return;
-  }
-
-  if (header[0] != bondFileMagic) {
-    // A file written before bonds were kept as a set: one bond, then a count of
-    // subscriptions. Load it so the phone that owns this watch does not have to
-    // pair again; the next bond event rewrites the file in the current format,
-    // because bondsDigest starts at a value the real store will not match.
-    fs.FileClose(&file);
-    if (fs.FileOpen(&file, bondFilePath, LFS_O_RDONLY) != 0) {
-      return;
-    }
-    struct ble_store_value_sec sec {};
-    if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&sec), sizeof(sec)) == sizeof(sec)) {
-      ble_store_write_our_sec(&sec);
-      if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&sec), sizeof(sec)) == sizeof(sec)) {
-        ble_store_write_peer_sec(&sec);
-        uint8_t cccdCount = 0;
-        fs.FileRead(&file, &cccdCount, 1);
-        for (uint8_t i = 0; i < cccdCount; i++) {
-          struct ble_store_value_cccd cccd {};
-          if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&cccd), sizeof(cccd)) != sizeof(cccd)) {
-            break;
-          }
-          ble_store_write_cccd(&cccd);
-        }
-      }
-    }
-    fs.FileClose(&file);
-    NRF_LOG_INFO("[BOND] Migrated a single-bond file");
-    return;
-  }
-
-  for (uint8_t i = 0; i < header[2] && i < MYNEWT_VAL(BLE_STORE_MAX_BONDS); i++) {
-    struct ble_store_value_sec ourSec {}, peerSec {};
-    if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&ourSec), sizeof(ourSec)) != sizeof(ourSec) ||
-        fs.FileRead(&file, reinterpret_cast<uint8_t*>(&peerSec), sizeof(peerSec)) != sizeof(peerSec)) {
-      break;
-    }
-    ble_store_write_our_sec(&ourSec);
-    ble_store_write_peer_sec(&peerSec);
-  }
-
-  uint8_t cccdCount = 0;
-  if (fs.FileRead(&file, &cccdCount, 1) == 1) {
-    for (uint8_t i = 0; i < cccdCount && i < MYNEWT_VAL(BLE_STORE_MAX_CCCDS); i++) {
-      struct ble_store_value_cccd cccd {};
-      if (fs.FileRead(&file, reinterpret_cast<uint8_t*>(&cccd), sizeof(cccd)) != sizeof(cccd)) {
-        break;
-      }
-      ble_store_write_cccd(&cccd);
-    }
-  }
-
-  fs.FileClose(&file);
-  // Deliberately not deleted. Deleting it meant that a watch which lost power
-  // before the next bond event came back knowing nobody.
-  bondsDigest = BondDigest();
-  NRF_LOG_INFO("[BOND] Restored %d bond(s), %d subscription(s)", header[2], cccdCount);
-}
-

@@ -112,6 +112,11 @@ int FS::FileWrite(lfs_file_t* file_p, const uint8_t* buff, uint32_t size) {
   return lfs_file_write(&lfs, file_p, buff, size);
 }
 
+int FS::FileSync(lfs_file_t* file_p) {
+  Lock lock(*this);
+  return lfs_file_sync(&lfs, file_p);
+}
+
 int FS::FileSeek(lfs_file_t* file_p, uint32_t pos) {
   Lock lock(*this);
   return lfs_file_seek(&lfs, file_p, pos, LFS_SEEK_SET);

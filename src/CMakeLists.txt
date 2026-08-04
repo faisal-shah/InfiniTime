@@ -134,7 +134,12 @@ set(NIMBLE_SRC
         libs/mynewt-nimble/nimble/host/src/ble_hs_mqueue.c
         libs/mynewt-nimble/nimble/host/src/ble_hs_stop.c
         libs/mynewt-nimble/nimble/host/src/ble_hs_startup.c
-        libs/mynewt-nimble/nimble/host/store/ram/src/ble_store_ram.c
+        # store/config replaces the deprecated store/ram package. The RAM store
+        # is not compiled: its element-count-vs-byte-count memmove corrupts the
+        # arrays whenever a non-final bond is dropped. store/config is compiled
+        # with BLE_STORE_CONFIG_PERSIST=0, so the base64/config persistence unit
+        # (ble_store_config_conf.c) is deliberately left out of the build.
+        libs/mynewt-nimble/nimble/host/store/config/src/ble_store_config.c
         libs/mynewt-nimble/nimble/host/src/ble_monitor.c
         libs/mynewt-nimble/nimble/transport/ram/src/ble_hci_ram.c
         libs/mynewt-nimble/nimble/controller/src/ble_ll.c
@@ -457,6 +462,14 @@ list(APPEND SOURCE_FILES
         drivers/Bma421_C/bma423.c
         components/battery/BatteryController.cpp
         components/ble/BleController.cpp
+        components/ble/BondPersistenceCoordinator.cpp
+        components/ble/BondRegistry.cpp
+        components/ble/BleRadioStateMachine.cpp
+        components/ble/BondStoreCodec.cpp
+        components/ble/BondStorePolicy.cpp
+        components/ble/NimbleBondStoreAdapter.cpp
+        components/ble/CompanionManagementStatus.cpp
+        components/ble/CompanionManagementService.cpp
         components/ble/NotificationManager.cpp
         components/datetime/DateTimeController.cpp
         components/brightness/BrightnessController.cpp
@@ -540,6 +553,14 @@ list(APPEND RECOVERY_SOURCE_FILES
         drivers/Bma421_C/bma423.c
         components/battery/BatteryController.cpp
         components/ble/BleController.cpp
+        components/ble/BondPersistenceCoordinator.cpp
+        components/ble/BondRegistry.cpp
+        components/ble/BleRadioStateMachine.cpp
+        components/ble/BondStoreCodec.cpp
+        components/ble/BondStorePolicy.cpp
+        components/ble/NimbleBondStoreAdapter.cpp
+        components/ble/CompanionManagementStatus.cpp
+        components/ble/CompanionManagementService.cpp
         components/ble/NotificationManager.cpp
         components/datetime/DateTimeController.cpp
         components/brightness/BrightnessController.cpp
@@ -738,7 +759,7 @@ include_directories(SYSTEM
         libs/mynewt-nimble/nimble/host/services/gap/include
         libs/mynewt-nimble/nimble/host/services/gatt/include
         libs/mynewt-nimble/nimble/host/util/include
-        libs/mynewt-nimble/nimble/host/store/ram/include
+        libs/mynewt-nimble/nimble/host/store/config/include
 
         "${NRF5_SDK_PATH}/components/drivers_nrf/nrf_soc_nosd"
         "${NRF5_SDK_PATH}/components"
@@ -830,11 +851,42 @@ add_definitions(-DFREERTOS)
 add_definitions(-D__STACK_SIZE=1024)
 add_definitions(-D__HEAP_SIZE=0)
 add_definitions(-DMYNEWT_VAL_BLE_LL_RFMGMT_ENABLE_TIME=1500)
-# Subscription records are shared across every bonded phone, not held per phone.
-# The NimBLE default of 8 is one phone's worth: a second phone subscribing to
-# the same handful of characteristics evicts the first one's, and its
-# notifications stop arriving with nothing to show for it.
-add_definitions(-DMYNEWT_VAL_BLE_STORE_MAX_CCCDS=24)
+
+# BLE bond-store capacity is owned by protocol/companion.json and emitted into
+# src/generated/CompanionProtocol.cmake. NimBLE's compile-time sizing and the
+# generated C++ constants must agree exactly, so the store limits are defined
+# from the generated variables here and cross-checked with static_assert in
+# NimbleBondStoreAdapter.cpp. Editing these by hand instead of the manifest is
+# how the firmware and the companion apps silently disagree about how many
+# phones the watch keeps.
+include(${CMAKE_CURRENT_SOURCE_DIR}/generated/CompanionProtocol.cmake)
+# One active connection is a product invariant of the family firmware, not a
+# tunable, so it is asserted outright. The remaining limits are validated only
+# by the relationships the manifest generator itself guarantees, so bumping the
+# peer or characteristic count in the manifest needs no CMake edit here.
+if(NOT COMPANION_ACTIVE_CONNECTIONS EQUAL 1)
+  message(FATAL_ERROR "CompanionProtocol: the family firmware supports exactly one active connection, got ${COMPANION_ACTIVE_CONNECTIONS}")
+endif()
+if(COMPANION_RESOLVING_LIST_ENTRIES LESS COMPANION_RETAINED_PEERS)
+  message(FATAL_ERROR "CompanionProtocol: resolving list (${COMPANION_RESOLVING_LIST_ENTRIES}) must cover retained peers (${COMPANION_RETAINED_PEERS})")
+endif()
+math(EXPR COMPANION_EXPECTED_CCCDS "${COMPANION_RETAINED_PEERS} * ${COMPANION_PERSISTED_NOTIFY_CHARACTERISTICS}")
+if(NOT COMPANION_MAX_CCCDS EQUAL COMPANION_EXPECTED_CCCDS)
+  message(FATAL_ERROR "CompanionProtocol: CCCD capacity (${COMPANION_MAX_CCCDS}) must equal retained peers times persisted notify characteristics (${COMPANION_EXPECTED_CCCDS})")
+endif()
+add_definitions(-DMYNEWT_VAL_BLE_MAX_CONNECTIONS=${COMPANION_ACTIVE_CONNECTIONS})
+add_definitions(-DMYNEWT_VAL_BLE_STORE_MAX_BONDS=${COMPANION_RETAINED_PEERS})
+add_definitions(-DMYNEWT_VAL_BLE_LL_RESOLV_LIST_SIZE=${COMPANION_RESOLVING_LIST_ENTRIES})
+# One CCCD record per persisted notify/indicate characteristic, per retained
+# phone. Subscription records are shared across every bonded phone, not held
+# per phone: NimBLE's default of 8 is one phone's worth, so a second phone
+# subscribing to the same handful of characteristics evicts the first one's and
+# its notifications stop arriving with nothing to show for it.
+add_definitions(-DMYNEWT_VAL_BLE_STORE_MAX_CCCDS=${COMPANION_MAX_CCCDS})
+# store/config with persistence disabled: the watch owns its own asynchronous
+# snapshot writer, so NimBLE must not try to reach a config subsystem the port
+# does not provide.
+add_definitions(-DMYNEWT_VAL_BLE_STORE_CONFIG_PERSIST=0)
 add_definitions(-DLFS_CONFIG=libs/lfs_config.h)
 
 # _sbrk is purposefully not implemented so that builds fail when it is used
@@ -1183,4 +1235,3 @@ endif()
 if(BUILD_RESOURCES)
   add_subdirectory(resources)
 endif()
-

@@ -1,0 +1,26 @@
+{
+  "image": "pinetime-app-1.16.0.out",
+  "label": "upstream-infinitime",
+  "ref": "8a9ccf21c9344f1df8752caf1ffea54a08bccaf0",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 22624,
+    ".comment": 73,
+    ".data": 944,
+    ".debug_frame": 6796,
+    ".heap": 0,
+    ".noinit": 16,
+    ".stab": 204,
+    ".stabstr": 441,
+    ".stack_dummy": 1024,
+    ".text": 385224
+  },
+  "summary": {
+    "bss": 22640,
+    "data": 944,
+    "text": 385232,
+    "total": 408816
+  }
+}

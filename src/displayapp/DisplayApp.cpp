@@ -516,6 +516,9 @@ void DisplayApp::Refresh() {
       case Messages::BeaconModeDisable:
         PushMessageToSystemTask(System::Messages::BeaconDisable);
         break;
+      case Messages::BondForgetAllRequested:
+        PushMessageToSystemTask(System::Messages::BondForgetAllRequested);
+        break;
       case Messages::Chime:
         LoadNewScreen(Apps::Clock, DisplayApp::FullRefreshDirections::None);
         motorController.RunForDuration(35);
@@ -686,7 +689,7 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
       currentScreen = std::make_unique<Screens::SettingShakeThreshold>(settingsController, motionController, *systemTask);
       break;
     case Apps::SettingBluetooth:
-      currentScreen = std::make_unique<Screens::SettingBluetooth>(this, settingsController);
+      currentScreen = std::make_unique<Screens::SettingBluetooth>(this, settingsController, bleController);
       break;
     case Apps::SettingOTA:
       currentScreen = std::make_unique<Screens::SettingOTA>(this, settingsController);

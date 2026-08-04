@@ -38,7 +38,15 @@ namespace Pinetime {
       BatteryPercentageUpdated,
       StartFileTransfer,
       StopFileTransfer,
-      BleRadioEnableToggle
+      BleRadioEnableToggle,
+      PersistBleStore,
+      // UI request to wipe every bond. SystemTask only forwards it to the NimBLE
+      // host task, which owns the clear, radio transition, and atomic write.
+      BondForgetAllRequested,
+      // The host wipe reached flash: surface the durable-success notice.
+      BondForgetAllCompleted,
+      // A sixth pairing evicted the least-recently-used companion.
+      BondPeerEvicted
     };
   }
 }

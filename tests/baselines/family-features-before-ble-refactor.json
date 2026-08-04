@@ -1,0 +1,26 @@
+{
+  "image": "pinetime-app-1.26.0.out",
+  "label": "family-features-before-ble-refactor",
+  "ref": "61688e875cca75571528eabc11f13c3d687a729c",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 24460,
+    ".comment": 73,
+    ".data": 944,
+    ".debug_frame": 7796,
+    ".heap": 0,
+    ".noinit": 18,
+    ".stab": 204,
+    ".stabstr": 441,
+    ".stack_dummy": 1024,
+    ".text": 400176
+  },
+  "summary": {
+    "bss": 24478,
+    "data": 944,
+    "text": 400184,
+    "total": 425606
+  }
+}

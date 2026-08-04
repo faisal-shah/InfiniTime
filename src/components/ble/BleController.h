@@ -2,6 +2,9 @@
 
 #include <array>
 #include <cstdint>
+#include "components/ble/BleRadioStateMachine.h"
+#include "components/ble/BondPersistenceCoordinator.h"
+#include "components/ble/CompanionManagementStatus.h"
 
 namespace Pinetime {
   namespace Controllers {
@@ -68,6 +71,29 @@ namespace Pinetime {
       void RecordAdvertisingRecovery();
       uint16_t AdvertisingRecoveries() const;
 
+      void RadioDiagnostics(BleRadioStateMachine::DesiredMode desired,
+                            BleRadioStateMachine::Mode actual,
+                            int lastStartResult,
+                            int lastStopResult,
+                            int lastTerminateResult,
+                            uint8_t retryCount);
+      BleRadioStateMachine::DesiredMode RadioDesiredMode() const;
+      BleRadioStateMachine::Mode RadioActualMode() const;
+      int RadioLastStartResult() const;
+      int RadioLastStopResult() const;
+      int RadioLastTerminateResult() const;
+      uint8_t RadioRetryCount() const;
+
+      void BondDiagnostics(const BondPersistenceCoordinator::Diagnostics& diagnostics);
+      const BondPersistenceCoordinator::Diagnostics& BondDiagnostics() const;
+
+      // Snapshot of the host-owned Companion Management status (paired count,
+      // reset epoch, eviction count, flags). Published from the NimBLE host task
+      // alongside BondDiagnostics so Sys Info can render it without touching the
+      // host or the filesystem.
+      void CompanionStatus(const CompanionManagementStatus& status);
+      const CompanionManagementStatus& CompanionStatus() const;
+
       void SetPairingKey(uint32_t k) {
         pairingKey = k;
       }
@@ -86,6 +112,14 @@ namespace Pinetime {
       BleAddress address;
       AddressTypes addressType;
       uint32_t pairingKey = 0;
+      BleRadioStateMachine::DesiredMode radioDesiredMode = BleRadioStateMachine::DesiredMode::Connectable;
+      BleRadioStateMachine::Mode radioActualMode = BleRadioStateMachine::Mode::Off;
+      int radioLastStartResult = 0;
+      int radioLastStopResult = 0;
+      int radioLastTerminateResult = 0;
+      uint8_t radioRetryCount = 0;
+      BondPersistenceCoordinator::Diagnostics bondDiagnostics {};
+      CompanionManagementStatus companionStatus {};
     };
   }
 }

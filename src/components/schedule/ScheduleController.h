@@ -12,6 +12,7 @@
 
 // littlefs forward types for private helpers
 #include <littlefs/lfs.h>
+#include "components/ble/generated/CompanionProtocol.h"
 
 namespace Pinetime {
   namespace System {
@@ -30,8 +31,8 @@ namespace Pinetime {
     class ScheduleController {
     public:
       // 64 recurrence rules (39 B each) cost ~2.5 KB of flash and no RAM.
-      static constexpr uint8_t MaxEvents = 64;
-      static constexpr uint8_t ProtocolVersion = 2;
+      static constexpr uint8_t MaxEvents = CompanionProtocol::ScheduleCapacity;
+      static constexpr uint8_t ProtocolVersion = CompanionProtocol::ScheduleRecordVersion;
       static constexpr size_t TitleSize = ScheduleRules::TitleSize;
 
       using RuleKind = ScheduleRules::RuleKind;

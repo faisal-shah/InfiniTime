@@ -52,3 +52,57 @@ void Ble::RecordAdvertisingRecovery() {
 uint16_t Ble::AdvertisingRecoveries() const {
   return NoInit_AdvRecoveries;
 }
+
+void Ble::RadioDiagnostics(BleRadioStateMachine::DesiredMode desired,
+                           BleRadioStateMachine::Mode actual,
+                           int lastStartResult,
+                           int lastStopResult,
+                           int lastTerminateResult,
+                           uint8_t retryCount) {
+  radioDesiredMode = desired;
+  radioActualMode = actual;
+  radioLastStartResult = lastStartResult;
+  radioLastStopResult = lastStopResult;
+  radioLastTerminateResult = lastTerminateResult;
+  radioRetryCount = retryCount;
+}
+
+BleRadioStateMachine::DesiredMode Ble::RadioDesiredMode() const {
+  return radioDesiredMode;
+}
+
+BleRadioStateMachine::Mode Ble::RadioActualMode() const {
+  return radioActualMode;
+}
+
+int Ble::RadioLastStartResult() const {
+  return radioLastStartResult;
+}
+
+int Ble::RadioLastStopResult() const {
+  return radioLastStopResult;
+}
+
+int Ble::RadioLastTerminateResult() const {
+  return radioLastTerminateResult;
+}
+
+uint8_t Ble::RadioRetryCount() const {
+  return radioRetryCount;
+}
+
+void Ble::BondDiagnostics(const BondPersistenceCoordinator::Diagnostics& diagnostics) {
+  bondDiagnostics = diagnostics;
+}
+
+const BondPersistenceCoordinator::Diagnostics& Ble::BondDiagnostics() const {
+  return bondDiagnostics;
+}
+
+void Ble::CompanionStatus(const CompanionManagementStatus& status) {
+  companionStatus = status;
+}
+
+const CompanionManagementStatus& Ble::CompanionStatus() const {
+  return companionStatus;
+}
