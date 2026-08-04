@@ -830,6 +830,11 @@ add_definitions(-DFREERTOS)
 add_definitions(-D__STACK_SIZE=1024)
 add_definitions(-D__HEAP_SIZE=0)
 add_definitions(-DMYNEWT_VAL_BLE_LL_RFMGMT_ENABLE_TIME=1500)
+# Subscription records are shared across every bonded phone, not held per phone.
+# The NimBLE default of 8 is one phone's worth: a second phone subscribing to
+# the same handful of characteristics evicts the first one's, and its
+# notifications stop arriving with nothing to show for it.
+add_definitions(-DMYNEWT_VAL_BLE_STORE_MAX_CCCDS=24)
 add_definitions(-DLFS_CONFIG=libs/lfs_config.h)
 
 # _sbrk is purposefully not implemented so that builds fail when it is used

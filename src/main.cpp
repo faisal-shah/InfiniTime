@@ -181,9 +181,15 @@ void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char* /*pcTaskName*/)
 */
 extern uint32_t __start_noinit_data;
 extern uint32_t __stop_noinit_data;
-static constexpr uint32_t NoInit_MagicValue = 0xDEAD0000;
+static constexpr uint32_t NoInit_MagicValue = 0xDEAD0001;
 uint32_t NoInit_MagicWord __attribute__((section(".noinit")));
 std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime __attribute__((section(".noinit")));
+// How many times the watch has had to restart its own advertising. Kept here
+// rather than in the controller because the answer only means anything across
+// reboots: as an ordinary variable it was zero every time anyone looked, which
+// is exactly no evidence either way. Survives a reset; a real power loss clears
+// it along with the rest of this region, which is the honest reading anyway.
+uint16_t NoInit_AdvRecoveries __attribute__((section(".noinit")));
 
 void nrfx_gpiote_evt_handler(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action) {
   if (pin == Pinetime::PinMap::Cst816sIrq) {

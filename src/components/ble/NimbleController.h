@@ -125,8 +125,14 @@ namespace Pinetime {
       void DoBeaconTransition();
 
     private:
-      void PersistBond(struct ble_gap_conn_desc& desc);
-      void RestoreBond();
+      // Every bond the host currently holds, written as one file and reloaded
+      // as a set. The watch used to keep exactly one: whichever phone bonded
+      // most recently overwrote the record, and the file was deleted as it was
+      // read, so a reboot left every other phone a stranger. With more than one
+      // phone in a household they took turns being forgotten.
+      void PersistBonds();
+      void RestoreBonds();
+      uint32_t BondDigest() const;
       void StartBeaconAdvertising();
       void ExitBeaconMode();
 
@@ -162,7 +168,9 @@ namespace Pinetime {
       uint8_t addrType;
       uint16_t connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       uint8_t fastAdvCount = 0;
-      uint8_t bondId[16] = {0};
+      // Checksum of the bonds last written, so a reconnection -- which raises
+      // an encryption event every time -- does not rewrite flash for nothing.
+      uint32_t bondsDigest = 0;
 
       // Consecutive EnsureAdvertising ticks that found the radio idle when it
       // should have been advertising. Advertising legitimately goes idle for an
