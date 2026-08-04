@@ -83,11 +83,19 @@ int CurrentTimeClient::OnCurrentTimeReadResult(uint16_t conn_handle, const ble_g
   if (error->status == 0) {
     // TODO check that attribute->handle equals the handle discovered in OnCharacteristicDiscoveryEvent
     CtsData result;
-    os_mbuf_copydata(attribute->om, 0, sizeof(CtsData), &result);
-    uint16_t year = ((uint16_t) result.year_MSO << 8) + result.year_LSO;
+    // os_mbuf_copydata copies nothing and returns -1 when the peer sent fewer
+    // bytes than this asks for. Ignoring that left `result` holding whatever was
+    // on the stack and set the clock from it -- and a wrong date is not cosmetic
+    // on this watch: schedule occurrences, the daily-task streak and every
+    // prayer time are derived from it. The server side of CTS already checks.
+    if (os_mbuf_copydata(attribute->om, 0, sizeof(CtsData), &result) < 0) {
+      NRF_LOG_ERROR("[CTS] current time reply is too short, keeping the clock we have");
+    } else {
+      uint16_t year = ((uint16_t) result.year_MSO << 8) + result.year_LSO;
 
-    NRF_LOG_INFO("Received data: %d-%d-%d %d:%d:%d", year, result.month, result.dayofmonth, result.hour, result.minute, result.second);
-    dateTimeController.SetTime(year, result.month, result.dayofmonth, result.hour, result.minute, result.second);
+      NRF_LOG_INFO("Received data: %d-%d-%d %d:%d:%d", year, result.month, result.dayofmonth, result.hour, result.minute, result.second);
+      dateTimeController.SetTime(year, result.month, result.dayofmonth, result.hour, result.minute, result.second);
+    }
   } else {
     NRF_LOG_INFO("Error retrieving current time: %d", error->status);
   }
