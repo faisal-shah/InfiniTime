@@ -89,6 +89,13 @@
 - [Files included in the release notes](doc/filesInReleaseNotes.md)
 - [Files needed by the factory](doc/files-needed-by-factory.md)
 
+### Family multi-companion handoff
+
+Agents continuing the `family-features` BLE work must read
+`.memory/context.md`, `.memory/progress.md`, and `.memory/lessons.md`. The
+remaining work is the physical fleet ship gate; the firmware implementation and
+automated validation are complete.
+
 ## Licenses
 
 This project is released under the GNU General Public License version 3 or, at your option, any later version.
