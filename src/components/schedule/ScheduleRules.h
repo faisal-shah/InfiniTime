@@ -1,5 +1,7 @@
 #pragma once
 
+#include "components/ble/generated/CompanionProtocol.h"
+
 // Pure recurrence math for the Schedule feature: no FreeRTOS, no filesystem, no
 // LVGL. Header-only so host-side unit tests can exercise every corner case
 // (leap years, month-end clamping, DST transitions) without the firmware or
@@ -51,7 +53,7 @@ namespace Pinetime {
         }
       };
 
-      static_assert(sizeof(Event) == 43, "Event layout is part of the BLE protocol");
+      static_assert(sizeof(Event) == CompanionProtocol::ScheduleRecordSize, "Event layout is part of the BLE protocol");
 
       inline int LastDayOfMonth(int year, int month0) { // month0: 0..11, year: full year
         static constexpr uint8_t days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};

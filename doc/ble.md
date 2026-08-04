@@ -51,6 +51,21 @@ If **CTS** is detected, it'll request the current time to the companion applicat
 
 ![BLE connection sequence diagram](ble/connection_sequence.png "BLE connection sequence diagram")
 
+### Bonds and pairing
+
+The firmware retains up to **5** bonded phones. Pairing a sixth evicts the
+least-recently-used bond and the watch shows a brief notice (no phone is ever
+named). Bonds survive reboots through an atomic on-flash store; the reset epoch
+counts full wipes. On the one upgrade boot that replaces a pre-family bond file,
+the watch shows a single "re-pair your phone" notice.
+
+Settings → Bluetooth keeps the Enabled/Disabled radio control, shows `Paired
+devices n/5`, and offers **Forget all paired devices** behind a destructive
+confirmation. There is no per-device list and no way to forget a peer over BLE.
+A companion can read capacity, counts, and health from the read-only
+[Companion Management Service](CompanionManagementService.md); the diagnostics
+also appear on the Sys Info BLE screen.
+
 ---
 
 ## BLE FS
@@ -103,8 +118,9 @@ The following custom services are implemented in InfiniTime:
   - [Beacon Service](BeaconService.md) : `00080000-78fc-48fe-8e23-433b3a1942d0`
   - [Multi-Alarm Service](MultiAlarmService.md) : `00090000-78fc-48fe-8e23-433b3a1942d0`
   - [Task Service](TaskService.md) : `000a0000-78fc-48fe-8e23-433b3a1942d0`
+  - [Companion Management Service](CompanionManagementService.md) : `000b0000-78fc-48fe-8e23-433b3a1942d0`
 
-  The next free fork service byte is `0x0b`. All fork services share the
+  The next free fork service byte is `0x0c`. All fork services share the
   `00ss____-78fc-48fe-8e23-433b3a1942d0` layout and build their UUIDs with
   `CustomCharUuid(serviceByte, x, y)` (`components/ble/CustomServiceUuid.h`).
 

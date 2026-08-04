@@ -303,11 +303,11 @@ void BleHost(void* /*unused*/) {
 
 void nimble_port_init(void) {
   void os_msys_init(void);
-  void ble_store_ram_init(void);
+  void CompanionBleStoreInit(void);
   ble_npl_eventq_init(&g_eventq_dflt);
   os_msys_init();
   ble_hs_init();
-  ble_store_ram_init();
+  CompanionBleStoreInit();
 
   int res = hal_timer_init(5, nullptr);
   ASSERT(res == 0);

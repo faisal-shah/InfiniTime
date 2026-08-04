@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "units": {
+    "advertisingInterval": "0.625 ms",
+    "duration": "ms"
+  },
+  "upstream": {
+    "ref": "8a9ccf21c9344f1df8752caf1ffea54a08bccaf0",
+    "fastIntervalMin": 32,
+    "fastIntervalMax": 47,
+    "fastDuration": 30000,
+    "slowIntervalMin": 1636,
+    "slowIntervalMax": 1651,
+    "advertisingBurstDuration": 2000,
+    "nominalHostRearmsPerIdleHour": 1800
+  },
+  "familyFeaturesBeforeRefactor": {
+    "ref": "61688e875cca75571528eabc11f13c3d687a729c",
+    "fastIntervalMin": 32,
+    "fastIntervalMax": 47,
+    "fastDuration": 30000,
+    "slowIntervalMin": 1636,
+    "slowIntervalMax": 1651,
+    "advertisingBurstDuration": 2000,
+    "nominalHostRearmsPerIdleHour": 1800
+  },
+  "candidateRequirement": {
+    "fastIntervalMin": 32,
+    "fastIntervalMax": 47,
+    "fastDuration": 30000,
+    "slowIntervalMin": 1636,
+    "slowIntervalMax": 1651,
+    "nominalHostRearmsPerIdleHour": 0,
+    "healthCheckPeriod": 60000,
+    "nominalHostHealthChecksPerIdleHour": 60,
+    "exhaustedRetryDelay": 60000,
+    "maxExhaustedRecoveryAttemptsPerHour": 60,
+    "maxExhaustedGapCommandsPerHour": 120
+  }
+}

@@ -25,6 +25,13 @@ namespace {
   inline bool in_isr() {
     return (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0;
   }
+
+  template<typename Controller>
+  void PersistBondStoreIfSupported(Controller& controller) {
+    if constexpr (requires { controller.PersistBondStore(); }) {
+      controller.PersistBondStore();
+    }
+  }
 }
 
 void MeasureBatteryTimerCallback(TimerHandle_t xTimer) {
@@ -170,6 +177,13 @@ void SystemTask::Work() {
   displayApp.Register(&nimbleController.music());
   displayApp.Register(&nimbleController.navigation());
   displayApp.Start(bootError);
+
+  // One upgrade boot forces the pre-family bond file to be cleared. Announce it
+  // once here: legacyResetThisBoot is a per-boot flag the coordinator only sets
+  // on the boot that performed the reset, so a normal boot never repeats it.
+  if (bleController.BondDiagnostics().legacyResetThisBoot) {
+    ShowBondNotice("Bluetooth", "Update cleared old\npairings. Re-pair\nyour phone.");
+  }
 
   heartRateSensor.Init();
   heartRateSensor.Disable();
@@ -328,8 +342,7 @@ void SystemTask::Work() {
         }
         case Messages::BeaconEnable:
           // Requires the radio on and a provisioned key. Set the intent, then
-          // let NimbleController run the stop/swap-address/restart transition on
-          // the ble host task.
+          // let NimbleController reconcile it on the NimBLE host queue.
           if (settingsController.GetBleRadioEnabled() && beaconController.HasKey()) {
             beaconController.SetActive(true);
             nimbleController.RequestBeaconMode(true);
@@ -484,6 +497,20 @@ void SystemTask::Work() {
             nimbleController.DisableRadio();
           }
           break;
+        case Messages::PersistBleStore: {
+          FlashWakeScope flash(*this);
+          PersistBondStoreIfSupported(nimbleController);
+          break;
+        }
+        case Messages::BondForgetAllRequested:
+          nimbleController.RequestForgetAllBonds();
+          break;
+        case Messages::BondForgetAllCompleted:
+          ShowBondNotice("Bluetooth", "All paired phones\nforgotten");
+          break;
+        case Messages::BondPeerEvicted:
+          ShowBondNotice("Bluetooth", "Oldest paired phone\nremoved (max 5)");
+          break;
         default:
           break;
       }
@@ -501,7 +528,6 @@ void SystemTask::Work() {
           bleDiscoveryTimer--;
         }
       }
-      nimbleController.EnsureAdvertising();
       monitor.Process();
       NoInit_BackUpTime = dateTimeController.CurrentDateTime();
       if (nrf_gpio_pin_read(PinMap::Button) == 0) {
@@ -583,6 +609,34 @@ void SystemTask::GoToSleep() {
   state = SystemTaskState::GoingToSleep;
 };
 
+void SystemTask::ShowBondNotice(const char* title, const char* body) {
+  using Pinetime::Controllers::NotificationManager;
+  NotificationManager::Notification notif;
+  size_t offset = 0;
+  const auto append = [&](const char* text) {
+    while (*text != '\0' && offset < NotificationManager::MessageSize) {
+      notif.message[offset++] = *text++;
+    }
+  };
+  append(title);
+  if (offset < NotificationManager::MessageSize) {
+    notif.message[offset++] = '\0'; // separates title from body
+  }
+  append(body);
+  notif.message[offset] = '\0';
+  notif.size = static_cast<uint8_t>(offset + 1);
+  notif.category = NotificationManager::Categories::SimpleAlert;
+  notificationManager.Push(std::move(notif));
+  // These are watch-originated management notices (Forget All done, LRU
+  // eviction, legacy reset). They must not be gated by the user's phone
+  // notification-forwarding preference or suppressed while asleep, so wake and
+  // show directly instead of going through the OnNewNotification path.
+  if (IsSleeping()) {
+    GoToRunning();
+  }
+  displayApp.PushMessage(Pinetime::Applications::Display::Messages::NewNotification);
+}
+
 void SystemTask::UpdateMotion() {
   // Unconditionally update motion
   // Reading steps/motion characteristics must return up to date information even when not subscribed to notifications
@@ -644,4 +698,14 @@ void SystemTask::PushMessage(System::Messages msg) {
   } else {
     xQueueSend(systemTasksMsgQueue, &msg, portMAX_DELAY);
   }
+}
+
+bool SystemTask::TryPushMessage(System::Messages msg) {
+  if (in_isr()) {
+    BaseType_t higherPriorityTaskWoken = pdFALSE;
+    const BaseType_t result = xQueueSendFromISR(systemTasksMsgQueue, &msg, &higherPriorityTaskWoken);
+    portYIELD_FROM_ISR(higherPriorityTaskWoken);
+    return result == pdTRUE;
+  }
+  return xQueueSend(systemTasksMsgQueue, &msg, 0) == pdTRUE;
 }

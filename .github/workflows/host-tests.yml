@@ -1,0 +1,31 @@
+name: Host tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify generated firmware contract
+        run: |
+          uv run --script tools/generate_companion_protocol.py \
+            --workspace-root . \
+            --targets infinitime \
+            --check
+      - name: Configure
+        run: cmake -S tests/host -B build-host-tests -G Ninja
+      - name: Build
+        run: cmake --build build-host-tests
+      - name: Test host logic and advertising software proxy
+        run: |
+          ctest --test-dir build-host-tests \
+            --output-on-failure \
+            --output-junit junit.xml

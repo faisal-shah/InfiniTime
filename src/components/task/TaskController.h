@@ -3,6 +3,7 @@
 #include <FreeRTOS.h>
 #include <cstdint>
 #include "components/datetime/DateTimeController.h"
+#include "components/ble/generated/CompanionProtocol.h"
 #include "components/fs/StagedList.h"
 
 #include <littlefs/lfs.h>
@@ -28,8 +29,8 @@ namespace Pinetime {
     // watch was off across midnight.
     class TaskController {
     public:
-      static constexpr uint8_t MaxTasks = 20;
-      static constexpr uint8_t ProtocolVersion = 1;
+      static constexpr uint8_t MaxTasks = CompanionProtocol::TaskCapacity;
+      static constexpr uint8_t ProtocolVersion = CompanionProtocol::TaskRecordVersion;
       static constexpr size_t TitleSize = 24;
 
       // On-wire / on-flash record. Field order + packing are part of the BLE
@@ -41,7 +42,7 @@ namespace Pinetime {
         uint32_t lastModified;
       };
 
-      static_assert(sizeof(Task) == 31, "Task layout is part of the BLE protocol");
+      static_assert(sizeof(Task) == CompanionProtocol::TaskRecordSize, "Task layout is part of the BLE protocol");
       static_assert(MaxTasks <= 64, "StagedList uses a uint64_t received-bitmask");
 
       TaskController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);

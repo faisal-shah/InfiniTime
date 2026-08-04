@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 
 #define min // workaround: nimble's min/max macros conflict with libstdc++
@@ -10,6 +12,12 @@
 #include "components/ble/AlertNotificationClient.h"
 #include "components/ble/AlertNotificationService.h"
 #include "components/ble/BatteryInformationService.h"
+#include "components/ble/BleRadioStateMachine.h"
+#include "components/ble/BondNoticeQueue.h"
+#include "components/ble/BondPersistenceCoordinator.h"
+#include "components/ble/NimbleBondStoreAdapter.h"
+#include "components/ble/CompanionManagementService.h"
+#include "components/ble/CompanionManagementStatus.h"
 #include "components/ble/CurrentTimeClient.h"
 #include "components/ble/CurrentTimeService.h"
 #include "components/ble/DeviceInformationService.h"
@@ -43,7 +51,7 @@ namespace Pinetime {
     class DateTime;
     class NotificationManager;
 
-    class NimbleController {
+    class NimbleController : public CompanionStatusProvider {
 
     public:
       NimbleController(Pinetime::System::SystemTask& systemTask,
@@ -61,15 +69,15 @@ namespace Pinetime {
                        MultiAlarmController& multiAlarmController,
                        BeaconController& beaconController);
       void Init();
-      void StartAdvertising();
       int OnGAPEvent(ble_gap_event* event);
       void StartDiscovery();
 
-      // Re-arm advertising if it has stopped while it should be running. Called
-      // periodically by SystemTask; see the definition for why this is needed.
-      // The restart itself is deferred to the "ble" task via DoAdvertisingRecovery.
-      void EnsureAdvertising();
-      void DoAdvertisingRecovery();
+      void OnHostReset();
+      void OnHostSync();
+      void ReconcileRadio();
+      void OnFastAdvertisingTimeout();
+      void OnRadioRetryTimeout();
+      void OnRadioHealthCheck();
 
       Pinetime::Controllers::MusicService& music() {
         return musicService;
@@ -110,31 +118,60 @@ namespace Pinetime {
       uint16_t connHandle();
       void NotifyBatteryLevel(uint8_t level);
 
+      void RequestFastAdvertising();
       void RestartFastAdv() {
-        fastAdvCount = 0;
-      };
-
+        RequestFastAdvertising();
+      }
       void EnableRadio();
       void DisableRadio();
 
-      // Find My beacon mode. RequestBeaconMode queues the transition onto the
-      // NimBLE host task; it reads the intent from BeaconController::IsBeaconing.
-      // Everything else runs on the "ble" task.
       void RequestBeaconMode(bool enable);
       bool IsBeaconing() const;
-      void DoBeaconTransition();
+
+      // SystemTask side of the asynchronous writer. The queued message carries
+      // no copy; it references the coordinator's immutable in-flight buffer.
+      void PersistBondStore();
+
+      // Request seam for the UI/SystemTask: it only posts a host event. The
+      // actual clear, radio transition, and atomic empty write all run on the
+      // NimBLE host task in ProcessForgetAll -- callers never touch the store,
+      // GAP, or the filesystem directly.
+      void RequestForgetAllBonds();
+
+      // Companion Management status read seam. Runs on the NimBLE host task
+      // (GATT read callback and diagnostics publish) and reads only in-RAM
+      // registry and persistence state: no filesystem, no lock, no block.
+      CompanionManagementStatus GetCompanionStatus() const override;
 
     private:
-      // Every bond the host currently holds, written as one file and reloaded
-      // as a set. The watch used to keep exactly one: whichever phone bonded
-      // most recently overwrote the record, and the file was deleted as it was
-      // read, so a reboot left every other phone a stranger. With more than one
-      // phone in a household they took turns being forgotten.
-      void PersistBonds();
-      void RestoreBonds();
-      uint32_t BondDigest() const;
-      void StartBeaconAdvertising();
-      void ExitBeaconMode();
+      void QueueRadioReconciliation();
+      bool PrepareIdentityAddress();
+      void ExecuteRadioCommand(BleRadioStateMachine::Command command);
+      int StartConnectableAdvertising(bool fast);
+      int StartBeaconAdvertising();
+      int SetBeaconAddress();
+      int RestoreIdentityAddress();
+      void PublishRadioDiagnostics();
+      void PublishBondDiagnostics();
+      void QueueBondPersistenceEvent();
+      void ProcessBondPersistence();
+      void ScheduleBondPersistenceTimer();
+      void CompleteBondStoreWrite();
+      void RestoreBondStoreOnHost();
+      bool PrepareBondStoreRestore();
+      bool WriteBondStoreFile(const uint8_t* data, size_t size);
+      void ProcessForgetAll();
+      void QueueForgetAllEvent();
+      void MaybeAdvanceForgetAll();
+      void NotifyEvictionIfChanged();
+      void FlushBondNotices();
+
+      static void BondStoreDirtyCallback(void* arg);
+      static void BondPersistenceEventHandler(struct ble_npl_event* event);
+      static void BondPersistenceTimerHandler(struct ble_npl_event* event);
+      static void BondWriteCompleteHandler(struct ble_npl_event* event);
+      static void BondRestoreHandler(struct ble_npl_event* event);
+      static void ForgetAllHandler(struct ble_npl_event* event);
 
       static constexpr const char* deviceName = "InfiniTime";
       Pinetime::System::SystemTask& systemTask;
@@ -164,40 +201,71 @@ namespace Pinetime {
       MotionService motionService;
       FSService fsService;
       ServiceDiscovery serviceDiscovery;
+      CompanionManagementService companionManagementService;
 
-      uint8_t addrType;
+      // Wraps the store/config backend so every key and subscription change is
+      // tracked for the asynchronous persistence writer, and resolves a full
+      // store by evicting the least-recently-used phone. It also owns the
+      // BondRegistry that decides which phone that is.
+      NimbleBondStoreAdapter bondStore;
+      BondPersistenceCoordinator bondPersistence;
+
+      // The single full-size snapshot lives in the global NimbleController
+      // object, never on a task stack. During boot SystemTask fills it, posts
+      // bondRestoreEvent, and waits on bondRestoreSemaphore while the host task
+      // reads it. After that handoff completes, the host task reuses it only as
+      // capture scratch; BondPersistenceCoordinator has already encoded the
+      // immutable SystemTask write buffer before it can be reused.
+      NimbleBondStoreSnapshot bondSnapshotScratch;
+
+      struct BondWriteCompletion {
+        uint64_t generation = 0;
+        uint32_t durationMs = 0;
+        uint32_t bytes = 0;
+        bool success = false;
+      } bondWriteCompletion;
+
+      struct ble_npl_event bondPersistenceEvent {};
+      struct ble_npl_callout bondPersistenceCallout {};
+      struct ble_npl_event bondWriteCompleteEvent {};
+      struct ble_npl_event bondRestoreEvent {};
+      struct ble_npl_event forgetAllEvent {};
+      struct ble_npl_sem bondRestoreSemaphore {};
+      bool bootBondSnapshotReady = false;
+      bool bootBondRestoreSucceeded = false;
+      bool bootBondPersistenceReady = true;
+      bool bondPersistenceWritesEnabled = true;
+      bool bondPersistenceEventsInitialized = false;
+
+      // Forget All bookkeeping. The wipe is driven through the radio state
+      // machine: the request forces the radio to Off, and only once the link is
+      // down and advertising is actually Off is the store cleared, the reset
+      // epoch bumped, and the empty snapshot queued. The prior desired mode is
+      // held in requestedRadioMode and resumed only after the empty snapshot is
+      // durably committed. evictionNoticeBaseline is rebased on the wipe so it
+      // never fires an eviction notice, and forgetAllGeneration records the
+      // generation whose durable write means the wipe is complete.
+      enum class ForgetAllState : uint8_t { Idle, StoppingRadio, AwaitingCommit };
+      ForgetAllState forgetAllState = ForgetAllState::Idle;
+      uint32_t evictionNoticeBaseline = 0;
+      uint64_t forgetAllGeneration = 0;
+
+      // Watch-originated notices are latched here and delivered non-blocking, so
+      // the host task never blocks on a full SystemTask queue. When one cannot
+      // be enqueued it stays pending and is retried at a low frequency through
+      // the bond-persistence callout.
+      BondNoticeQueue bondNotices;
+      static constexpr uint32_t NoticeRetryMs = 1000;
+
+      uint8_t addrType = BLE_OWN_ADDR_RANDOM;
       uint16_t connectionHandle = BLE_HS_CONN_HANDLE_NONE;
-      uint8_t fastAdvCount = 0;
-      // Checksum of the bonds last written, so a reconnection -- which raises
-      // an encryption event every time -- does not rewrite flash for nothing.
-      uint32_t bondsDigest = 0;
 
-      // Consecutive EnsureAdvertising ticks that found the radio idle when it
-      // should have been advertising. Advertising legitimately goes idle for an
-      // instant between a burst ending and BLE_GAP_EVENT_ADV_COMPLETE re-arming
-      // it, and the "ble" task can be stalled for far longer than that by a
-      // bond write to flash, so only a sustained gap counts as stuck.
-      uint8_t advertisingIdleTicks = 0;
-      static constexpr uint8_t advertisingIdleLimit = 30; // 30 x 100 ms
-
-      // When the advertising state machine last did anything: a burst ending, a
-      // connection arriving, a link dropping, or a start being issued.
-      //
-      // Advertising runs in 2 second bursts, so a healthy radio produces one of
-      // these constantly. Asking NimBLE whether it thinks it is advertising is
-      // not enough on its own -- if the host believes a burst is running while
-      // nothing is on the air, that answer keeps the watch unreachable for good
-      // and no scan or direct connection can bring it back. Silence for far
-      // longer than a burst is the evidence that the state is a fiction.
-      uint32_t lastAdvEventTick = 0;
-      static constexpr uint32_t advSilenceMs = 15000; // bursts are 2 s
-
-      // Beacon-mode radio state, owned by and only touched on the "ble" task.
-      bool beaconActive = false;
-      // Whether the device identity is a random address (PineTime: yes). If so,
-      // entering beacon mode overwrites the identity random address, so it is
-      // restored on exit (bleController.Address() keeps the identity copy).
-      bool identityAddrIsRandom = false;
+      BleRadioStateMachine radioState;
+      std::atomic<BleRadioStateMachine::DesiredMode> requestedRadioMode {BleRadioStateMachine::DesiredMode::Connectable};
+      std::atomic<bool> fastAdvertisingRequested {false};
+      std::atomic<bool> hostSyncRequested {false};
+      bool radioEventsInitialized = false;
+      bool identityAddressInitialized = false;
     };
 
     static NimbleController* nptr;

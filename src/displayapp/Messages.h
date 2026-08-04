@@ -26,6 +26,7 @@ namespace Pinetime {
         BleRadioEnableToggle,
         BeaconModeEnable,
         BeaconModeDisable,
+        BondForgetAllRequested,
       };
     }
   }
