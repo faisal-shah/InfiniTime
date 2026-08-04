@@ -6,7 +6,41 @@
 
 using namespace Pinetime::Drivers;
 
+namespace {
+  // Generous against the datasheet, and far below the 7 s watchdog so a stuck
+  // chip produces an I/O error rather than resetting the watch: a page program
+  // is a few milliseconds, a 4 KB sector erase a few hundred at worst.
+  constexpr uint32_t programTimeoutTicks = 100;
+  constexpr uint32_t eraseTimeoutTicks = 2000;
+  constexpr uint32_t writeEnableTimeoutTicks = 100;
+
+  // tRES1: the chip needs a moment after being released from deep power-down
+  // before it will accept another command. Issuing one inside that window reads
+  // back 0xFF, which is what put ff-ff-ff in Sys Info's flash identification.
+  constexpr uint32_t releaseFromPowerDownUs = 100;
+}
+
 SpiNorFlash::SpiNorFlash(Spi& spi) : spi {spi} {
+}
+
+bool SpiNorFlash::WaitUntilIdle(uint32_t timeoutTicks) {
+  for (uint32_t waited = 0; waited < timeoutTicks; waited++) {
+    if (!WriteInProgress()) {
+      return true;
+    }
+    vTaskDelay(1);
+  }
+  return false;
+}
+
+bool SpiNorFlash::WaitUntilWriteEnabled(uint32_t timeoutTicks) {
+  for (uint32_t waited = 0; waited < timeoutTicks; waited++) {
+    if (WriteEnabled()) {
+      return true;
+    }
+    vTaskDelay(1);
+  }
+  return false;
 }
 
 void SpiNorFlash::Init() {
@@ -32,11 +66,21 @@ void SpiNorFlash::Wakeup() {
   uint8_t cmd[cmdSize] = {static_cast<uint8_t>(Commands::ReleaseFromDeepPowerDown), 0x01, 0x02, 0x03};
   uint8_t id = 0;
   spi.Read(reinterpret_cast<uint8_t*>(&cmd), cmdSize, &id, 1);
-  auto devId = device_id = ReadIdentification();
-  if (devId.type != device_id.type) {
-    NRF_LOG_INFO("[SpiNorFlash] ID on Wakeup: Failed");
+
+  // tRES1. Without it the identification below is issued while the chip is
+  // still coming out of deep power-down and reads back as 0xFF -- and the next
+  // command after that is a write, whose completion poll would then never see
+  // an idle chip.
+  nrf_delay_us(releaseFromPowerDownUs);
+
+  const Identification readBack = ReadIdentification();
+  // 0xFF is what an unresponsive chip returns, so treat it as a failed read and
+  // keep the identification captured at boot. The previous check compared a
+  // value against itself and could never report anything.
+  if (readBack.manufacturer == 0xFF && readBack.type == 0xFF && readBack.density == 0xFF) {
+    NRF_LOG_WARNING("[SpiNorFlash] ID on Wakeup: no response, keeping the boot identification");
   } else {
-    NRF_LOG_INFO("[SpiNorFlash] ID on Wakeup: %d", id);
+    device_id = readBack;
   }
   NRF_LOG_INFO("[SpiNorFlash] Wakeup")
 }
@@ -91,14 +135,18 @@ void SpiNorFlash::SectorErase(uint32_t sectorAddress) {
                           static_cast<uint8_t>(sectorAddress >> 8U),
                           static_cast<uint8_t>(sectorAddress)};
 
+  eraseTimedOut = false;
   WriteEnable();
-  while (!WriteEnabled())
-    vTaskDelay(1);
+  if (!WaitUntilWriteEnabled(writeEnableTimeoutTicks)) {
+    eraseTimedOut = true;
+    return;
+  }
 
   spi.Read(reinterpret_cast<uint8_t*>(&cmd), cmdSize, nullptr, 0);
 
-  while (WriteInProgress())
-    vTaskDelay(1);
+  if (!WaitUntilIdle(eraseTimeoutTicks)) {
+    eraseTimedOut = true;
+  }
 }
 
 uint8_t SpiNorFlash::ReadSecurityRegister() {
@@ -109,16 +157,20 @@ uint8_t SpiNorFlash::ReadSecurityRegister() {
 }
 
 bool SpiNorFlash::ProgramFailed() {
-  return (ReadSecurityRegister() & 0x20u) == 0x20u;
+  // The timeout is checked first and on its own: a chip that stopped answering
+  // reports 0xFF for the security register too, so asking it whether the write
+  // failed is not something to rely on when it has already stopped talking.
+  return programTimedOut || (ReadSecurityRegister() & 0x20u) == 0x20u;
 }
 
 bool SpiNorFlash::EraseFailed() {
-  return (ReadSecurityRegister() & 0x40u) == 0x40u;
+  return eraseTimedOut || (ReadSecurityRegister() & 0x40u) == 0x40u;
 }
 
 void SpiNorFlash::Write(uint32_t address, const uint8_t* buffer, size_t size) {
   static constexpr uint8_t cmdSize = 4;
 
+  programTimedOut = false;
   size_t len = size;
   uint32_t addr = address;
   const uint8_t* b = buffer;
@@ -132,13 +184,17 @@ void SpiNorFlash::Write(uint32_t address, const uint8_t* buffer, size_t size) {
                             static_cast<uint8_t>(addr)};
 
     WriteEnable();
-    while (!WriteEnabled())
-      vTaskDelay(1);
+    if (!WaitUntilWriteEnabled(writeEnableTimeoutTicks)) {
+      programTimedOut = true;
+      return;
+    }
 
     spi.WriteCmdAndBuffer(cmd, cmdSize, b, toWrite);
 
-    while (WriteInProgress())
-      vTaskDelay(1);
+    if (!WaitUntilIdle(programTimeoutTicks)) {
+      programTimedOut = true;
+      return;
+    }
 
     addr += toWrite;
     b += toWrite;
