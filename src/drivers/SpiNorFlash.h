@@ -43,6 +43,23 @@ namespace Pinetime {
     private:
       Identification ReadIdentification();
 
+      // Poll the status register until the chip reports idle, or give up.
+      //
+      // A chip that does not answer reads back as 0xFF, and 0xFF has the
+      // write-in-progress bit set, so an unbounded poll waits for a completion
+      // that can never be reported. That is not a crash: vTaskDelay keeps
+      // yielding, so the watch stays responsive while the task that started the
+      // write never returns -- and if that task is SystemTask, nothing reloads
+      // the watchdog and the watch resets seven seconds later.
+      //
+      // Timing out instead surfaces the failure through ProgramFailed/
+      // EraseFailed, which littlefs turns into an ordinary I/O error.
+      bool WaitUntilIdle(uint32_t timeoutTicks);
+      bool WaitUntilWriteEnabled(uint32_t timeoutTicks);
+
+      bool programTimedOut = false;
+      bool eraseTimedOut = false;
+
       enum class Commands : uint8_t {
         PageProgram = 0x02,
         Read = 0x03,
