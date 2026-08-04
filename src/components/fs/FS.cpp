@@ -6,6 +6,14 @@
 
 using namespace Pinetime::Controllers;
 
+namespace {
+  // Free-block bitmap, one bit per block. 112 bytes covers 896 blocks, more
+  // than the volume's 844, so an allocation pass sweeps everything at once.
+  // Static and 32-bit aligned, as lfs_config requires; see the note in the
+  // constructor for why this is not left to lfs_malloc.
+  alignas(8) uint8_t lookaheadBuffer[112];
+}
+
 FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
   : flashDriver {driver},
     lfsConfig {
@@ -22,11 +30,38 @@ FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
       .block_cycles = 1000u,
 
       .cache_size = 16,
-      .lookahead_size = 16,
+      // One bit per block, so 16 bytes tracked only 128 of the 844 blocks and
+      // littlefs needed ~7 full traversals to find free space as the volume
+      // filled. Each traversal reads every metadata block through the 16-byte
+      // cache above -- tens of thousands of tiny SPI reads, long enough that a
+      // settings write landing after a resources upload blocked SystemTask past
+      // the 7 s watchdog and reset the watch. 112 bytes covers 896 blocks, so
+      // the volume is swept in one pass.
+      //
+      // Two deliberate constraints, both learned the hard way on hardware:
+      //
+      // cache_size is NOT touched. Raising it 16 -> 256 broke every filesystem
+      // write on real hardware (v1.18.6/.7, reverted in v1.18.8) for reasons
+      // never established, and the simulator ran it happily.
+      //
+      // The buffer is static rather than left for littlefs to malloc. Enlarging
+      // what lfs_malloc allocates is the shape of that same unexplained
+      // breakage, and lfs_config exists precisely so the caller can supply the
+      // storage instead.
+      .lookahead_size = sizeof(lookaheadBuffer),
+      .lookahead_buffer = lookaheadBuffer,
 
       .name_max = 50,
       .attr_max = 50,
     } {
+  // littlefs checks this itself, but LFS_ASSERT compiles out in release, so an
+  // under-sized bitmap would silently go back to multi-pass allocation scans --
+  // the exact thing that starved the watchdog. Check it where it cannot be
+  // skipped, and against the geometry rather than a copied-out number.
+  static_assert(sizeof(lookaheadBuffer) * 8 >= size / blockSize,
+                "lookahead bitmap must cover every block, or allocation needs several passes");
+  static_assert(sizeof(lookaheadBuffer) % 8 == 0, "littlefs requires a multiple of 8 bytes");
+
   mutex = xSemaphoreCreateRecursiveMutex();
   ASSERT(mutex != nullptr);
 }
