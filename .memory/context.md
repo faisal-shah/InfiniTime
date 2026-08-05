@@ -2,9 +2,8 @@
 
 ## Overview
 
-This `family-features` firmware supports family-owned PineTime watches that are
-configured by several phones or computers. Implementation commit
-`44e48100` contains the multi-companion BLE refactor.
+This 2.0.0 `family-features` firmware supports family-owned PineTime watches
+that are configured by several phones or computers.
 
 ## Architecture
 
@@ -32,6 +31,8 @@ C++20 host tests, embedded C++/FreeRTOS/NimBLE, CMake, GCC Arm
 - Forget All keeps the radio off until the empty store is durable.
 - The 1,456-byte snapshot scratch is persistent storage, never a task local.
 - RF intervals match the recorded upstream baseline.
+- Version 2.0.0 imports no prior bond format; every phone pairs once after the
+  cutover.
 
 ## Key Decisions
 

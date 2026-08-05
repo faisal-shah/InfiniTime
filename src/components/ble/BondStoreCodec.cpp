@@ -310,13 +310,13 @@ bool BondStoreCodec::Validate(const NimbleBondStoreSnapshot& snapshot, DecodeErr
 bool BondStoreCodec::Encode(const NimbleBondStoreSnapshot& snapshot,
                             Buffer& output,
                             size_t& outputSize,
-                            bool migrationComplete) {
+                            bool formatInitialized) {
   if (!Validate(snapshot)) {
     outputSize = 0;
     return false;
   }
 
-  const uint32_t flags = migrationComplete ? MigrationCompleteFlag : 0;
+  const uint32_t flags = formatInitialized ? FormatInitializedFlag : 0;
   const size_t payloadSize = MetadataSize +
                              ((snapshot.ourSecCount + snapshot.peerSecCount) * SecurityRecordSize) +
                              (snapshot.cccdCount * CccdRecordSize) +
@@ -429,7 +429,7 @@ BondStoreCodec::DecodeResult BondStoreCodec::Decode(const uint8_t* data,
       registryRecordSize != RegistryRecordSize) {
     return {DecodeError::RecordSize, false};
   }
-  if ((flags & ~MigrationCompleteFlag) != 0) {
+  if ((flags & ~FormatInitializedFlag) != 0) {
     return {DecodeError::Flags, false};
   }
 
@@ -499,5 +499,5 @@ BondStoreCodec::DecodeResult BondStoreCodec::Decode(const uint8_t* data,
   if (!Validate(output, &validationError)) {
     return {validationError, false};
   }
-  return {DecodeError::None, (flags & MigrationCompleteFlag) != 0};
+  return {DecodeError::None, (flags & FormatInitializedFlag) != 0};
 }

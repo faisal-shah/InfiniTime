@@ -166,7 +166,7 @@ void BondPersistenceCoordinator::WriteCompleted(bool success,
   }
 
   // A failed write is never clean, even if the adapter's dirty baseline was
-  // clean (the boot migration commit is the important example).
+  // clean (the boot format-initialization commit is the important example).
   diagnostics.criticalDirty = true;
   deadlineMs = nowMs + failureRetryDelayMs;
   deadlineSet = true;

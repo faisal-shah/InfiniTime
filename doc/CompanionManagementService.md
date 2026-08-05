@@ -91,9 +91,10 @@ getters.
 - **LRU eviction notice.** When a sixth pairing evicts the least-recently-used
   phone (eviction count increments), the watch shows a concise notice. It never
   names the removed phone, and a reboot restore never re-fires it.
-- **Legacy reset notice.** The one upgrade boot that clears a pre-family bond
-  file shows a single "re-pair your phone" notice; a normal boot never repeats
-  it.
+- **2.0 format reset notice.** The first 2.0.0 boot intentionally clears both
+  the pre-family single-bond file and the v1.26.0 multi-bond file instead of
+  importing raw prior formats. It shows a single "re-pair your phone" notice;
+  a normal boot never repeats it.
 - **Sys Info.** The BLE diagnostics screen adds paired count, reset epoch,
   eviction count, and persistence boot state alongside the existing radio
   diagnostics.

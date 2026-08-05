@@ -475,7 +475,7 @@ bool NimbleController::PrepareBondStoreRestore() {
 
   bootBondSnapshotReady = false;
   bootBondPersistenceReady = true;
-  // True only when a valid, new-format store without the migration marker was
+  // True only when a valid pre-2.0 store without the final format marker was
   // intentionally discarded below. A fresh watch never sets this.
   bool preMarkerDiscarded = false;
   const auto prepareEmptyRestore = [this]() {
@@ -513,7 +513,7 @@ bool NimbleController::PrepareBondStoreRestore() {
       bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid, decoded.error);
       return prepareEmptyRestore();
     }
-    if (decoded.migrationComplete) {
+    if (decoded.formatInitialized) {
       bootBondSnapshotReady = true;
       bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Restored);
       if (legacyExists) {
@@ -524,9 +524,8 @@ bool NimbleController::PrepareBondStoreRestore() {
       }
       return true;
     }
-    // A valid new-format store that predates the migration marker: it is
-    // intentionally discarded and reset below, which is a genuine prior-pairing
-    // reset the watch should announce.
+    // A valid pre-2.0 store without the final format marker is intentionally
+    // discarded and reset below. There is no compatibility import.
     preMarkerDiscarded = true;
   } else if (statResult != LFS_ERR_NOENT) {
     bootBondPersistenceReady = false;
@@ -534,8 +533,8 @@ bool NimbleController::PrepareBondStoreRestore() {
     return false;
   }
 
-  // First upgrade, or a valid pre-marker new-format image: intentionally reset
-  // rather than importing the raw legacy C-structure file.
+  // First 2.0 boot, or a valid pre-marker image: intentionally reset rather
+  // than importing either previous bond format.
   const uint32_t previousResetEpoch = bondSnapshotScratch.registry.resetEpoch;
   const uint64_t previousGeneration = bondSnapshotScratch.generation;
   bondSnapshotScratch.Clear();

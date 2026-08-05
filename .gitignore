@@ -10,7 +10,9 @@ CMakeFiles
 cmake_install.cmake
 Makefile
 build
-tools
+tools/*
+!tools/firmware_metrics.py
+!tools/generate_companion_protocol.py
 
 # Resulting binary files
 *.a
