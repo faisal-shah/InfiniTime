@@ -11,6 +11,8 @@
   change.
 - A broad `tools` ignore rule hid required protocol and metrics generators from
   clean clones.
+- Standalone host CI needs recursive submodules because `AtomicFileReplace`
+  includes littlefs headers.
 
 ## Patterns
 
