@@ -39,6 +39,12 @@ The coordinated 2.0.0 build uses GCC Arm 10.3-2021.10 and Nordic SDK
 | Recovery | 190,420 B (40.12%) | 204,176 B (43.02%) | +13,756 B | 20,202 B (30.83%) | 24,314 B (37.10%) |
 | Recovery loader | 206,724 B (43.55%) | 220,480 B (46.45%) | +13,756 B | 1,224 B (1.87%) | 1,224 B (1.87%) |
 
+The 2.0.1 hardening build is 417,016 B flash / 29,538 B RAM for the
+application, 204,268 B / 24,322 B for recovery, and 220,572 B / 1,224 B for
+the recovery loader. The additional application flash covers deferred
+first-format persistence diagnostics and the readable eight-page Sys Info
+layout.
+
 The BSS increase includes the five-peer NimBLE key/CCCD/resolving capacities and
 the persistent 1,456-byte snapshot scratch that keeps the full bond snapshot
 off the SystemTask and BLE-host stacks. These budgets are checked during

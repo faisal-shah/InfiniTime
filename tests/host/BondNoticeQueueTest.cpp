@@ -102,6 +102,21 @@ int main() {
           "each notice is delivered once");
   }
 
+  // Format initialization is the highest-priority notice and remains latched
+  // until the SystemTask queue accepts it.
+  {
+    BondNoticeQueue queue;
+    queue.LatchEviction();
+    queue.LatchForgetAllComplete();
+    queue.LatchFormatInitialized();
+    FakeSender sender;
+    Check(!queue.Flush(std::ref(sender)), "all three notices clear in one flush");
+    Check(sender.attempts.front() == Notice::FormatInitialized,
+          "format initialization is offered before other bond notices");
+    Check(Count(sender.delivered, Notice::FormatInitialized) == 1,
+          "format initialization is delivered exactly once");
+  }
+
   // A queue with room for only one notice keeps the other latched.
   {
     BondNoticeQueue queue;

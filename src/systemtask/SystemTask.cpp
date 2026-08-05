@@ -32,6 +32,7 @@ namespace {
       controller.PersistBondStore();
     }
   }
+
 }
 
 void MeasureBatteryTimerCallback(TimerHandle_t xTimer) {
@@ -177,13 +178,6 @@ void SystemTask::Work() {
   displayApp.Register(&nimbleController.music());
   displayApp.Register(&nimbleController.navigation());
   displayApp.Start(bootError);
-
-  // One upgrade boot forces the pre-family bond file to be cleared. Announce it
-  // once here: legacyResetThisBoot is a per-boot flag the coordinator only sets
-  // on the boot that performed the reset, so a normal boot never repeats it.
-  if (bleController.BondDiagnostics().legacyResetThisBoot) {
-    ShowBondNotice("Bluetooth", "Update cleared old\npairings. Re-pair\nyour phone.");
-  }
 
   heartRateSensor.Init();
   heartRateSensor.Disable();
@@ -507,6 +501,9 @@ void SystemTask::Work() {
           break;
         case Messages::BondForgetAllCompleted:
           ShowBondNotice("Bluetooth", "All paired phones\nforgotten");
+          break;
+        case Messages::BondFormatInitialized:
+          ShowBondNotice("Bluetooth", "2.0 pairing format\nready. Pair phones\nagain.");
           break;
         case Messages::BondPeerEvicted:
           ShowBondNotice("Bluetooth", "Oldest paired phone\nremoved (max 5)");

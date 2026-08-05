@@ -88,9 +88,9 @@ int main() {
   allFlags.evictionPolicy = 0;
   allFlags.flags = CompanionStatusFlag::LegacyResetThisBoot | CompanionStatusFlag::StoreInvalid |
                    CompanionStatusFlag::WritePendingOrInFlight | CompanionStatusFlag::CriticalDirty |
-                   CompanionStatusFlag::UsageDirty;
+                   CompanionStatusFlag::UsageDirty | CompanionStatusFlag::FormatInitializationPending;
   EncodeCompanionStatus(allFlags, payload);
-  Check(ReadU32(payload, 16) == 0x1Fu, "all five flag bits set");
+  Check(ReadU32(payload, 16) == 0x3Fu, "all six flag bits set");
   Check(payload[0] == 0 && payload[1] == 0 && payload[2] == 0 && payload[3] == 0, "flags do not bleed into header bytes");
 
   std::printf("%d checks, %d failures\n", checks, failures);

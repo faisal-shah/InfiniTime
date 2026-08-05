@@ -165,11 +165,6 @@ void NimbleController::Init() {
     NRF_LOG_WARNING("[BLE store] host restore handshake failed; advertising disabled");
     return;
   }
-  if (!bootBondPersistenceReady) {
-    PublishBondDiagnostics();
-    NRF_LOG_WARNING("[BLE store] initial reset commit failed; advertising disabled");
-    return;
-  }
 
   ble_svc_gap_init();
   ble_svc_gatt_init();
@@ -340,6 +335,18 @@ void NimbleController::CompleteBondStoreWrite() {
     QueueRadioReconciliation();
     bondNotices.LatchForgetAllComplete();
   }
+  if (formatInitializationPending && bondWriteCompletion.success &&
+      bondWriteCompletion.generation >= formatInitializationGeneration) {
+    formatInitializationPending = false;
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializedEmpty,
+                               BondStoreCodec::DecodeError::None,
+                               formatInitializationAnnounceReset);
+    if (formatInitializationAnnounceReset) {
+      bondNotices.LatchFormatInitialized();
+    }
+    formatInitializationAnnounceReset = false;
+    QueueRadioReconciliation();
+  }
   FlushBondNotices();
   PublishBondDiagnostics();
   QueueBondPersistenceEvent();
@@ -425,6 +432,8 @@ void NimbleController::FlushBondNotices() {
     switch (notice) {
       case BondNoticeQueue::Notice::ForgetAllComplete:
         return systemTask.TryPushMessage(Pinetime::System::Messages::BondForgetAllCompleted);
+      case BondNoticeQueue::Notice::FormatInitialized:
+        return systemTask.TryPushMessage(Pinetime::System::Messages::BondFormatInitialized);
       case BondNoticeQueue::Notice::Eviction:
         return systemTask.TryPushMessage(Pinetime::System::Messages::BondPeerEvicted);
     }
@@ -457,6 +466,9 @@ CompanionManagementStatus NimbleController::GetCompanionStatus() const {
   if (diagnostics.usageDirty) {
     flags |= CompanionStatusFlag::UsageDirty;
   }
+  if (formatInitializationPending) {
+    flags |= CompanionStatusFlag::FormatInitializationPending;
+  }
   status.flags = flags;
   return status;
 }
@@ -474,7 +486,9 @@ bool NimbleController::PrepareBondStoreRestore() {
   static constexpr const char* LegacyPath = "/bond.dat";
 
   bootBondSnapshotReady = false;
-  bootBondPersistenceReady = true;
+  formatInitializationPending = false;
+  formatInitializationAnnounceReset = false;
+  formatInitializationGeneration = 0;
   // True only when a valid pre-2.0 store without the final format marker was
   // intentionally discarded below. A fresh watch never sets this.
   bool preMarkerDiscarded = false;
@@ -516,19 +530,12 @@ bool NimbleController::PrepareBondStoreRestore() {
     if (decoded.formatInitialized) {
       bootBondSnapshotReady = true;
       bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Restored);
-      if (legacyExists) {
-        const int deleteResult = fs.FileDelete(LegacyPath);
-        if (deleteResult != LFS_ERR_OK && deleteResult != LFS_ERR_NOENT) {
-          NRF_LOG_WARNING("[BLE store] stale legacy file delete failed: %d", deleteResult);
-        }
-      }
       return true;
     }
     // A valid pre-2.0 store without the final format marker is intentionally
     // discarded and reset below. There is no compatibility import.
     preMarkerDiscarded = true;
   } else if (statResult != LFS_ERR_NOENT) {
-    bootBondPersistenceReady = false;
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
     return false;
   }
@@ -542,36 +549,14 @@ bool NimbleController::PrepareBondStoreRestore() {
   bondSnapshotScratch.generation = previousGeneration + 1;
 
   if (!bondPersistence.Capture(bondSnapshotScratch)) {
-    bootBondPersistenceReady = false;
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
     return false;
   }
-  bondPersistence.MarkWriteQueued();
-  const auto write = bondPersistence.CurrentWrite();
-  const TickType_t started = xTaskGetTickCount();
-  const bool committed = write && WriteBondStoreFile(write.data, write.size);
-  const uint32_t duration = static_cast<uint32_t>((xTaskGetTickCount() - started) * portTICK_PERIOD_MS);
-  bondPersistence.WriteCompleted(committed,
-                                 duration,
-                                 write ? static_cast<uint32_t>(write.size) : 0,
-                                 {false, false, bondSnapshotScratch.generation},
-                                 BondNowMs(),
-                                 false);
-  if (!committed) {
-    bootBondPersistenceReady = false;
-    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
-    return false;
-  }
-
-  if (legacyExists) {
-    const int deleteResult = fs.FileDelete(LegacyPath);
-    if (deleteResult != LFS_ERR_OK && deleteResult != LFS_ERR_NOENT) {
-      NRF_LOG_WARNING("[BLE store] legacy file delete failed after reset commit: %d", deleteResult);
-    }
-  }
-  bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializedEmpty,
-                             BondStoreCodec::DecodeError::None,
-                             BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded));
+  formatInitializationPending = true;
+  formatInitializationGeneration = bondSnapshotScratch.generation;
+  formatInitializationAnnounceReset =
+    BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded);
+  bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializingEmpty);
   bootBondSnapshotReady = true;
   return true;
 }
@@ -682,8 +667,10 @@ void NimbleController::ReconcileRadio() {
   // While a Forget All is in progress the effective desired mode is forced Off
   // so the wipe happens against a quiescent radio. The user's real intent stays
   // in requestedRadioMode and is resumed once the empty snapshot is committed.
-  const bool forgetActive = forgetAllState != ForgetAllState::Idle;
-  const auto desiredMode = forgetActive ? BleRadioStateMachine::DesiredMode::Off : requestedRadioMode.load();
+  const bool persistenceGateActive =
+    forgetAllState != ForgetAllState::Idle || formatInitializationPending;
+  const auto desiredMode =
+    persistenceGateActive ? BleRadioStateMachine::DesiredMode::Off : requestedRadioMode.load();
   const bool desiredModeChanged = desiredMode != radioState.Desired();
   radioState.SetDesiredMode(desiredMode);
   if (desiredModeChanged) {

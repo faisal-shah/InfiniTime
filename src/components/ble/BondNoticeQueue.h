@@ -3,9 +3,8 @@
 #include <cstdint>
 
 namespace Pinetime::Controllers {
-  // Coalescing, non-blocking latch for the two watch-originated bond notices
-  // (a least-recently-used eviction and a completed Forget All). It exists
-  // because both are raised on the NimBLE host task, which must never block on
+  // Coalescing, non-blocking latch for watch-originated bond notices. It exists
+  // because they are raised on the NimBLE host task, which must never block on
   // the SystemTask queue: a full queue would stall the BLE stack. Instead the
   // notice is latched and delivered best-effort, so it is never dropped and the
   // host task never busy-waits.
@@ -18,9 +17,14 @@ namespace Pinetime::Controllers {
   class BondNoticeQueue {
   public:
     enum class Notice : uint8_t {
+      FormatInitialized,
       ForgetAllComplete,
       Eviction,
     };
+
+    void LatchFormatInitialized() {
+      formatInitializedPending = true;
+    }
 
     void LatchEviction() {
       evictionPending = true;
@@ -31,7 +35,11 @@ namespace Pinetime::Controllers {
     }
 
     bool Pending() const {
-      return evictionPending || forgetAllCompletePending;
+      return formatInitializedPending || evictionPending || forgetAllCompletePending;
+    }
+
+    bool FormatInitializedPending() const {
+      return formatInitializedPending;
     }
 
     bool EvictionPending() const {
@@ -46,10 +54,14 @@ namespace Pinetime::Controllers {
     // when the message was accepted by the queue. A notice is cleared only on
     // acceptance, so a full queue leaves it latched for the next attempt.
     // Returns true when anything is still pending, so the caller can schedule a
-    // low-frequency retry. Forget-All completion is offered before the eviction
-    // notice so the more significant event wins a single free queue slot.
+    // low-frequency retry. Format initialization and Forget-All completion are
+    // offered before eviction so the more significant events win scarce queue
+    // slots.
     template <typename Deliver>
     bool Flush(Deliver&& deliver) {
+      if (formatInitializedPending && deliver(Notice::FormatInitialized)) {
+        formatInitializedPending = false;
+      }
       if (forgetAllCompletePending && deliver(Notice::ForgetAllComplete)) {
         forgetAllCompletePending = false;
       }
@@ -60,6 +72,7 @@ namespace Pinetime::Controllers {
     }
 
   private:
+    bool formatInitializedPending = false;
     bool evictionPending = false;
     bool forgetAllCompletePending = false;
   };

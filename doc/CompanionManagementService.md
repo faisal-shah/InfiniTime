@@ -49,6 +49,7 @@ value is unmistakable instead of aliasing to a small number.
 | 2 | write pending or in flight | a snapshot is queued for, or mid-, an atomic flash write |
 | 3 | critical dirty | keys/CCCDs or a delete/eviction are not yet on flash |
 | 4 | usage dirty | only least-recently-used ordering is dirty |
+| 5 | format initialization pending | local UI is available, but advertising stays off until the empty final-format store is durable |
 
 ## Encoder
 
@@ -91,10 +92,12 @@ getters.
 - **LRU eviction notice.** When a sixth pairing evicts the least-recently-used
   phone (eviction count increments), the watch shows a concise notice. It never
   names the removed phone, and a reboot restore never re-fires it.
-- **2.0 format reset notice.** The first 2.0.0 boot intentionally clears both
+- **2.0 format reset notice.** The first 2.0.1 boot intentionally ignores both
   the pre-family single-bond file and the v1.26.0 multi-bond file instead of
-  importing raw prior formats. It shows a single "re-pair your phone" notice;
-  a normal boot never repeats it.
-- **Sys Info.** The BLE diagnostics screen adds paired count, reset epoch,
-  eviction count, and persistence boot state alongside the existing radio
-  diagnostics.
+  importing raw prior formats. The empty RAM store is restored immediately and
+  the UI starts before the asynchronous atomic write. Advertising is released
+  only after durability, then the watch shows one re-pair notice; a normal boot
+  never repeats it.
+- **Sys Info.** Separate BLE Radio, Bond Store, Bond Writes, and Memory pages
+  keep paired count, reset epoch, eviction count, persistence state, failures,
+  and flash identity readable on the 240×240 display.
