@@ -32,3 +32,4 @@
 | Date | Tasks Since Last Checkpoint | Notes |
 |---|---:|---|
 | 2026-08-04 | 9 | Firmware implementation, validation, docs, and commit complete |
+| 2026-08-04 | 2 | Clean-clone generator/CMake blockers fixed; 2.0.0 cutover documented |

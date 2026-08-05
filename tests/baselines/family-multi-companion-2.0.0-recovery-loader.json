@@ -1,0 +1,23 @@
+{
+  "image": "pinetime-recovery-loader-2.0.0.out",
+  "label": "family-multi-companion-2.0.0-recovery-loader",
+  "ref": "8491c02af028b7ba024c2e9fd4d5694a41c1db2b",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 1104,
+    ".comment": 73,
+    ".data": 120,
+    ".debug_frame": 188,
+    ".heap": 0,
+    ".stack_dummy": 1024,
+    ".text": 220472
+  },
+  "summary": {
+    "bss": 1104,
+    "data": 120,
+    "text": 220480,
+    "total": 221704
+  }
+}

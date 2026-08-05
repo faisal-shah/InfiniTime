@@ -1,0 +1,26 @@
+{
+  "image": "pinetime-mcuboot-recovery-2.0.0.out",
+  "label": "family-multi-companion-2.0.0-recovery",
+  "ref": "8491c02af028b7ba024c2e9fd4d5694a41c1db2b",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 23784,
+    ".comment": 73,
+    ".data": 512,
+    ".debug_frame": 7308,
+    ".heap": 0,
+    ".noinit": 18,
+    ".stab": 204,
+    ".stabstr": 441,
+    ".stack_dummy": 1024,
+    ".text": 204168
+  },
+  "summary": {
+    "bss": 23802,
+    "data": 512,
+    "text": 204176,
+    "total": 228490
+  }
+}

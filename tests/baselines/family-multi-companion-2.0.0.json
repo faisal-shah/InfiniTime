@@ -1,0 +1,26 @@
+{
+  "image": "pinetime-app-2.0.0.out",
+  "label": "family-multi-companion-2.0.0",
+  "ref": "8491c02af028b7ba024c2e9fd4d5694a41c1db2b",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 28564,
+    ".comment": 73,
+    ".data": 944,
+    ".debug_frame": 7796,
+    ".heap": 0,
+    ".noinit": 18,
+    ".stab": 204,
+    ".stabstr": 441,
+    ".stack_dummy": 1024,
+    ".text": 415508
+  },
+  "summary": {
+    "bss": 28582,
+    "data": 944,
+    "text": 415516,
+    "total": 445042
+  }
+}
