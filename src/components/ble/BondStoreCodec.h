@@ -15,7 +15,7 @@ namespace Pinetime::Controllers {
     static constexpr size_t SecurityRecordSize = 68;
     static constexpr size_t CccdRecordSize = 12;
     static constexpr size_t RegistryRecordSize = 12;
-    static constexpr uint32_t MigrationCompleteFlag = 1u;
+    static constexpr uint32_t FormatInitializedFlag = 1u;
     static constexpr size_t MaxEncodedSize =
       HeaderSize + MetadataSize + (2 * CompanionProtocol::RetainedPeers * SecurityRecordSize) +
       (CompanionProtocol::MaxCccds * CccdRecordSize) + (CompanionProtocol::RetainedPeers * RegistryRecordSize);
@@ -41,7 +41,7 @@ namespace Pinetime::Controllers {
 
     struct DecodeResult {
       DecodeError error = DecodeError::None;
-      bool migrationComplete = false;
+      bool formatInitialized = false;
 
       explicit operator bool() const {
         return error == DecodeError::None;
@@ -51,7 +51,7 @@ namespace Pinetime::Controllers {
     static bool Encode(const NimbleBondStoreSnapshot& snapshot,
                        Buffer& output,
                        size_t& outputSize,
-                       bool migrationComplete = true);
+                       bool formatInitialized = true);
     // Clears and decodes directly into caller-owned storage. On failure output
     // may contain a partial snapshot and must not be consumed.
     static DecodeResult Decode(const uint8_t* data,

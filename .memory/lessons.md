@@ -9,6 +9,8 @@
   stacks.
 - CCCD-only mutations must dirty persistence even when security keys do not
   change.
+- A broad `tools` ignore rule hid required protocol and metrics generators from
+  clean clones.
 
 ## Patterns
 
@@ -23,7 +25,7 @@
 |---|---|---|
 | One active link remains | Matches PineTime controller limits and expected UX | 2026-08-04 |
 | A sixth peer evicts LRU | Deterministic capacity behavior | 2026-08-04 |
-| Legacy bonds reset once | Old persistence cannot be imported safely | 2026-08-04 |
+| Version 2.0.0 imports no old bond format | Raw prior formats are deliberately unsupported | 2026-08-04 |
 
 ## Checkpoint Log
 

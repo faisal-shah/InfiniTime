@@ -83,6 +83,7 @@
 
 ### Project management
 
+- [2.0.0 unreleased notes and upgrade cutover](UNRELEASED.md)
 - [Maintainer's guide](doc/maintainer-guide.md)
 - [Versioning](doc/versioning.md)
 - [Project branches](doc/branches.md)

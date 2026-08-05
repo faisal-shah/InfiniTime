@@ -6,8 +6,9 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 # Bump this for every release. It is what the watch reports over BLE and shows
 # in Sys Info, and the release tag must be "v${PROJECT_VERSION}" to match --
 # .github/workflows/release.yml fails the build if they disagree. The fork
-# tracks upstream 1.16.x, so its own releases run from 1.17.0.
-project(pinetime VERSION 1.26.0 LANGUAGES C CXX ASM)
+# tracks upstream 1.16.x. Version 2.0.0 is the deliberate family
+# multi-companion storage and connection-policy cutover.
+project(pinetime VERSION 2.0.0 LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)

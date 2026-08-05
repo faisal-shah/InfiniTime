@@ -121,7 +121,7 @@ int main() {
     NimbleBondStoreSnapshot decoded;
     const auto result = BondStoreCodec::Decode(first.data(), firstSize, decoded);
     Check(static_cast<bool>(result), "encoded snapshot decodes");
-    Check(result.migrationComplete, "migration marker round-trips");
+    Check(result.formatInitialized, "format-initialized marker round-trips");
     Check(decoded == source, "all explicit security, CCCD, registry, epoch, and generation fields round-trip");
 
     auto semanticCopy = source.ourSecs[0];

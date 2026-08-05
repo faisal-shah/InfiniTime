@@ -55,9 +55,11 @@ If **CTS** is detected, it'll request the current time to the companion applicat
 
 The firmware retains up to **5** bonded phones. Pairing a sixth evicts the
 least-recently-used bond and the watch shows a brief notice (no phone is ever
-named). Bonds survive reboots through an atomic on-flash store; the reset epoch
-counts full wipes. On the one upgrade boot that replaces a pre-family bond file,
-the watch shows a single "re-pair your phone" notice.
+named). Bonds survive reboots through an atomic on-flash store; the reset epoch counts
+full wipes. Version 2.0.0 deliberately does not import either earlier bond
+format, including the v1.26.0 multi-bond file. Its first boot clears pairings,
+creates the final store, and shows a single "re-pair your phone" notice.
+Schedules, tasks, alarms, settings, and resources are not erased.
 
 Settings → Bluetooth keeps the Enabled/Disabled radio control, shows `Paired
 devices n/5`, and offers **Forget all paired devices** behind a destructive

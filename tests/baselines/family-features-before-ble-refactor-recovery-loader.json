@@ -1,0 +1,23 @@
+{
+  "image": "pinetime-recovery-loader-1.26.0.out",
+  "label": "family-features-before-ble-refactor-recovery-loader",
+  "ref": "61688e875cca75571528eabc11f13c3d687a729c",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 1104,
+    ".comment": 73,
+    ".data": 120,
+    ".debug_frame": 188,
+    ".heap": 0,
+    ".stack_dummy": 1024,
+    ".text": 206716
+  },
+  "summary": {
+    "bss": 1104,
+    "data": 120,
+    "text": 206724,
+    "total": 207948
+  }
+}
