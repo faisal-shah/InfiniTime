@@ -1,0 +1,26 @@
+{
+  "image": "pinetime-mcuboot-recovery-1.26.0.out",
+  "label": "family-features-before-ble-refactor-recovery",
+  "ref": "61688e875cca75571528eabc11f13c3d687a729c",
+  "schemaVersion": 1,
+  "sections": {
+    ".ARM.attributes": 48,
+    ".ARM.exidx": 8,
+    ".bss": 19672,
+    ".comment": 73,
+    ".data": 512,
+    ".debug_frame": 7308,
+    ".heap": 0,
+    ".noinit": 18,
+    ".stab": 204,
+    ".stabstr": 441,
+    ".stack_dummy": 1024,
+    ".text": 190412
+  },
+  "summary": {
+    "bss": 19690,
+    "data": 512,
+    "text": 190420,
+    "total": 210622
+  }
+}
