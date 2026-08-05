@@ -27,7 +27,7 @@ void BondPersistenceCoordinator::Schedule(uint32_t deadline) {
 
 void BondPersistenceCoordinator::UpdateDirty(BondStorePolicy::DirtyState dirty) {
   diagnostics.storeGeneration = dirty.generation;
-  diagnostics.criticalDirty = dirty.critical;
+  diagnostics.criticalDirty = dirty.critical || retryRequired;
   diagnostics.usageDirty = dirty.usage;
 }
 
@@ -147,8 +147,10 @@ void BondPersistenceCoordinator::WriteCompleted(bool success,
     diagnostics.flashWriteCount++;
     diagnostics.flashBytes += bytes;
     failureRetryDelayMs = FailureRetryBaseMs;
+    retryRequired = false;
   } else {
     diagnostics.writeFailures++;
+    retryRequired = true;
   }
 
   UpdateDirty(dirtyAfterCompletion);

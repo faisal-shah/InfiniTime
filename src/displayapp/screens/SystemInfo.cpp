@@ -29,6 +29,29 @@ namespace {
     }
     return "???";
   }
+
+  const char* ToString(const Pinetime::Controllers::BondPersistenceCoordinator::BootState state) {
+    using BootState = Pinetime::Controllers::BondPersistenceCoordinator::BootState;
+    switch (state) {
+      case BootState::Unknown:
+        return "unknown";
+      case BootState::Restored:
+        return "restored";
+      case BootState::InitializingEmpty:
+        return "initializing";
+      case BootState::InitializedEmpty:
+        return "empty ready";
+      case BootState::Missing:
+        return "missing";
+      case BootState::Invalid:
+        return "invalid";
+      case BootState::RestoreFailed:
+        return "read failed";
+      case BootState::HandshakeFailed:
+        return "host failed";
+    }
+    return "?";
+  }
 }
 
 SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
@@ -64,6 +87,15 @@ SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
               },
               [this]() -> std::unique_ptr<Screen> {
                 return CreateScreen5();
+              },
+              [this]() -> std::unique_ptr<Screen> {
+                return CreateScreen6();
+              },
+              [this]() -> std::unique_ptr<Screen> {
+                return CreateScreen7();
+              },
+              [this]() -> std::unique_ptr<Screen> {
+                return CreateScreen8();
               }},
              Screens::ScreenListModes::UpDown} {
 }
@@ -96,7 +128,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen1() {
                         BootloaderVersion::VersionString());
   lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(0, 5, label);
+  return std::make_unique<Screens::Label>(0, ScreenCount, label);
 }
 
 std::unique_ptr<Screen> SystemInfo::CreateScreen2() {
@@ -175,34 +207,25 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen2() {
                         touchPanel.GetFwVersion(),
                         TARGET_DEVICE_NAME);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(1, 5, label);
+  return std::make_unique<Screens::Label>(1, ScreenCount, label);
 }
 
 extern int mallocFailedCount;
 extern int stackOverflowCount;
 std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
-  lv_mem_monitor_t mon;
-  lv_mem_monitor(&mon);
-
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
   const auto& bleAddr = bleController.Address();
-  const auto& bond = bleController.BondDiagnostics();
-  const auto& companion = bleController.CompanionStatus();
   auto spiFlashId = spiNorFlash.GetIdentification();
   lv_label_set_text_fmt(label,
-                        "#808080 BLE MAC#\n"
-                        " %02x:%02x:%02x:%02x:%02x:%02x\n"
-                        "#808080 SPI Flash# %02x-%02x-%02x\n"
-                        "#808080 BLE radio# %s/%s\n"
+                        "#FFFF00 BLE Radio#\n\n"
+                        "#808080 MAC#\n"
+                        "%02x:%02x:%02x:%02x:%02x:%02x\n"
+                        "#808080 SPI flash# %02x-%02x-%02x\n"
+                        "#808080 Mode# %s/%s\n"
                         "#808080 GAP S/P/T# %d/%d/%d\n"
-                        "#808080 Retry/recov# %d/%d\n"
-                        "#808080 Bond G/D/P/I# %lu/%d%d/%d/%d\n"
-                        "#808080 Bond W/F/ms# %lu/%lu/%lu\n"
-                        "#808080 Paired# %d/%d Ep%lu Ev%lu\n"
-                        "#808080 Bond boot# %d inv%lu\n"
-                        "#808080 Heap free# %d/%d min %d\n"
-                        "#808080 Alloc/Ovf err# %d/%d",
+                        "#808080 Retry# %d\n"
+                        "#808080 Recoveries# %d",
                         bleAddr[5],
                         bleAddr[4],
                         bleAddr[3],
@@ -218,35 +241,104 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
                         bleController.RadioLastStopResult(),
                         bleController.RadioLastTerminateResult(),
                         bleController.RadioRetryCount(),
-                        bleController.AdvertisingRecoveries(),
+                        bleController.AdvertisingRecoveries());
+  lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
+  return std::make_unique<Screens::Label>(2, ScreenCount, label);
+}
+
+std::unique_ptr<Screen> SystemInfo::CreateScreen4() {
+  const auto& bond = bleController.BondDiagnostics();
+  const auto& companion = bleController.CompanionStatus();
+
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_recolor(label, true);
+  lv_label_set_text_fmt(label,
+                        "#FFFF00 Bond Store#\n"
+                        "#808080 Paired# %d/%d\n"
+                        "#808080 Epoch# %lu\n"
+                        "#808080 Evictions# %lu\n"
+                        "#808080 Generation# %lu\n"
+                        "#808080 Dirty C/U# %d/%d\n"
+                        "#808080 Pending/Flight# %d/%d\n"
+                        "#808080 Boot state# %s\n"
+                        "#808080 Format wait# %d",
+                        companion.bondedCount,
+                        companion.retainedCapacity,
+                        static_cast<unsigned long>(companion.resetEpoch),
+                        static_cast<unsigned long>(companion.evictionCount),
                         static_cast<unsigned long>(bond.storeGeneration),
                         bond.criticalDirty,
                         bond.usageDirty,
                         bond.pending,
                         bond.inFlight,
+                        ToString(bond.bootState),
+                        (companion.flags & Pinetime::Controllers::CompanionStatusFlag::FormatInitializationPending) != 0);
+  lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
+  return std::make_unique<Screens::Label>(3, ScreenCount, label);
+}
+
+std::unique_ptr<Screen> SystemInfo::CreateScreen5() {
+  const auto& bond = bleController.BondDiagnostics();
+  const auto& companion = bleController.CompanionStatus();
+
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_recolor(label, true);
+  lv_label_set_text_fmt(label,
+                        "#FFFF00 Bond Writes#\n\n"
+                        "#808080 Success/Fail# %lu/%lu\n"
+                        "#808080 Last time# %lums\n"
+                        "#808080 Flash writes# %lu\n"
+                        "#808080 Flash bytes# %lu\n"
+                        "#808080 Decode/CRC# %lu/%lu\n"
+                        "#808080 Queue/Unstable# %lu/%lu\n"
+                        "#808080 CCCD reject# %lu\n"
+                        "#808080 Invariant# %lu",
                         static_cast<unsigned long>(bond.writeSuccesses),
                         static_cast<unsigned long>(bond.writeFailures),
                         static_cast<unsigned long>(bond.lastWriteDurationMs),
-                        companion.bondedCount,
-                        companion.retainedCapacity,
-                        static_cast<unsigned long>(companion.resetEpoch),
-                        static_cast<unsigned long>(companion.evictionCount),
-                        static_cast<int>(bond.bootState),
-                        static_cast<unsigned long>(companion.invariantViolations),
+                        static_cast<unsigned long>(bond.flashWriteCount),
+                        static_cast<unsigned long>(bond.flashBytes),
+                        static_cast<unsigned long>(bond.decodeFailures),
+                        static_cast<unsigned long>(bond.crcFailures),
+                        static_cast<unsigned long>(bond.queueRetries),
+                        static_cast<unsigned long>(bond.unstableCaptureRetries),
+                        static_cast<unsigned long>(companion.cccdOverflowRejections),
+                        static_cast<unsigned long>(companion.invariantViolations));
+  lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
+  return std::make_unique<Screens::Label>(4, ScreenCount, label);
+}
+
+std::unique_ptr<Screen> SystemInfo::CreateScreen6() {
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_recolor(label, true);
+  lv_label_set_text_fmt(label,
+                        "#FFFF00 Memory#\n\n"
+                        "#808080 Heap free# %d\n"
+                        "#808080 Heap total# %d\n"
+                        "#808080 Heap minimum# %d\n"
+                        "#808080 LVGL free# %lu\n"
+                        "#808080 LVGL largest# %lu\n"
+                        "#808080 Malloc failures# %d\n"
+                        "#808080 Stack overflows# %d",
                         xPortGetFreeHeapSize(),
                         xPortGetHeapSize(),
                         xPortGetMinimumEverFreeHeapSize(),
+                        static_cast<unsigned long>(mon.free_size),
+                        static_cast<unsigned long>(mon.free_biggest_size),
                         mallocFailedCount,
                         stackOverflowCount);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(2, 5, label);
+  return std::make_unique<Screens::Label>(5, ScreenCount, label);
 }
 
 bool SystemInfo::sortById(const TaskStatus_t& lhs, const TaskStatus_t& rhs) {
   return lhs.xTaskNumber < rhs.xTaskNumber;
 }
 
-std::unique_ptr<Screen> SystemInfo::CreateScreen4() {
+std::unique_ptr<Screen> SystemInfo::CreateScreen7() {
   static constexpr uint8_t maxTaskCount = 9;
   TaskStatus_t tasksStatus[maxTaskCount];
 
@@ -305,10 +397,10 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen4() {
     }
     lv_table_set_cell_value(infoTask, i + 1, 3, buffer);
   }
-  return std::make_unique<Screens::Label>(3, 5, infoTask);
+  return std::make_unique<Screens::Label>(6, ScreenCount, infoTask);
 }
 
-std::unique_ptr<Screen> SystemInfo::CreateScreen5() {
+std::unique_ptr<Screen> SystemInfo::CreateScreen8() {
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
   lv_label_set_text_static(label,
@@ -322,5 +414,5 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen5() {
                            "#FFFF00 InfiniTime#");
   lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(4, 5, label);
+  return std::make_unique<Screens::Label>(7, ScreenCount, label);
 }

@@ -5,10 +5,9 @@
 
 ## Resume Here
 
-- Next task: P4-T1
-- Next action: run the physical gates from
-  `../pinetime-dev-tools/RELEASE.md` against the exact four implementation
-  commits.
+- Next task: INCIDENT-T1
+- Next action: attach SWD non-destructively, verify target voltage/DPIDR, dump
+  internal flash, and try reset/halt before programming anything.
 - Last checkpoint: 2026-08-04 23:44 UTC
 
 ## Phase 1 - Firmware policy
@@ -41,7 +40,13 @@
 - [ ] P4-T4 run the controlled upstream/candidate battery soak
 - [ ] GATE-P4 - attach hardware evidence to the exact release SHAs
 
+## Live incident
+
+- [x] INCIDENT-T1 establish that the second swap completed and 2.0.0 booted
+- [ ] INCIDENT-T2 diagnose the later dark/no-BLE state with SWD
+- [x] INCIDENT-T3 prevent navigation away from an active companion DFU (2026-08-05)
+- [ ] GATE-INCIDENT - diagnose the external flash before another OTA
+
 ## Blocked
 
-- Physical tasks require the deployed watches, independent phones/centrals,
-  ADB, and a Linux BlueZ adapter.
+- The affected watch is sealed and no SWD probe is currently available.

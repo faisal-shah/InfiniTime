@@ -233,9 +233,16 @@ namespace Pinetime {
       struct ble_npl_sem bondRestoreSemaphore {};
       bool bootBondSnapshotReady = false;
       bool bootBondRestoreSucceeded = false;
-      bool bootBondPersistenceReady = true;
       bool bondPersistenceWritesEnabled = true;
       bool bondPersistenceEventsInitialized = false;
+
+      // A first 2.x boot restores an empty RAM store immediately, then queues
+      // the final-format file through the normal asynchronous writer. Radio
+      // reconciliation forces Off until this exact generation is durable, so a
+      // phone cannot pair into a baseline that has not reached flash.
+      bool formatInitializationPending = false;
+      bool formatInitializationAnnounceReset = false;
+      uint64_t formatInitializationGeneration = 0;
 
       // Forget All bookkeeping. The wipe is driven through the radio state
       // machine: the request forces the radio to Off, and only once the link is

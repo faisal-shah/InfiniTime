@@ -1,4 +1,4 @@
-# InfiniTime 2.0.0
+# InfiniTime 2.0.1
 
 This is a deliberate major-version cutover for the family multi-companion BLE
 architecture.
@@ -9,12 +9,16 @@ Version 2.0.0 does **not** import previous bond files. This includes both the
 single-bond format used before v1.26.0 and the multi-bond format shipped in
 v1.26.0.
 
-On the first 2.0.0 boot, the watch:
+On the first 2.0.1 boot, the watch:
 
-1. writes an empty final-format bond store;
-2. deletes `/bond.dat`;
-3. increments the reset epoch;
-4. shows a one-time notice asking users to pair again.
+1. restores an empty final-format bond store in RAM;
+2. starts the display and the rest of the local watch UI;
+3. commits that empty store through the asynchronous atomic writer;
+4. keeps BLE advertising off until the commit succeeds;
+5. increments the reset epoch and shows a one-time re-pair notice.
+
+The unsupported `/bond.dat` file is ignored rather than imported. It may remain
+on flash; only `/.system/ble-store.dat` is authoritative.
 
 Every phone or computer must pair once after the upgrade. Schedules, tasks,
 alarms, settings, and external resources are not cleared.
@@ -33,6 +37,14 @@ Install PineTimeCompanion v0.30.0 or newer before updating the watch.
   advertising re-arms.
 - Adds public capacity/status and authenticated pairing verification.
 - Adds paired count, confirmed Forget All, and BLE persistence diagnostics.
+
+## Hardening after the 2.0.0 prerelease
+
+- The first final-format write no longer blocks boot before the display starts.
+  If persistence fails, the watch remains locally usable and Sys Info shows the
+  initializing/write-failure state while BLE remains safely unavailable.
+- Sys Info splits radio, bond state, bond writes, and memory across separate
+  pages so every diagnostic line fits the display.
 
 ## Release gate
 

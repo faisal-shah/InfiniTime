@@ -146,6 +146,22 @@ int main() {
           "change arriving during write is captured immediately after acknowledgement");
   }
 
+  // First-format initialization captures an explicit empty snapshot before
+  // the adapter has any dirty records. It must queue immediately and retry a
+  // failed write even though the restored RAM store itself is clean.
+  {
+    BondPersistenceCoordinator coordinator;
+    Check(coordinator.Capture(Empty(20)), "boot format initialization captures an empty snapshot");
+    Check(coordinator.Poll(0) == Action::QueueWrite, "captured boot format queues without a dirty debounce");
+    coordinator.MarkWriteQueued();
+    coordinator.WriteCompleted(false, 7, 84, {false, false, 20}, 100, false);
+    coordinator.ObserveDirty({false, false, 20}, 101, false);
+    Check(coordinator.Poll(100 + BondPersistenceCoordinator::FailureRetryBaseMs - 1) == Action::None,
+          "clean RAM observation preserves the failed boot-format retry");
+    Check(coordinator.Poll(100 + BondPersistenceCoordinator::FailureRetryBaseMs) == Action::Capture,
+          "failed boot format write retries despite a clean RAM baseline");
+  }
+
   {
     BondPersistenceCoordinator coordinator;
     coordinator.RecordBoot(BondPersistenceCoordinator::BootState::Invalid,

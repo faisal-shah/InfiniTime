@@ -13,6 +13,13 @@
   clean clones.
 - Standalone host CI needs recursive submodules because `AtomicFileReplace`
   includes littlefs headers.
+- Leaving the companion update screen does not cancel its async DFU. A second
+  DFU before on-watch validation erases the secondary slot that held rollback.
+- A long button hold is only a watchdog reset while the application and
+  SystemTask are running; it cannot reset a bootloader/HAL hang before the
+  watchdog starts.
+- Mandatory first-format persistence belongs after the display starts, with BLE
+  gated until durability, so a flash failure remains diagnosable.
 
 ## Patterns
 
@@ -35,3 +42,4 @@
 |---|---:|---|
 | 2026-08-04 | 9 | Firmware implementation, validation, docs, and commit complete |
 | 2026-08-04 | 2 | Clean-clone generator/CMake blockers fixed; 2.0.0 cutover documented |
+| 2026-08-05 | 4 | Deferred first-format write, DFU navigation gate, 40% preflight, readable Sys Info |

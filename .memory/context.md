@@ -2,8 +2,13 @@
 
 ## Overview
 
-This 2.0.0 `family-features` firmware supports family-owned PineTime watches
+This 2.0.1 `family-features` firmware supports family-owned PineTime watches
 that are configured by several phones or computers.
+
+One physical watch completed the second swap, booted 2.0.0, and was manually
+validated after two consecutive DFU attempts. It then became dark,
+button-unresponsive, and absent from BLE despite several hours on a cradle
+verified with another watch. Treat this as a live power/MCU/SPI incident.
 
 ## Architecture
 
@@ -31,8 +36,12 @@ C++20 host tests, embedded C++/FreeRTOS/NimBLE, CMake, GCC Arm
 - Forget All keeps the radio off until the empty store is durable.
 - The 1,456-byte snapshot scratch is persistent storage, never a task local.
 - RF intervals match the recorded upstream baseline.
-- Version 2.0.0 imports no prior bond format; every phone pairs once after the
+- Version 2.0.1 imports no prior bond format; every phone pairs once after the
   cutover.
+- Version 2.0.1 starts the UI before final-format persistence and gates
+  advertising until that background write succeeds.
+- Do not offer 2.0.0 to another watch until this incident and Phase 4 are
+  resolved.
 
 ## Key Decisions
 

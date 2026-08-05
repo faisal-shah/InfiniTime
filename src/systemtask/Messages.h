@@ -45,6 +45,9 @@ namespace Pinetime {
       BondForgetAllRequested,
       // The host wipe reached flash: surface the durable-success notice.
       BondForgetAllCompleted,
+      // The first empty final-format store reached flash. Old keys were never
+      // admitted; the watch may now advertise and ask the user to pair again.
+      BondFormatInitialized,
       // A sixth pairing evicted the least-recently-used companion.
       BondPeerEvicted
     };

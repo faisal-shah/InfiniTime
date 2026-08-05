@@ -30,6 +30,7 @@ namespace Pinetime::Controllers {
     enum class BootState : uint8_t {
       Unknown,
       Restored,
+      InitializingEmpty,
       InitializedEmpty,
       Missing,
       Invalid,
@@ -123,6 +124,7 @@ namespace Pinetime::Controllers {
     bool deadlineSet = false;
     bool pending = false;
     bool inFlight = false;
+    bool retryRequired = false;
     Diagnostics diagnostics {};
   };
 }

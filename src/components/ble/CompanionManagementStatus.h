@@ -28,7 +28,7 @@ namespace Pinetime::Controllers {
   };
 
   namespace CompanionStatusFlag {
-    // The upgrade boot cleared a pre-family bond file rather than importing it.
+    // The upgrade boot ignored a prior bond format rather than importing it.
     inline constexpr uint32_t LegacyResetThisBoot = 1u << 0;
     // Persistence is latched fail-closed: an invalid on-flash store was kept as
     // evidence and no bond write will be attempted until a Forget All recovers.
@@ -39,6 +39,9 @@ namespace Pinetime::Controllers {
     inline constexpr uint32_t CriticalDirty = 1u << 3;
     // Only least-recently-used ordering is dirty (no key change outstanding).
     inline constexpr uint32_t UsageDirty = 1u << 4;
+    // The watch is usable locally, but advertising stays off until the empty
+    // final-format store reaches flash.
+    inline constexpr uint32_t FormatInitializationPending = 1u << 5;
   }
 
   // Read seam the GATT service depends on instead of the whole controller, so
