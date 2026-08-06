@@ -55,6 +55,10 @@ add_infinitime_host_test(
   "${INFINITIME_ROOT}/src/components/ble/BleRadioStateMachine.cpp"
 )
 add_infinitime_host_test(
+  bond_boot_persistence_gate_test
+  "${CMAKE_CURRENT_LIST_DIR}/BondBootPersistenceGateTest.cpp"
+)
+add_infinitime_host_test(
   ble_advertising_power_proxy_test
   "${CMAKE_CURRENT_LIST_DIR}/BleAdvertisingPowerProxyTest.cpp"
   "${INFINITIME_ROOT}/src/components/ble/BleRadioStateMachine.cpp"

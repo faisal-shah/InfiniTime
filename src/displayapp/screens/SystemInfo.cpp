@@ -35,6 +35,8 @@ namespace {
     switch (state) {
       case BootState::Unknown:
         return "unknown";
+      case BootState::Restoring:
+        return "restoring";
       case BootState::Restored:
         return "restored";
       case BootState::InitializingEmpty:
@@ -48,7 +50,7 @@ namespace {
       case BootState::RestoreFailed:
         return "read failed";
       case BootState::HandshakeFailed:
-        return "host failed";
+        return "legacy fail";
     }
     return "?";
   }

@@ -153,17 +153,11 @@ void NimbleController::Init() {
   ble_npl_event_init(&bondWriteCompleteEvent, BondWriteCompleteHandler, this);
   ble_npl_event_init(&bondRestoreEvent, BondRestoreHandler, this);
   ble_npl_event_init(&forgetAllEvent, ForgetAllHandler, this);
-  ASSERT(ble_npl_sem_init(&bondRestoreSemaphore, 0) == BLE_NPL_OK);
   bondPersistenceEventsInitialized = true;
 
-  PrepareBondStoreRestore();
-  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondRestoreEvent);
-  if (ble_npl_sem_pend(&bondRestoreSemaphore, ble_npl_time_ms_to_ticks32(2000)) != BLE_NPL_OK ||
-      !bootBondRestoreSucceeded) {
-    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::HandshakeFailed);
-    PublishBondDiagnostics();
-    NRF_LOG_WARNING("[BLE store] host restore handshake failed; advertising disabled");
-    return;
+  bootPersistenceGate.BeginRestore();
+  if (!PrepareBondStoreRestore()) {
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
   }
 
   ble_svc_gap_init();
@@ -202,6 +196,7 @@ void NimbleController::Init() {
   ble_npl_callout_init(&radioRetryCallout, nimble_port_get_dflt_eventq(), RadioRetryTimeoutHandler, this);
   ble_npl_callout_init(&radioHealthCallout, nimble_port_get_dflt_eventq(), RadioHealthCheckHandler, this);
   radioEventsInitialized = true;
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondRestoreEvent);
   OnHostSync();
 }
 
@@ -335,21 +330,27 @@ void NimbleController::CompleteBondStoreWrite() {
     QueueRadioReconciliation();
     bondNotices.LatchForgetAllComplete();
   }
-  if (formatInitializationPending && bondWriteCompletion.success &&
-      bondWriteCompletion.generation >= formatInitializationGeneration) {
-    formatInitializationPending = false;
+  if (bootPersistenceGate.CompleteFormatWrite(bondWriteCompletion.success,
+                                              bondWriteCompletion.generation)) {
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializedEmpty,
                                BondStoreCodec::DecodeError::None,
-                               formatInitializationAnnounceReset);
-    if (formatInitializationAnnounceReset) {
-      bondNotices.LatchFormatInitialized();
-    }
-    formatInitializationAnnounceReset = false;
-    QueueRadioReconciliation();
+                               bootPersistenceGate.FormatNoticePending());
+    MaybeReleaseBootPersistenceGate();
   }
   FlushBondNotices();
   PublishBondDiagnostics();
   QueueBondPersistenceEvent();
+}
+
+void NimbleController::MaybeReleaseBootPersistenceGate() {
+  if (bootPersistenceGate.BlocksRadio()) {
+    return;
+  }
+  if (bootPersistenceGate.TakeFormatInitializedNotice()) {
+    bondNotices.LatchFormatInitialized();
+  }
+  FlushBondNotices();
+  QueueRadioReconciliation();
 }
 
 void NimbleController::RequestForgetAllBonds() {
@@ -466,7 +467,7 @@ CompanionManagementStatus NimbleController::GetCompanionStatus() const {
   if (diagnostics.usageDirty) {
     flags |= CompanionStatusFlag::UsageDirty;
   }
-  if (formatInitializationPending) {
+  if (bootPersistenceGate.FormatPending()) {
     flags |= CompanionStatusFlag::FormatInitializationPending;
   }
   status.flags = flags;
@@ -486,9 +487,6 @@ bool NimbleController::PrepareBondStoreRestore() {
   static constexpr const char* LegacyPath = "/bond.dat";
 
   bootBondSnapshotReady = false;
-  formatInitializationPending = false;
-  formatInitializationAnnounceReset = false;
-  formatInitializationGeneration = 0;
   // True only when a valid pre-2.0 store without the final format marker was
   // intentionally discarded below. A fresh watch never sets this.
   bool preMarkerDiscarded = false;
@@ -529,7 +527,7 @@ bool NimbleController::PrepareBondStoreRestore() {
     }
     if (decoded.formatInitialized) {
       bootBondSnapshotReady = true;
-      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Restored);
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Restoring);
       return true;
     }
     // A valid pre-2.0 store without the final format marker is intentionally
@@ -552,10 +550,9 @@ bool NimbleController::PrepareBondStoreRestore() {
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
     return false;
   }
-  formatInitializationPending = true;
-  formatInitializationGeneration = bondSnapshotScratch.generation;
-  formatInitializationAnnounceReset =
-    BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded);
+  bootPersistenceGate.BeginFormatInitialization(
+    bondSnapshotScratch.generation,
+    BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded));
   bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializingEmpty);
   bootBondSnapshotReady = true;
   return true;
@@ -563,10 +560,17 @@ bool NimbleController::PrepareBondStoreRestore() {
 
 void NimbleController::RestoreBondStoreOnHost() {
   bondStore.Init(BondStoreDirtyCallback, this);
-  bootBondRestoreSucceeded =
+  const bool restored =
     bootBondSnapshotReady && bondStore.RestoreSnapshot(bondSnapshotScratch);
-  if (!bootBondRestoreSucceeded) {
+  if (!restored) {
+    bootPersistenceGate.CompleteRestore(false);
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
+    NRF_LOG_WARNING("[BLE store] host restore failed; advertising remains disabled");
+  } else {
+    bootPersistenceGate.CompleteRestore(true);
+    if (bondPersistence.GetDiagnostics().bootState == BondPersistenceCoordinator::BootState::Restoring) {
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Restored);
+    }
   }
   // Seed the eviction-notice baseline with the restored counter so a wipe or a
   // reboot never re-fires the on-watch LRU notice; only a live eviction past
@@ -574,7 +578,8 @@ void NimbleController::RestoreBondStoreOnHost() {
   evictionNoticeBaseline = bondStore.EvictionCount();
   bondPersistence.ObserveDirty(bondStore.Dirty(), BondNowMs(), false);
   PublishBondDiagnostics();
-  ble_npl_sem_release(&bondRestoreSemaphore);
+  MaybeReleaseBootPersistenceGate();
+  QueueBondPersistenceEvent();
 }
 
 void NimbleController::OnHostReset() {
@@ -668,7 +673,8 @@ void NimbleController::ReconcileRadio() {
   // so the wipe happens against a quiescent radio. The user's real intent stays
   // in requestedRadioMode and is resumed once the empty snapshot is committed.
   const bool persistenceGateActive =
-    forgetAllState != ForgetAllState::Idle || formatInitializationPending;
+    forgetAllState != ForgetAllState::Idle ||
+    bootPersistenceGate.BlocksRadio();
   const auto desiredMode =
     persistenceGateActive ? BleRadioStateMachine::DesiredMode::Off : requestedRadioMode.load();
   const bool desiredModeChanged = desiredMode != radioState.Desired();

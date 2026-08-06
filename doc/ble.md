@@ -56,7 +56,7 @@ If **CTS** is detected, it'll request the current time to the companion applicat
 The firmware retains up to **5** bonded phones. Pairing a sixth evicts the
 least-recently-used bond and the watch shows a brief notice (no phone is ever
 named). Bonds survive reboots through an atomic on-flash store; the reset epoch counts
-full wipes. Version 2.0.1 deliberately does not import either earlier bond
+full wipes. Version 2.0.2 deliberately does not import either earlier bond
 format, including the v1.26.0 multi-bond file. Its first boot clears pairings,
 restores an empty RAM store, starts the UI, and commits the final store in the
 background. Advertising remains off until that commit succeeds. A failure is

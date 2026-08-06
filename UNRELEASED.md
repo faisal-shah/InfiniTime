@@ -1,4 +1,4 @@
-# InfiniTime 2.0.1
+# InfiniTime 2.0.2
 
 This is a deliberate major-version cutover for the family multi-companion BLE
 architecture.
@@ -9,7 +9,7 @@ Version 2.0.0 does **not** import previous bond files. This includes both the
 single-bond format used before v1.26.0 and the multi-bond format shipped in
 v1.26.0.
 
-On the first 2.0.1 boot, the watch:
+On the first 2.0.2 boot, the watch:
 
 1. restores an empty final-format bond store in RAM;
 2. starts the display and the rest of the local watch UI;
@@ -45,6 +45,10 @@ Install PineTimeCompanion v0.30.0 or newer before updating the watch.
   initializing/write-failure state while BLE remains safely unavailable.
 - Sys Info splits radio, bond state, bond writes, and memory across separate
   pages so every diagnostic line fits the display.
+- BLE host restore no longer has a 2-second abort deadline. Services and the
+  local UI initialize while a persistent gate keeps advertising off; the host
+  restore event releases BLE whenever it actually completes. A restore failure
+  remains visible instead of permanently aborting BLE initialization.
 
 ## Release gate
 

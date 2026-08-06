@@ -92,7 +92,7 @@ getters.
 - **LRU eviction notice.** When a sixth pairing evicts the least-recently-used
   phone (eviction count increments), the watch shows a concise notice. It never
   names the removed phone, and a reboot restore never re-fires it.
-- **2.0 format reset notice.** The first 2.0.1 boot intentionally ignores both
+- **2.0 format reset notice.** The first 2.0.2 boot intentionally ignores both
   the pre-family single-bond file and the v1.26.0 multi-bond file instead of
   importing raw prior formats. The empty RAM store is restored immediately and
   the UI starts before the asynchronous atomic write. Advertising is released
