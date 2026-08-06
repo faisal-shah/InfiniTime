@@ -20,6 +20,8 @@
   watchdog starts.
 - Mandatory first-format persistence belongs after the display starts, with BLE
   gated until durability, so a flash failure remains diagnosable.
+- A fixed timeout on a cross-task restore handoff can permanently abort BLE even
+  when the host event completes later. Gate radio on completion instead.
 
 ## Patterns
 

@@ -29,6 +29,7 @@ namespace Pinetime::Controllers {
 
     enum class BootState : uint8_t {
       Unknown,
+      Restoring,
       Restored,
       InitializingEmpty,
       InitializedEmpty,

@@ -5,10 +5,11 @@
 
 ## Resume Here
 
-- Next task: INCIDENT-T1
-- Next action: attach SWD non-destructively, verify target voltage/DPIDR, dump
-  internal flash, and try reset/halt before programming anything.
-- Last checkpoint: 2026-08-04 23:44 UTC
+- Next task: GATE-INCIDENT
+- Next action: commit and release the validated 2.0.2 prerelease, then confirm
+  nonzero MAC, restored/empty-ready boot state, connectable mode, and GAP starts
+  on the affected watch.
+- Last checkpoint: 2026-08-06 02:18 UTC
 
 ## Phase 1 - Firmware policy
 
@@ -27,8 +28,8 @@
 ## Phase 3 - Integration
 
 - [x] P3-T1 add CI, power proxy, diagnostics, and docs (2026-08-04)
-- [x] P3-T2 build all six ARM targets (2026-08-04)
-- [x] P3-T3 pass 19 host tests and cross-repository scenarios (2026-08-04)
+- [x] P3-T2 build all six ARM targets (2026-08-05)
+- [x] P3-T3 pass 20 host tests and all eight cross-repository scenarios (2026-08-05)
 - [x] P3-T4 track generation tools, support modern CMake, and cut version 2.0.0 (2026-08-04)
 - [x] GATE-P3 - clean-worktree generator, host, CMake 3.28, and scenario validation pass (2026-08-04)
 
@@ -45,7 +46,9 @@
 - [x] INCIDENT-T1 establish that the second swap completed and 2.0.0 booted
 - [ ] INCIDENT-T2 diagnose the later dark/no-BLE state with SWD
 - [x] INCIDENT-T3 prevent navigation away from an active companion DFU (2026-08-05)
-- [ ] GATE-INCIDENT - diagnose the external flash before another OTA
+- [x] INCIDENT-T4 remove the timed host-restore abort and validate delayed event completion (2026-08-05)
+- [ ] GATE-INCIDENT - verify 2.0.2 BLE startup on hardware; retain the unresolved
+  dark-watch/SPI incident as a separate physical risk
 
 ## Blocked
 

@@ -13,6 +13,7 @@
 #include "components/ble/AlertNotificationService.h"
 #include "components/ble/BatteryInformationService.h"
 #include "components/ble/BleRadioStateMachine.h"
+#include "components/ble/BondBootPersistenceGate.h"
 #include "components/ble/BondNoticeQueue.h"
 #include "components/ble/BondPersistenceCoordinator.h"
 #include "components/ble/NimbleBondStoreAdapter.h"
@@ -165,6 +166,7 @@ namespace Pinetime {
       void MaybeAdvanceForgetAll();
       void NotifyEvictionIfChanged();
       void FlushBondNotices();
+      void MaybeReleaseBootPersistenceGate();
 
       static void BondStoreDirtyCallback(void* arg);
       static void BondPersistenceEventHandler(struct ble_npl_event* event);
@@ -211,11 +213,9 @@ namespace Pinetime {
       BondPersistenceCoordinator bondPersistence;
 
       // The single full-size snapshot lives in the global NimbleController
-      // object, never on a task stack. During boot SystemTask fills it, posts
-      // bondRestoreEvent, and waits on bondRestoreSemaphore while the host task
-      // reads it. After that handoff completes, the host task reuses it only as
-      // capture scratch; BondPersistenceCoordinator has already encoded the
-      // immutable SystemTask write buffer before it can be reused.
+      // object, never on a task stack. During boot SystemTask fills it and
+      // posts bondRestoreEvent. Radio remains gated until the host consumes it;
+      // afterward the host task reuses it only as capture scratch.
       NimbleBondStoreSnapshot bondSnapshotScratch;
 
       struct BondWriteCompletion {
@@ -230,9 +230,8 @@ namespace Pinetime {
       struct ble_npl_event bondWriteCompleteEvent {};
       struct ble_npl_event bondRestoreEvent {};
       struct ble_npl_event forgetAllEvent {};
-      struct ble_npl_sem bondRestoreSemaphore {};
       bool bootBondSnapshotReady = false;
-      bool bootBondRestoreSucceeded = false;
+      BondBootPersistenceGate bootPersistenceGate;
       bool bondPersistenceWritesEnabled = true;
       bool bondPersistenceEventsInitialized = false;
 
@@ -240,9 +239,6 @@ namespace Pinetime {
       // the final-format file through the normal asynchronous writer. Radio
       // reconciliation forces Off until this exact generation is durable, so a
       // phone cannot pair into a baseline that has not reached flash.
-      bool formatInitializationPending = false;
-      bool formatInitializationAnnounceReset = false;
-      uint64_t formatInitializationGeneration = 0;
 
       // Forget All bookkeeping. The wipe is driven through the radio state
       // machine: the request forces the radio to Off, and only once the link is
