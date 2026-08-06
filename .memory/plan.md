@@ -1,40 +1,46 @@
-# Multi-Companion BLE Plan
+# InfiniTime 3.0 Family Storage Plan
 
 ## Goal
 
-Support five remembered companion devices that connect sequentially without
-routine re-pairing, while retaining one active BLE link and power behavior no
-worse than upstream InfiniTime.
+Make routine family companion operations unable to stall the watch until its
+seven-second watchdog fires, while supporting sequential access from several
+paired phones and computers.
 
-## Firmware Architecture
+## Released Architecture
 
-- `protocol/companion.json` is the cross-repository protocol source of truth.
-- `BleRadioStateMachine` owns portable advertising and recovery policy.
-- `BondRegistry` and `BondStorePolicy` own five-peer LRU behavior.
-- `NimbleBondStoreAdapter` wraps NimBLE store/config.
-- `BondStoreCodec` and `BondPersistenceCoordinator` provide versioned, atomic,
-  asynchronous persistence.
-- `CompanionManagementService` exposes public status and authenticated verify.
-- Bluetooth settings show paired count and confirmed Forget All.
+- One explicit CRC-protected `family-state.dat` snapshot stores settings,
+  32 schedules, 20 task definitions, streak/date, five alarms, prayer settings,
+  and the Find My key.
+- Runtime feature data is RAM-authoritative with fixed active/candidate banks.
+- StorageTask is the only post-boot littlefs owner, including bonds, FSService,
+  LVGL and resource reads.
+- Durable-first mutations publish only after temp-file sync and atomic rename.
+- One shared Family State GATT status reports operation, token, generation,
+  failure and warning state.
+- SPIM waits and mutex acquisition are bounded; the bus resets, retries once,
+  then returns an explicit I/O failure.
+- Same-day steps and storage breadcrumbs survive watchdog/software resets in
+  validated no-init records.
+- PineTimeCompanion 0.34.0 implements the strict 3.0 cutover, durable polling,
+  32-item gate, upgrade-only mode, and explicit Set time behavior.
 
-## Constraints
+## Completed Gates
 
-- Exactly one active BLE connection.
-- Exactly five retained peers; a sixth evicts the actual LRU identity.
-- Eight persisted notify/indicate characteristics produce 40 CCCD slots.
-- No filesystem work or blocking waits on the NimBLE host task.
-- Healthy advertising checks issue no GAP commands.
-- No per-peer identity exposure or remote bond deletion.
-- Absolute current and RF behavior require physical hardware.
+1. Protocol generation and strict format cutover.
+2. Family-state codec and fixed-allocation StorageTask.
+3. RAM schedule/tasks and durable small-state controllers.
+4. Complete post-boot filesystem ownership.
+5. Reset survival, diagnostics, warning UI and SPI hardening.
+6. Companion, simulator and ptlab integration.
+7. Six ARM builds, host/simulator/companion/Android/browser validation.
+8. All eight simulator scenarios, including DFU and raw power loss.
+9. Four repositories pushed; CI and release workflows passed.
+10. PineTimeCompanion 0.34.0 and InfiniTime 3.0.0 prereleases published with
+    complete assets.
 
-## Completed Phases
+## Physical Acceptance
 
-1. Generated protocol and host test foundation.
-2. Radio, bond registry, NimBLE store, and atomic persistence.
-3. Watch management UI, diagnostics, stack remediation, CI, and docs.
-4. Cross-repository simulator, companion, and ptlab integration.
-
-## Remaining Phase
-
-Run the physical fleet handoff, LRU, CCCD, long-idle advertising, and
-side-by-side battery-soak gates defined by `pinetime-dev-tools/RELEASE.md`.
+Install companion 0.34.0 first, capture the existing family data, and flash
+3.0.0 on one watch. Then run sequential multi-device access, sleep/wake writes,
+watchdog/software reset recovery, five-peer/LRU behavior, forwarding handoff,
+long-idle advertising, and power acceptance before promoting the prereleases.
