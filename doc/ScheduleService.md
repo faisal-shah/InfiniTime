@@ -31,7 +31,7 @@ companion must negotiate an ATT MTU of at least 48 before syncing (e.g. request 
 
  - [0] : Message type = `0`
  - [1] : Message version = `0`
- - [2] : Event count that will follow (0 .. capacity; see Digest — currently 64)
+ - [2] : Event count that will follow (0 .. capacity; currently 32)
  - [3][4][5][6] : Schedule version (uint32 LE) — an opaque value chosen by the companion,
    reported back in the Digest after commit. `0` means "never synced"; companions should
    start at 1 and increase on every schedule change.
@@ -42,7 +42,7 @@ Opens a sync transaction and clears any staged data from a previous incomplete t
 #### Message type `1` : EventRecord
 
  - [0] : Message type = `1`
- - [1] : Message version = `1`
+ - [1] : Message version = `3`
  - [2] : Index of this record (0 .. count-1 from BeginSync)
  - [3]..[45] : Event record (43 bytes, layout below)
 
@@ -55,23 +55,24 @@ range, or the index was already received.
  - [1] : Message version = `0`
  - [2] : Event count (must equal the BeginSync count)
 
-Rejected (`0x0E`) unless every index 0..count-1 was received exactly once. On success the
-staged schedule atomically replaces the active one, is persisted to flash, and the reminder
-timer is re-armed. The new schedule version becomes visible in the Digest — companions
-should read the Digest after commit to confirm.
+Rejected (`0x0E`) unless every index 0..count-1 was received exactly once. An accepted
+commit queues one complete family-state snapshot. The previous schedule remains active
+until that snapshot is durable; the matching Family State operation token is the schedule
+version. After durable success, the RAM bank is published and the reminder timer is re-armed.
 
 #### Message type `3` : AbortSync
 
  - [0] : Message type = `3`
  - [1] : Message version = `0`
 
-Discards the staged transaction. A BLE disconnect has the same effect.
+Discards a staged transaction that has not been committed. A disconnect does not cancel a
+snapshot that is already queued for persistence.
 
 ### Digest (UUID 00060002-78fc-48fe-8e23-433b3a1942d0)
 
 Read. Returns 7 bytes:
 
- - [0] : Protocol version = `2`
+ - [0] : Protocol version = `3`
  - [1] : Capacity (maximum number of events the watch can store)
  - [2] : Count of events in the active schedule
  - [3][4][5][6] : Schedule version of the active schedule (uint32 LE)
@@ -118,15 +119,11 @@ to the recurring kinds only — a OneShot ends at its anchor by definition. Once
 has passed the event stops producing occurrences entirely, so it disappears from the watch's
 schedule screen and never fires again, while remaining stored until a companion deletes it.
 
-### Protocol version 2
+### Protocol version 3
 
-Version 2 added the end date, widening the record from 39 to 43 bytes and moving the
-RecordMessage version byte to `2`. A watch and companion on different versions will not
-interoperate: the watch rejects a RecordMessage whose version byte it does not recognise
-(`BLE_ATT_ERR_UNLIKELY`), and companions should compare the digest's protocol version before
-syncing and tell the user which side needs updating. On a firmware upgrade the watch's stored
-schedule is discarded, because the persisted format version no longer matches; companions
-detect the resulting empty list and offer to restore from their own copy.
+Version 3 is the InfiniTime 3.0 strict cutover. It keeps the 43-byte recurrence record,
+reduces capacity to 32, stages entirely in RAM, and reports durability through the Family
+State status characteristic. Older schedule formats are not imported.
 
 ### Recurrence semantics
 
@@ -153,7 +150,8 @@ list.
 3. Write BeginSync(count, newVersion).
 4. Write EventRecord for each index 0..count-1 (write-with-response, any order).
 5. Write CommitSync(count).
-6. Read Digest; verify count and schedule version. Disconnect.
+6. Poll Family State status for operation `schedule` and the submitted version token.
+7. Read Digest; verify count and schedule version. Disconnect.
 
 ## Multiple companions
 
@@ -190,7 +188,7 @@ Reference vectors for implementations and tests. All bytes hex.
 anchor 2026-07-13, enabled, title "Quran practice", lastModified 1784000000
 (`0x6A55AE00`):
 
-    01 02 00
+    01 03 00
     01 00 02 11 00 EA 07 07 0D 2A 01
     51 75 72 61 6E 20 70 72 61 63 74 69 63 65 00 00
     00 00 00 00 00 00 00 00
@@ -200,7 +198,7 @@ anchor 2026-07-13, enabled, title "Quran practice", lastModified 1784000000
 **EventRecord** — index 1; event id 2, EveryNDays N=1 (daily), 20:30, anchor 2026-01-01,
 enabled, title "Brush teeth", lastModified 0:
 
-    01 02 01
+    01 03 01
     02 00 01 14 1E EA 07 01 01 01 01
     42 72 75 73 68 20 74 65 65 74 68 00 00 00 00 00
     00 00 00 00 00 00 00 00
@@ -210,7 +208,7 @@ enabled, title "Brush teeth", lastModified 0:
 **EventRecord** — index 2; event id 3, OneShot 2026-08-01 09:15, enabled, title "Dentist",
 lastModified 0:
 
-    01 02 02
+    01 03 02
     03 00 00 09 0F EA 07 08 01 00 01
     44 65 6E 74 69 73 74 00 00 00 00 00 00 00 00 00
     00 00 00 00 00 00 00 00
@@ -225,9 +223,9 @@ lastModified 0:
 
     03 00
 
-**Digest** after the commit above (protocol 1, capacity 64, 3 events, version 7):
+**Digest** after the commit above (protocol 3, capacity 32, 3 events, version 7):
 
-    01 40 03 07 00 00 00
+    03 20 03 07 00 00 00
 
 ## Security
 
@@ -247,17 +245,7 @@ down is a separate, watch-wide change.
 
 ## Storage
 
-Events live in littlefs, not RAM. The active schedule is `/.system/schedule.dat`
-(`[version u8 = 2][count u8][scheduleVersion u32 LE]` + `count` x 43-byte records); RAM
-holds only the digest fields and a cache of the next occurrence, so capacity is bounded
-by flash, not RAM. During a sync, records are staged into `/.system/schedule.stg` and
-CommitSync atomically renames it over the active file (littlefs renames are atomic), so
-a power loss at any instant - mid-staging or mid-commit - leaves the previous schedule
-intact. A leftover staging file is deleted at boot. Both the schedule and its version
-survive reboots.
-
-Because staging writes flash from the BLE task and the SPI flash sleeps with the watch,
-BeginSync takes a wake lock (the FSService `StartFileTransfer` mechanism) held until
-Commit/Abort/disconnect; event-read accesses bracket themselves the same way. A companion
-that opens a sync and then goes silent without disconnecting keeps the watch awake until
-the BLE supervision timeout drops the link.
+The active schedule and the staging candidate are fixed RAM banks. Runtime reads, list
+rendering, recurrence calculations and BLE pull operations do not read flash. The durable
+copy is a section of `/.system/family-state.dat`; StorageTask writes a complete CRC-protected
+snapshot by temp-file sync and atomic rename. See [Family State Storage](FamilyStateStorage.md).

@@ -13,7 +13,9 @@
 #include "components/datetime/DateTimeController.h"
 #include "components/motion/MotionController.h"
 #include "drivers/Watchdog.h"
+#include "drivers/SpiMaster.h"
 #include "displayapp/InfiniTimeTheme.h"
+#include "systemtask/SystemTask.h"
 
 using namespace Pinetime::Applications::Screens;
 
@@ -64,7 +66,8 @@ SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
                        const Pinetime::Drivers::Watchdog& watchdog,
                        Pinetime::Controllers::MotionController& motionController,
                        const Pinetime::Drivers::Cst816S& touchPanel,
-                       const Pinetime::Drivers::SpiNorFlash& spiNorFlash)
+                       const Pinetime::Drivers::SpiNorFlash& spiNorFlash,
+                       const Pinetime::System::SystemTask& systemTask)
   : dateTimeController {dateTimeController},
     batteryController {batteryController},
     brightnessController {brightnessController},
@@ -73,6 +76,7 @@ SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
     motionController {motionController},
     touchPanel {touchPanel},
     spiNorFlash {spiNorFlash},
+    systemTask {systemTask},
     screens {app,
              0,
              {[this]() -> std::unique_ptr<Screen> {
@@ -98,6 +102,9 @@ SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
               },
               [this]() -> std::unique_ptr<Screen> {
                 return CreateScreen8();
+              },
+              [this]() -> std::unique_ptr<Screen> {
+                return CreateScreen9();
               }},
              Screens::ScreenListModes::UpDown} {
 }
@@ -403,6 +410,56 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen7() {
 }
 
 std::unique_ptr<Screen> SystemInfo::CreateScreen8() {
+  const auto storage = systemTask.storage().Status();
+  const auto& previous = systemTask.storage().PreviousRecovery();
+  const auto& spi = systemTask.spiBus().GetTransactionStats();
+  const auto& flash = spiNorFlash.GetStats();
+
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_recolor(label, true);
+  lv_label_set_text_fmt(label,
+                        "#FFFF00 Storage#\n"
+                        "#808080 State/Op/Err# %u/%u/%u\n"
+                        "#808080 Token# %lu\n"
+                        "#808080 Generation# %lu\n"
+                        "#808080 Warning# %u\n"
+                        "#808080 Prev op/phase/err# %u/%u/%u\n"
+                        "#808080 Prev token/time# %lu/%lums\n"
+                        "#808080 SPI retry/rec/fail# %u/%u/%u\n"
+                        "#808080 Flash R/P/E# %u/%u/%u",
+                        static_cast<unsigned>(storage.state),
+                        static_cast<unsigned>(storage.operation),
+                        static_cast<unsigned>(storage.error),
+                        static_cast<unsigned long>(storage.token),
+                        static_cast<unsigned long>(storage.activeGeneration),
+                        (storage.flags &
+                         Pinetime::Controllers::CompanionProtocol::
+                           FamilyStateStorageWarningFlag) != 0,
+                        previous.Valid()
+                          ? static_cast<unsigned>(previous.operation)
+                          : 0u,
+                        previous.Valid()
+                          ? static_cast<unsigned>(previous.phase)
+                          : 0,
+                        previous.Valid()
+                          ? static_cast<unsigned>(previous.error)
+                          : 0u,
+                        static_cast<unsigned long>(
+                          previous.Valid() ? previous.token : 0),
+                        static_cast<unsigned long>(
+                          previous.Valid() ? previous.elapsedMs : 0),
+                        spi.retries,
+                        spi.recoveries,
+                        spi.failures,
+                        flash.readFailures,
+                        flash.programTimeouts,
+                        flash.eraseTimeouts);
+  lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
+  lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
+  return std::make_unique<Screens::Label>(7, ScreenCount, label);
+}
+
+std::unique_ptr<Screen> SystemInfo::CreateScreen9() {
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
   lv_label_set_text_static(label,
@@ -416,5 +473,5 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen8() {
                            "#FFFF00 InfiniTime#");
   lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(7, ScreenCount, label);
+  return std::make_unique<Screens::Label>(8, ScreenCount, label);
 }

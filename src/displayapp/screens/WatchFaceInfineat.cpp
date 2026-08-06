@@ -124,8 +124,7 @@ WatchFaceInfineat::WatchFaceInfineat(Controllers::DateTime& dateTimeController,
                                      const Controllers::Ble& bleController,
                                      Controllers::NotificationManager& notificationManager,
                                      Controllers::Settings& settingsController,
-                                     Controllers::MotionController& motionController,
-                                     Controllers::FS& filesystem)
+                                     Controllers::MotionController& motionController)
   : currentDateTime {{}},
     dateTimeController {dateTimeController},
     batteryController {batteryController},
@@ -133,16 +132,8 @@ WatchFaceInfineat::WatchFaceInfineat(Controllers::DateTime& dateTimeController,
     notificationManager {notificationManager},
     settingsController {settingsController},
     motionController {motionController} {
-  lfs_file f = {};
-  if (filesystem.FileOpen(&f, "/fonts/teko.bin", LFS_O_RDONLY) >= 0) {
-    filesystem.FileClose(&f);
-    font_teko = lv_font_load("F:/fonts/teko.bin");
-  }
-
-  if (filesystem.FileOpen(&f, "/fonts/bebas.bin", LFS_O_RDONLY) >= 0) {
-    filesystem.FileClose(&f);
-    font_bebas = lv_font_load("F:/fonts/bebas.bin");
-  }
+  font_teko = lv_font_load("F:/fonts/teko.bin");
+  font_bebas = lv_font_load("F:/fonts/bebas.bin");
 
   // Side Cover
   static constexpr lv_point_t linePoints[nLines][2] = {{{30, 25}, {68, -8}},
@@ -490,23 +481,13 @@ void WatchFaceInfineat::ToggleBatteryIndicatorColor(bool showSideCover) {
   }
 }
 
-bool WatchFaceInfineat::IsAvailable(Pinetime::Controllers::FS& filesystem) {
-  lfs_file file = {};
-
-  if (filesystem.FileOpen(&file, "/fonts/teko.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  if (filesystem.FileOpen(&file, "/fonts/bebas.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  if (filesystem.FileOpen(&file, "/images/pine_small.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  return true;
+bool WatchFaceInfineat::IsAvailable(
+  Pinetime::System::StorageTask& storageTask) {
+  lfs_info info {};
+  return storageTask.Stat("/fonts/teko.bin", info) == LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG &&
+         storageTask.Stat("/fonts/bebas.bin", info) == LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG &&
+         storageTask.Stat("/images/pine_small.bin", info) == LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG;
 }

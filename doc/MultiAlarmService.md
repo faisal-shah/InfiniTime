@@ -41,6 +41,10 @@ otherwise it rejects with an ATT error and the phone must re-read, re-apply its
 edit, and retry. Fields are validated (hour ≤ 23, minute ≤ 59, mode ≤ 1); an
 invalid field rejects the whole write.
 
+An accepted write is not published immediately. Its next version is the Family
+State operation token; the companion waits for durable success and then re-reads
+the characteristic.
+
 This makes concurrent edits from different phones safe: two phones editing
 different slots each read version *V*, the first write lands (→ *V+1*), the
 second is rejected, re-reads *V+1* (now carrying the first phone's change),
@@ -55,7 +59,6 @@ reminders and prayer alerts.
 
 ## Storage
 
-`/.system/alarms.dat`: a 1-byte format version, the u32 alarm `version`, then the
-5 alarm records — the same layout as the wire form minus the redundant leading
-version field. RAM-cached; the single FreeRTOS alarm timer is armed to the
-nearest enabled alarm.
+Alarms and their version are a section of `/.system/family-state.dat`. The active
+RAM bank changes only after durable success; the single FreeRTOS alarm timer is
+then re-armed to the nearest enabled alarm.

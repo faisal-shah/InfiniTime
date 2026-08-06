@@ -1,6 +1,7 @@
 #include "components/ble/BondStoreCodec.h"
 
 #include "components/ble/BondStorePolicy.h"
+#include "components/fs/Crc32.h"
 
 #include <array>
 #include <limits>
@@ -209,14 +210,7 @@ namespace {
 }
 
 uint32_t BondStoreCodec::Crc32(const uint8_t* data, size_t size) {
-  uint32_t crc = 0xffffffffu;
-  for (size_t i = 0; i < size; i++) {
-    crc ^= data[i];
-    for (uint8_t bit = 0; bit < 8; bit++) {
-      crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
-    }
-  }
-  return ~crc;
+  return Pinetime::Controllers::Crc32::Compute(data, size);
 }
 
 bool BondStoreCodec::Validate(const NimbleBondStoreSnapshot& snapshot, DecodeError* error) {

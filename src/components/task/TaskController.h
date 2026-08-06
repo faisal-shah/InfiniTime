@@ -4,21 +4,17 @@
 #include <cstdint>
 #include "components/datetime/DateTimeController.h"
 #include "components/ble/generated/CompanionProtocol.h"
-#include "components/fs/StagedList.h"
-
-#include <littlefs/lfs.h>
+#include "components/fs/FamilyState.h"
 
 namespace Pinetime {
   namespace System {
-    class SystemTask;
+    class StorageTask;
   }
 
   namespace Controllers {
-    class FS;
-
     // The daily task checklist. Task DEFINITIONS (id/order/title) live in
     // littlefs (/.system/tasks.dat) and sync from the phone by full-replace,
-    // atomic-rename staging — the shared StagedList, exactly like the Schedule.
+    // complete-list staging in the inactive family-state RAM bank.
     //
     // COMPLETION is watch-only: which tasks are ticked today, plus a
     // consecutive-all-done streak, live in a tiny separate file
@@ -43,37 +39,37 @@ namespace Pinetime {
       };
 
       static_assert(sizeof(Task) == CompanionProtocol::TaskRecordSize, "Task layout is part of the BLE protocol");
-      static_assert(MaxTasks <= 64, "StagedList uses a uint64_t received-bitmask");
+      static_assert(MaxTasks <= 64, "received tracking uses a uint64_t bitmask");
 
-      TaskController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);
+      TaskController(Controllers::DateTime& dateTimeController, System::StorageTask& storageTask);
 
       void Init();
+      void Process();
 
       // --- definition staging (BLE task; TaskService holds the wake lock) ---
       bool BeginStaging(uint8_t count, uint32_t version);
       bool StageTask(uint8_t index, const Task& task);
 
-      bool StagingComplete() const {
-        return staged.Complete();
-      }
-
-      void DiscardStaging() {
-        staged.Discard();
-      }
+      bool StagingComplete() const;
+      void DiscardStaging();
 
       uint8_t GetStagedCount() const {
-        return staged.StagedCount();
+        return staging ? stagedCount : 0xff;
       }
 
       // SystemTask only, flash awake (renames the staging file to live).
+      bool AcceptCommit();
       void CommitStaged();
+      void OnPersisted(CompanionProtocol::FamilyStateOperation operation,
+                       uint32_t token,
+                       bool success);
 
       uint8_t GetCount() const {
-        return staged.Count();
+        return Active().taskCount;
       }
 
       uint32_t GetVersion() const {
-        return staged.Version();
+        return Active().taskVersion;
       }
 
       bool ReadTask(uint8_t index, Task& out) const;
@@ -97,43 +93,37 @@ namespace Pinetime {
       }
 
       uint16_t GetStreak() const {
-        return streak;
+        return Active().taskStreak;
       }
 
       /** Phone override of the streak (parent forgives a day / sets a reward). */
-      void SetStreak(uint16_t value);
+      bool SetStreak(uint16_t value, uint32_t token);
       /** Evaluate the day that just ended into the streak, then clear the ticks. */
       void RollOverDay();
 
     private:
-      static constexpr uint8_t formatVersion = 1;
-      static constexpr const char* datPath = "/.system/tasks.dat";
-      static constexpr const char* stagePath = "/.system/tasks.stg";
-      static constexpr const char* statePath = "/.system/tasks.state";
-
-      struct __attribute__((packed)) StateFile {
-        uint8_t version;
-        uint32_t dateKey; // YYYYMMDD local; 0 = none
-        uint16_t streak;
-        uint8_t doneCount;
-        uint16_t doneIds[MaxTasks];
-      };
-
       uint32_t TodayKey() const; // YYYYMMDD from the local clock
-      void LoadState();
-      void SaveState(); // best-effort: a no-op if flash is asleep
       bool IdDone(uint16_t id) const;
       void SetIdDone(uint16_t id, bool done);
+      const FamilyState& Active() const;
+      FamilyState* Candidate(CompanionProtocol::FamilyStateOperation operation,
+                             uint32_t token);
+      void PruneTicks();
 
       Controllers::DateTime& dateTimeController;
-      Controllers::FS& fs;
-      StagedList staged;
-
-      // Completion state (mirrors statePath).
-      uint32_t stateDateKey = 0;
-      uint16_t streak = 0;
+      System::StorageTask& storageTask;
       uint8_t doneCount = 0;
       uint16_t doneIds[MaxTasks] {};
+      uint64_t stagedReceived = 0;
+      uint32_t stagedVersion = 0;
+      uint8_t stagedCount = 0;
+      bool staging = false;
+      bool commitAccepted = false;
+      bool awaitingDefinitions = false;
+      uint32_t pendingStatsToken = 0;
+      bool pendingRollover = false;
+      bool rolloverRetryPending = false;
+      TickType_t nextRolloverAttempt = 0;
     };
   }
 }

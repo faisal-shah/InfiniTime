@@ -35,8 +35,7 @@ ScheduleService::ScheduleService(Pinetime::System::SystemTask& systemTask, Sched
                               {0}},
     serviceDefinition {{.type = BLE_GATT_SVC_TYPE_PRIMARY, .uuid = &scheduleUuid.u, .characteristics = characteristicDefinition}, {0}},
     systemTask {systemTask},
-    scheduleController {scheduleController},
-    wakeLock {systemTask} {
+    scheduleController {scheduleController} {
 }
 
 void ScheduleService::Init() {
@@ -80,16 +79,10 @@ int ScheduleService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
       if (count > ScheduleController::MaxEvents) {
         return BLE_ATT_ERR_UNLIKELY;
       }
-      // Staging writes the flash file, and the SPI flash sleeps with the
-      // system: hold a wake lock for the whole transaction.
-      if (!wakeLock.Acquire()) {
-        return BLE_ATT_ERR_UNLIKELY;
-      }
       uint32_t version;
       std::memcpy(&version, &buffer[3], sizeof(version));
       if (!scheduleController.BeginStaging(count, version)) {
-        wakeLock.Release();
-        return BLE_ATT_ERR_UNLIKELY;
+        return CompanionProtocol::FamilyStateBusyAttError;
       }
       return 0;
     }
@@ -113,22 +106,17 @@ int ScheduleService::OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt) {
       if (len != 3) {
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
       }
-      if (buffer[2] != scheduleController.GetStagedCount() || !scheduleController.StagingComplete()) {
+      if (buffer[2] != scheduleController.GetStagedCount() ||
+          !scheduleController.AcceptCommit()) {
         scheduleController.DiscardStaging();
-        wakeLock.Release();
         return BLE_ATT_ERR_UNLIKELY;
       }
-      // Commit (flash rename + timer re-arm) must run on the SystemTask. The
-      // wake-lock release is queued behind the commit on the same FIFO, so
-      // the flash stays powered until the rename is done.
       systemTask.PushMessage(System::Messages::ScheduleSyncReceived);
-      wakeLock.Release();
       return 0;
     }
 
     case MessageType::AbortSync:
       scheduleController.DiscardStaging();
-      wakeLock.Release();
       return 0;
   }
   return BLE_ATT_ERR_UNLIKELY;
@@ -167,21 +155,8 @@ int ScheduleService::OnEventReadAccess(struct ble_gatt_access_ctxt* ctxt) {
     return BLE_ATT_ERR_UNLIKELY;
   }
 
-  // The pull half of a sync runs before BeginSync, so no wake lock is held
-  // yet and the flash may be asleep; bracket the read with one.
-  const bool ownWake = !wakeLock.Held();
-  if (ownWake) {
-    systemTask.PushMessage(System::Messages::StartFileTransfer);
-    if (!wakeLock.WaitUntilAwake()) {
-      systemTask.PushMessage(System::Messages::StopFileTransfer);
-      return BLE_ATT_ERR_UNLIKELY;
-    }
-  }
   ScheduleController::Event event;
   const bool ok = scheduleController.ReadEvent(selectedReadIndex, event);
-  if (ownWake) {
-    systemTask.PushMessage(System::Messages::StopFileTransfer);
-  }
   if (!ok) {
     return BLE_ATT_ERR_UNLIKELY;
   }
@@ -190,8 +165,5 @@ int ScheduleService::OnEventReadAccess(struct ble_gatt_access_ctxt* ctxt) {
 }
 
 void ScheduleService::OnDisconnect() {
-  // DiscardStaging touches flash only when a transaction is open, in which
-  // case the sync wake lock is still held and the flash is powered.
   scheduleController.DiscardStaging();
-  wakeLock.Release();
 }

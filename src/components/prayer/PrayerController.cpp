@@ -1,5 +1,6 @@
 #include "components/prayer/PrayerController.h"
-#include "components/fs/FS.h"
+#include "components/fs/Crc32.h"
+#include "storagetask/StorageTask.h"
 #include "systemtask/SystemTask.h"
 #include <algorithm>
 #include <cstring>
@@ -23,16 +24,28 @@ namespace {
   };
 }
 
-PrayerController::PrayerController(Controllers::DateTime& dateTimeController, Controllers::FS& fs)
-  : dateTimeController {dateTimeController}, fs {fs} {
+PrayerController::PrayerController(Controllers::DateTime& dateTimeController,
+                                   System::StorageTask& storageTask)
+  : dateTimeController {dateTimeController}, storageTask {storageTask} {
 }
 
 void PrayerController::Init(System::SystemTask* systemTask) {
   this->systemTask = systemTask;
   alertTimer = xTimerCreate("Prayer", 1, pdFALSE, this, AlertTimerCallback);
-  fs.FileDelete(stagePath); // leftover from a power loss mid-save
-  LoadFromFile();
   Reschedule();
+}
+
+PrayerController::Settings PrayerController::GetSettings() const {
+  const auto& input = storageTask.ActiveState().prayer;
+  return {
+    input.version,
+    input.method,
+    input.asrMadhab,
+    input.flags,
+    input.latitudeE2,
+    input.longitudeE2,
+    input.utcOffsetQuarters,
+  };
 }
 
 time_t PrayerController::Now() const {
@@ -41,6 +54,7 @@ time_t PrayerController::Now() const {
 }
 
 PrayerRules::Times PrayerController::ComputeFor(time_t dayAnchor) const {
+  const auto settings = GetSettings();
   tm local {};
   localtime_r(&dayAnchor, &local);
   return PrayerRules::Compute(static_cast<uint16_t>(local.tm_year + 1900),
@@ -58,6 +72,7 @@ PrayerRules::Times PrayerController::ComputeToday() const {
 }
 
 bool PrayerController::CurrentWindow(Window& out) const {
+  const auto settings = GetSettings();
   // No location configured. 0,0 is the struct default and open ocean, so
   // treating it as "unset" costs nothing real and keeps the face from
   // confidently displaying Null Island's prayer times.
@@ -83,36 +98,107 @@ bool PrayerController::CurrentWindow(Window& out) const {
   return true;
 }
 
-void PrayerController::SetSettings(const Settings& newSettings) {
-  if (!Validate(newSettings)) {
-    return;
-  }
-  settings = newSettings;
-  SaveToFile();
-  Reschedule();
+uint32_t PrayerController::MutationToken(const Settings& settings) {
+  const uint32_t token =
+    Crc32::Compute(reinterpret_cast<const uint8_t*>(&settings), sizeof(settings));
+  return token == 0 ? 1 : token;
 }
 
-void PrayerController::StageSettings(const Settings& newSettings) {
+FamilyState* PrayerController::BeginCandidate(const Settings& settings,
+                                              uint32_t token) {
+  if (!storageTask.BeginFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::PrayerSettings,
+        token)) {
+    return nullptr;
+  }
+  auto* candidate = storageTask.MutableCandidate(
+    CompanionProtocol::FamilyStateOperation::PrayerSettings,
+    token);
+  if (candidate == nullptr) {
+    storageTask.CancelFamilyStateMutation(
+      CompanionProtocol::FamilyStateOperation::PrayerSettings,
+      token);
+    return nullptr;
+  }
+  candidate->prayer = {
+    settings.version,
+    settings.method,
+    settings.asrMadhab,
+    settings.flags,
+    settings.latE2,
+    settings.lonE2,
+    settings.utcOffsetQuarters,
+  };
+  pendingToken = token;
+  return candidate;
+}
+
+bool PrayerController::SetSettings(const Settings& newSettings) {
+  if (!Validate(newSettings)) {
+    return false;
+  }
+  const uint32_t token = MutationToken(newSettings);
+  if (BeginCandidate(newSettings, token) == nullptr) {
+    return false;
+  }
+  if (!storageTask.CommitFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::PrayerSettings,
+        token)) {
+    pendingToken = 0;
+    return false;
+  }
+  return true;
+}
+
+bool PrayerController::StageSettings(const Settings& newSettings) {
+  if (!Validate(newSettings)) {
+    return false;
+  }
+  const uint32_t token = MutationToken(newSettings);
+  if (BeginCandidate(newSettings, token) == nullptr) {
+    return false;
+  }
   staged = newSettings;
   stagedValid = true;
+  return true;
 }
 
 void PrayerController::CommitStaged() {
-  if (!stagedValid || !Validate(staged)) {
+  if (!stagedValid || pendingToken != MutationToken(staged)) {
+    if (pendingToken != 0) {
+      storageTask.CancelFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::PrayerSettings,
+        pendingToken);
+    }
     stagedValid = false;
+    pendingToken = 0;
     return;
   }
-  settings = staged;
   stagedValid = false;
-  SaveToFile();
-  Reschedule();
-  NRF_LOG_INFO("[PrayerController] Settings committed (method %u)", settings.method);
+  if (!storageTask.CommitFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::PrayerSettings,
+        pendingToken)) {
+    pendingToken = 0;
+  }
+}
+
+void PrayerController::OnPersisted(uint32_t token, bool success) {
+  if (token != pendingToken) {
+    return;
+  }
+  pendingToken = 0;
+  if (success) {
+    Reschedule();
+    NRF_LOG_INFO("[PrayerController] Settings committed (method %u)",
+                 GetSettings().method);
+  }
 }
 
 // Due instants of the five alerting prayers for the civil day containing
 // dayAnchor. A time-of-day smaller than Dhuhr's belongs to the NEXT civil day
 // (near-polar wrap, see PrayerRules.h).
 uint8_t PrayerController::DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_t (&prayer)[5]) const {
+  const auto settings = GetSettings();
   const PrayerRules::Times times = ComputeFor(dayAnchor);
   tm local {};
   localtime_r(&dayAnchor, &local);
@@ -147,6 +233,7 @@ void PrayerController::Reschedule() {
   xTimerStop(alertTimer, 0);
   hasNext = false;
 
+  const auto settings = GetSettings();
   if (!settings.AlertsEnabled()) {
     return; // the display path computes on open; no timer needed
   }
@@ -214,46 +301,4 @@ void PrayerController::TimerFired() {
   // Immediately re-arm for the next prayer: alerting state lives in the
   // AlertQueue now, so nothing here waits for a dismissal.
   Reschedule();
-}
-
-void PrayerController::LoadFromFile() {
-  FS::Lock lock(fs);
-  lfs_file_t file;
-  if (fs.FileOpen(&file, datPath, LFS_O_RDONLY) != LFS_ERR_OK) {
-    NRF_LOG_WARNING("[PrayerController] No settings file, using defaults");
-    return;
-  }
-  Settings loaded {};
-  const bool ok = fs.FileRead(&file, reinterpret_cast<uint8_t*>(&loaded), sizeof(loaded)) == sizeof(loaded) && Validate(loaded);
-  fs.FileClose(&file);
-  if (!ok) {
-    NRF_LOG_WARNING("[PrayerController] Invalid settings file, using defaults");
-    return;
-  }
-  settings = loaded;
-  NRF_LOG_INFO("[PrayerController] Loaded settings (method %u)", settings.method);
-}
-
-void PrayerController::SaveToFile() {
-  FS::Lock lock(fs);
-  lfs_dir systemDir;
-  if (fs.DirOpen("/.system", &systemDir) != LFS_ERR_OK) {
-    fs.DirCreate("/.system");
-  } else {
-    fs.DirClose(&systemDir);
-  }
-
-  lfs_file_t file;
-  if (fs.FileOpen(&file, stagePath, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
-    NRF_LOG_WARNING("[PrayerController] Failed to open settings file for writing");
-    return;
-  }
-  const bool ok = fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&settings), sizeof(settings)) == sizeof(settings);
-  fs.FileClose(&file);
-  if (!ok) {
-    fs.FileDelete(stagePath);
-    return;
-  }
-  // Atomic in littlefs: a power cut leaves either the old or the new settings.
-  fs.Rename(stagePath, datPath);
 }

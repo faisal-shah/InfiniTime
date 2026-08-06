@@ -51,7 +51,9 @@ int BeaconService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {
         return BLE_ATT_ERR_UNLIKELY;
       }
       // Stage in RAM; SystemTask commits with the flash awake.
-      beaconController.StageKey(key);
+      if (!beaconController.StageKey(key)) {
+        return CompanionProtocol::FamilyStateBusyAttError;
+      }
       systemTask.PushMessage(System::Messages::BeaconKeyReceived);
       return 0;
     }

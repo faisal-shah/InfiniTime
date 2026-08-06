@@ -47,13 +47,15 @@ int PrayerService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {
     }
     // Stage in RAM here; SystemTask commits with the flash awake. The
     // companion confirms by reading the value back.
-    prayerController.StageSettings(settings);
+    if (!prayerController.StageSettings(settings)) {
+      return CompanionProtocol::FamilyStateBusyAttError;
+    }
     systemTask.PushMessage(System::Messages::PrayerSettingsReceived);
     return 0;
   }
 
   if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-    const PrayerController::Settings& settings = prayerController.GetSettings();
+    const PrayerController::Settings settings = prayerController.GetSettings();
     const int res = os_mbuf_append(ctxt->om, &settings, sizeof(settings));
     return res == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
   }

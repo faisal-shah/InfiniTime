@@ -30,8 +30,7 @@ namespace Pinetime {
                           const Controllers::Ble& bleController,
                           Controllers::NotificationManager& notificationManager,
                           Controllers::Settings& settingsController,
-                          Controllers::MotionController& motionController,
-                          Controllers::FS& fs);
+                          Controllers::MotionController& motionController);
 
         ~WatchFaceInfineat() override;
 
@@ -42,7 +41,7 @@ namespace Pinetime {
 
         void Refresh() override;
 
-        static bool IsAvailable(Pinetime::Controllers::FS& filesystem);
+        static bool IsAvailable(Pinetime::System::StorageTask& storageTask);
 
       private:
         uint8_t chargingBatteryPercent = 101; // not a mistake ;)
@@ -112,12 +111,12 @@ namespace Pinetime {
                                               controllers.bleController,
                                               controllers.notificationManager,
                                               controllers.settingsController,
-                                              controllers.motionController,
-                                              controllers.filesystem);
+                                              controllers.motionController);
       };
 
-      static bool IsAvailable(Pinetime::Controllers::FS& filesystem) {
-        return Screens::WatchFaceInfineat::IsAvailable(filesystem);
+      static bool IsAvailable(AppControllers& controllers) {
+        return Screens::WatchFaceInfineat::IsAvailable(
+          controllers.storageTask);
       }
     };
   }

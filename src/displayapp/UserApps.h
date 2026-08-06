@@ -30,24 +30,48 @@ namespace Pinetime {
       Apps app;
       const char* icon;
       Screens::Screen* (*create)(AppControllers& controllers);
-      bool (*isAvailable)(Controllers::FS& fileSystem);
+      bool (*isAvailable)(AppControllers& controllers);
     };
 
     struct WatchFaceDescription {
       WatchFace watchFace;
       const char* name;
       Screens::Screen* (*create)(AppControllers& controllers);
-      bool (*isAvailable)(Controllers::FS& fileSystem);
+      bool (*isAvailable)(AppControllers& controllers);
     };
 
     template <Apps t>
+    bool IsAppAvailable(AppControllers& controllers) {
+      if constexpr (requires { AppTraits<t>::IsAvailable(controllers); }) {
+        return AppTraits<t>::IsAvailable(controllers);
+      } else {
+        return AppTraits<t>::IsAvailable(controllers.filesystem);
+      }
+    }
+
+    template <WatchFace t>
+    bool IsWatchFaceAvailable(AppControllers& controllers) {
+      if constexpr (requires { WatchFaceTraits<t>::IsAvailable(controllers); }) {
+        return WatchFaceTraits<t>::IsAvailable(controllers);
+      } else {
+        return WatchFaceTraits<t>::IsAvailable(controllers.filesystem);
+      }
+    }
+
+    template <Apps t>
     consteval AppDescription CreateAppDescription() {
-      return {AppTraits<t>::app, AppTraits<t>::icon, &AppTraits<t>::Create, &AppTraits<t>::IsAvailable};
+      return {AppTraits<t>::app,
+              AppTraits<t>::icon,
+              &AppTraits<t>::Create,
+              &IsAppAvailable<t>};
     }
 
     template <WatchFace t>
     consteval WatchFaceDescription CreateWatchFaceDescription() {
-      return {WatchFaceTraits<t>::watchFace, WatchFaceTraits<t>::name, &WatchFaceTraits<t>::Create, &WatchFaceTraits<t>::IsAvailable};
+      return {WatchFaceTraits<t>::watchFace,
+              WatchFaceTraits<t>::name,
+              &WatchFaceTraits<t>::Create,
+              &IsWatchFaceAvailable<t>};
     }
 
     template <template <Apps...> typename T, Apps... ts>

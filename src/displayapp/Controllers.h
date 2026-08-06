@@ -34,6 +34,7 @@ namespace Pinetime {
 
   namespace System {
     class SystemTask;
+    class StorageTask;
   }
 
   namespace Applications {
@@ -54,6 +55,7 @@ namespace Pinetime {
       Pinetime::Controllers::AlertQueue& alertQueue;
       Pinetime::Controllers::BrightnessController& brightnessController;
       Pinetime::Controllers::SimpleWeatherService* weatherController;
+      Pinetime::System::StorageTask& storageTask;
       Pinetime::Controllers::FS& filesystem;
       Pinetime::Controllers::Timer& timer;
       Pinetime::System::SystemTask* systemTask;

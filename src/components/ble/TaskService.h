@@ -10,7 +10,7 @@
 #undef min
 
 #include "components/ble/CustomServiceUuid.h"
-#include "components/ble/SyncWakeLock.h"
+#include "components/ble/generated/CompanionProtocol.h"
 
 int TaskServiceCallback(uint16_t connHandle, uint16_t attrHandle, struct ble_gatt_access_ctxt* ctxt, void* arg);
 
@@ -37,7 +37,7 @@ namespace Pinetime {
     private:
       enum class MessageType : uint8_t { BeginSync = 0, TaskRecord = 1, CommitSync = 2, AbortSync = 3, SetStreak = 4 };
       static constexpr uint8_t messageVersion = 0;    // Begin/Commit/Abort/SetStreak
-      static constexpr uint8_t taskRecordVersion = 1; // TaskRecord (31-byte records)
+      static constexpr uint8_t taskRecordVersion = CompanionProtocol::TaskRecordVersion;
 
       int OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt);
       int OnDigestRead(struct ble_gatt_access_ctxt* ctxt);
@@ -55,7 +55,6 @@ namespace Pinetime {
       System::SystemTask& systemTask;
       TaskController& taskController;
       uint8_t selectedReadIndex = 0;
-      SyncWakeLock wakeLock;
     };
   }
 }

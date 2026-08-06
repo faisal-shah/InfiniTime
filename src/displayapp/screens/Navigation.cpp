@@ -268,18 +268,10 @@ void Navigation::Refresh() {
   }
 }
 
-bool Navigation::IsAvailable(Pinetime::Controllers::FS& filesystem) {
-  lfs_file file = {};
-
-  if (filesystem.FileOpen(&file, "/images/navigation0.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-  filesystem.FileClose(&file);
-
-  if (filesystem.FileOpen(&file, "/images/navigation1.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-  filesystem.FileClose(&file);
-
-  return true;
+bool Navigation::IsAvailable(Pinetime::System::StorageTask& storageTask) {
+  lfs_info info {};
+  return storageTask.Stat("/images/navigation0.bin", info) == LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG &&
+         storageTask.Stat("/images/navigation1.bin", info) == LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG;
 }

@@ -15,6 +15,9 @@ namespace Pinetime {
   namespace Drivers {
     class Watchdog;
   }
+  namespace System {
+    class SystemTask;
+  }
 
   namespace Applications {
     class DisplayApp;
@@ -30,7 +33,8 @@ namespace Pinetime {
                             const Pinetime::Drivers::Watchdog& watchdog,
                             Pinetime::Controllers::MotionController& motionController,
                             const Pinetime::Drivers::Cst816S& touchPanel,
-                            const Pinetime::Drivers::SpiNorFlash& spiNorFlash);
+                            const Pinetime::Drivers::SpiNorFlash& spiNorFlash,
+                            const Pinetime::System::SystemTask& systemTask);
         ~SystemInfo() override;
         bool OnTouchEvent(TouchEvents event) override;
 
@@ -43,8 +47,9 @@ namespace Pinetime {
         Pinetime::Controllers::MotionController& motionController;
         const Pinetime::Drivers::Cst816S& touchPanel;
         const Pinetime::Drivers::SpiNorFlash& spiNorFlash;
+        const Pinetime::System::SystemTask& systemTask;
 
-        static constexpr uint8_t ScreenCount = 8;
+        static constexpr uint8_t ScreenCount = 9;
         ScreenList<ScreenCount> screens;
 
         static bool sortById(const TaskStatus_t& lhs, const TaskStatus_t& rhs);
@@ -57,6 +62,7 @@ namespace Pinetime {
         std::unique_ptr<Screen> CreateScreen6();
         std::unique_ptr<Screen> CreateScreen7();
         std::unique_ptr<Screen> CreateScreen8();
+        std::unique_ptr<Screen> CreateScreen9();
       };
     }
   }

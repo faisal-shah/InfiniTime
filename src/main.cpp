@@ -33,10 +33,12 @@
 #include "components/ble/NotificationManager.h"
 #include "components/brightness/BrightnessController.h"
 #include "components/motor/MotorController.h"
+#include "components/motion/StepRecoveryState.h"
 #include "components/datetime/DateTimeController.h"
 #include "components/heartrate/HeartRateController.h"
 #include "components/stopwatch/StopWatchController.h"
 #include "components/fs/FS.h"
+#include "components/fs/StorageRecoveryState.h"
 #include "drivers/Spi.h"
 #include "drivers/SpiMaster.h"
 #include "drivers/SpiNorFlash.h"
@@ -45,6 +47,7 @@
 #include "drivers/Cst816s.h"
 #include "drivers/PinMap.h"
 #include "systemtask/SystemTask.h"
+#include "storagetask/StorageTask.h"
 #include "touchhandler/TouchHandler.h"
 #include "buttonhandler/ButtonHandler.h"
 
@@ -95,7 +98,8 @@ Pinetime::Controllers::Battery batteryController;
 Pinetime::Controllers::Ble bleController;
 
 Pinetime::Controllers::FS fs {spiNorFlash};
-Pinetime::Controllers::Settings settingsController {fs};
+Pinetime::System::StorageTask storageTask {fs};
+Pinetime::Controllers::Settings settingsController {storageTask};
 Pinetime::Controllers::MotorController motorController {};
 
 Pinetime::Controllers::HeartRateController heartRateController;
@@ -106,11 +110,11 @@ Pinetime::Drivers::Watchdog watchdog;
 Pinetime::Controllers::NotificationManager notificationManager;
 Pinetime::Controllers::MotionController motionController;
 Pinetime::Controllers::StopWatchController stopWatchController;
-Pinetime::Controllers::MultiAlarmController multiAlarmController {dateTimeController, fs};
-Pinetime::Controllers::ScheduleController scheduleController {dateTimeController, fs};
-Pinetime::Controllers::TaskController taskController {dateTimeController, fs};
-Pinetime::Controllers::PrayerController prayerController {dateTimeController, fs};
-Pinetime::Controllers::BeaconController beaconController {fs};
+Pinetime::Controllers::MultiAlarmController multiAlarmController {dateTimeController, storageTask};
+Pinetime::Controllers::ScheduleController scheduleController {dateTimeController, storageTask};
+Pinetime::Controllers::TaskController taskController {dateTimeController, storageTask};
+Pinetime::Controllers::PrayerController prayerController {dateTimeController, storageTask};
+Pinetime::Controllers::BeaconController beaconController {storageTask};
 Pinetime::Controllers::AlertQueue alertQueue;
 Pinetime::Controllers::TouchHandler touchHandler;
 Pinetime::Controllers::ButtonHandler buttonHandler;
@@ -137,10 +141,12 @@ Pinetime::Applications::DisplayApp displayApp(lcd,
                                               brightnessController,
                                               touchHandler,
                                               fs,
+                                              storageTask,
                                               spiNorFlash);
 
 Pinetime::System::SystemTask systemTask(spi,
                                         spiNorFlash,
+                                        storageTask,
                                         twiMaster,
                                         touchPanel,
                                         batteryController,
@@ -175,15 +181,41 @@ void vApplicationMallocFailedHook() {
 void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char* /*pcTaskName*/) {
   stackOverflowCount++;
 }
+
+void vApplicationGetIdleTaskMemory(StaticTask_t** taskBuffer,
+                                   StackType_t** stackBuffer,
+                                   uint32_t* stackSize) {
+  static StaticTask_t idleTask;
+  static StackType_t idleStack[configMINIMAL_STACK_SIZE];
+  *taskBuffer = &idleTask;
+  *stackBuffer = idleStack;
+  *stackSize = configMINIMAL_STACK_SIZE;
+}
+
+void vApplicationGetTimerTaskMemory(StaticTask_t** taskBuffer,
+                                    StackType_t** stackBuffer,
+                                    uint32_t* stackSize) {
+  static StaticTask_t timerTask;
+  static StackType_t timerStack[configTIMER_TASK_STACK_DEPTH];
+  *taskBuffer = &timerTask;
+  *stackBuffer = timerStack;
+  *stackSize = configTIMER_TASK_STACK_DEPTH;
+}
 }
 /* Variable Declarations for variables in noinit SRAM
    Increment NoInit_MagicValue upon adding variables to this area
 */
 extern uint32_t __start_noinit_data;
 extern uint32_t __stop_noinit_data;
-static constexpr uint32_t NoInit_MagicValue = 0xDEAD0001;
+static constexpr uint32_t NoInit_MagicValue = 0xDEAD0003;
 uint32_t NoInit_MagicWord __attribute__((section(".noinit")));
 std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime __attribute__((section(".noinit")));
+Pinetime::Controllers::StepRecoveryState NoInit_StepRecovery
+  __attribute__((section(".noinit"))) = {0, 0, 0, 0, 0, 0};
+Pinetime::Controllers::StorageRecoveryState NoInit_StorageRecovery
+  __attribute__((section(".noinit"))) = {
+    0, 0, 0, Pinetime::Controllers::StorageRecoveryState::Phase::Idle,
+    0, 0, 0, 0, 0, 0};
 // How many times the watch has had to restart its own advertising. Kept here
 // rather than in the controller because the answer only means anything across
 // reboots: as an ordinary variable it was zero every time anyone looked, which
@@ -380,6 +412,12 @@ int main() {
     memset(&__start_noinit_data, 0, (uintptr_t) &__stop_noinit_data - (uintptr_t) &__start_noinit_data);
     NoInit_MagicWord = NoInit_MagicValue;
   }
+  motionController.RestoreStepState(
+    NoInit_StepRecovery,
+    static_cast<uint32_t>(dateTimeController.Year()) * 10000 +
+      static_cast<uint32_t>(dateTimeController.Month()) * 100 +
+      dateTimeController.Day());
+  storageTask.AttachRecoveryState(NoInit_StorageRecovery);
 
   systemTask.Start();
 

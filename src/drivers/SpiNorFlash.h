@@ -24,15 +24,27 @@ namespace Pinetime {
       bool WriteInProgress();
       bool WriteEnabled();
       uint8_t ReadConfigurationRegister();
-      void Read(uint32_t address, uint8_t* buffer, size_t size);
+      bool Read(uint32_t address, uint8_t* buffer, size_t size);
       void Write(uint32_t address, const uint8_t* buffer, size_t size);
-      void WriteEnable();
+      bool WriteEnable();
       void SectorErase(uint32_t sectorAddress);
       uint8_t ReadSecurityRegister();
       bool ProgramFailed();
       bool EraseFailed();
 
       Identification GetIdentification() const;
+
+      // Compact evidence for Sys Info: how many reads, programs and erases have
+      // been abandoned because the chip stopped responding. Saturating, no heap.
+      struct Stats {
+        uint16_t readFailures = 0;
+        uint16_t programTimeouts = 0;
+        uint16_t eraseTimeouts = 0;
+      };
+
+      const Stats& GetStats() const {
+        return stats;
+      }
 
       void Init();
       void Uninit();
@@ -56,9 +68,17 @@ namespace Pinetime {
       // EraseFailed, which littlefs turns into an ordinary I/O error.
       bool WaitUntilIdle(uint32_t timeoutTicks);
       bool WaitUntilWriteEnabled(uint32_t timeoutTicks);
+      bool ReadStatusRegister(uint8_t& status);
 
       bool programTimedOut = false;
       bool eraseTimedOut = false;
+      Stats stats;
+
+      static void bumpStat(uint16_t& counter) {
+        if (counter != UINT16_MAX) {
+          ++counter;
+        }
+      }
 
       enum class Commands : uint8_t {
         PageProgram = 0x02,

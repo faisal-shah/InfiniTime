@@ -469,7 +469,10 @@ list(APPEND SOURCE_FILES
         components/ble/BondStorePolicy.cpp
         components/ble/NimbleBondStoreAdapter.cpp
         components/ble/CompanionManagementStatus.cpp
+        components/ble/FamilyStateStatus.cpp
+        components/ble/FamilyStateService.cpp
         components/ble/CompanionManagementService.cpp
+        components/fs/FamilyStateCodec.cpp
         components/ble/NotificationManager.cpp
         components/datetime/DateTimeController.cpp
         components/brightness/BrightnessController.cpp
@@ -503,7 +506,6 @@ list(APPEND SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
-        components/fs/StagedList.cpp
         components/task/TaskController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
@@ -520,6 +522,7 @@ list(APPEND SOURCE_FILES
         systemtask/SystemTask.cpp
         systemtask/SystemMonitor.cpp
         systemtask/WakeLock.cpp
+        storagetask/StorageTask.cpp
         drivers/TwiMaster.cpp
 
         heartratetask/HeartRateTask.cpp
@@ -560,7 +563,10 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/BondStorePolicy.cpp
         components/ble/NimbleBondStoreAdapter.cpp
         components/ble/CompanionManagementStatus.cpp
+        components/ble/FamilyStateStatus.cpp
+        components/ble/FamilyStateService.cpp
         components/ble/CompanionManagementService.cpp
+        components/fs/FamilyStateCodec.cpp
         components/ble/NotificationManager.cpp
         components/datetime/DateTimeController.cpp
         components/brightness/BrightnessController.cpp
@@ -593,7 +599,6 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/stopwatch/StopWatchController.cpp
         components/multialarm/MultiAlarmController.cpp
         components/schedule/ScheduleController.cpp
-        components/fs/StagedList.cpp
         components/task/TaskController.cpp
         components/prayer/PrayerController.cpp
         components/beacon/BeaconController.cpp
@@ -606,6 +611,7 @@ list(APPEND RECOVERY_SOURCE_FILES
         systemtask/SystemTask.cpp
         systemtask/SystemMonitor.cpp
         systemtask/WakeLock.cpp
+        storagetask/StorageTask.cpp
         drivers/TwiMaster.cpp
         components/rle/RleDecoder.cpp
         components/heartrate/HeartRateController.cpp

@@ -40,7 +40,7 @@ namespace Pinetime {
         ~Navigation() override;
 
         void Refresh() override;
-        static bool IsAvailable(Pinetime::Controllers::FS& filesystem);
+        static bool IsAvailable(Pinetime::System::StorageTask& storageTask);
 
       private:
         lv_obj_t* imgFlag;
@@ -68,8 +68,8 @@ namespace Pinetime {
         return new Screens::Navigation(*controllers.navigationService);
       };
 
-      static bool IsAvailable(Pinetime::Controllers::FS& filesystem) {
-        return Screens::Navigation::IsAvailable(filesystem);
+      static bool IsAvailable(AppControllers& controllers) {
+        return Screens::Navigation::IsAvailable(controllers.storageTask);
       };
     };
   }

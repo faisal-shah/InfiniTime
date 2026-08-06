@@ -37,7 +37,7 @@ namespace Pinetime {
         FS& fs;
       };
 
-      void Init();
+      bool Init();
 
       int FileOpen(lfs_file_t* file_p, const char* fileName, const int flags);
       int FileClose(lfs_file_t* file_p);

@@ -19,7 +19,8 @@ connectable mode; once beacon mode is on the watch is non-connectable.
 
 ### Key `00080001-78fc-48fe-8e23-433b3a1942d0` (READ | WRITE)
 - WRITE: exactly 28 bytes — the advertisement key. Staged on the BLE task and
-  committed by SystemTask (persisted to `/.system/findmy.dat`, atomic rename).
+  committed as a durable family-state candidate. The key CRC32 is the operation
+  token.
 - READ: 1 byte — `1` if a key is stored, else `0`. The companion confirms
   provisioning with this.
 
@@ -48,15 +49,13 @@ two = top-two-bits of key byte 0 and a hint. Non-connectable, forever duration,
 
 ## Storage & boot
 
-`/.system/findmy.dat` = packed `{ version(1) u8, keyPresent u8, advKey[28] }`. The
-enabled state is RAM-only and always OFF at boot (the key persists, so after a
-reboot the user only re-toggles, no re-provision).
+The key-presence flag and 28-byte key live in `/.system/family-state.dat`. The
+enabled state is RAM-only and always OFF at boot.
 
 ## Radio sequencing and off-state safety
 
-The key file is separate from the global settings (no `settingsVersion` bump).
-`BeaconController` is inert when off: one file read at boot, then no timer or
-radio work. SystemTask only changes the desired radio mode and posts a NimBLE
+`BeaconController` is inert when off: no timer or background radio work.
+SystemTask only changes the desired radio mode and posts a NimBLE
 host-queue event. The host queue owns advertising, connection termination, and
 address changes.
 

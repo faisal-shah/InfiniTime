@@ -21,6 +21,9 @@ namespace {
   void editorEventHandler(lv_obj_t* obj, lv_event_t event) {
     static_cast<MultiAlarm*>(obj->user_data)->OnEditorEvent(obj, event);
   }
+  void saveRefreshTask(lv_task_t* task) {
+    static_cast<MultiAlarm*>(task->user_data)->RefreshSave();
+  }
 }
 
 MultiAlarm::MultiAlarm(Controllers::MultiAlarmController& multiAlarmController, Controllers::Settings& settingsController)
@@ -29,6 +32,9 @@ MultiAlarm::MultiAlarm(Controllers::MultiAlarmController& multiAlarmController, 
 }
 
 MultiAlarm::~MultiAlarm() {
+  if (saveTask != nullptr) {
+    lv_task_del(saveTask);
+  }
   lv_obj_clean(lv_scr_act());
 }
 
@@ -95,8 +101,8 @@ void MultiAlarm::SetRowText(uint8_t i, const Controllers::MultiAlarmController::
 void MultiAlarm::OnRowEvent(lv_obj_t* obj, lv_event_t event) {
   for (uint8_t i = 0; i < MaxAlarms; i++) {
     if (obj == rowSwitch[i] && event == LV_EVENT_VALUE_CHANGED) {
-      multiAlarmController.SetEnabled(i, lv_switch_get_state(obj));
-      SetRowText(i, multiAlarmController.Get(i));
+      completionAtSave = multiAlarmController.CompletionCount();
+      BeginSave(multiAlarmController.SetEnabled(i, lv_switch_get_state(obj)));
       return;
     }
     if (obj == rowTime[i] && event == LV_EVENT_CLICKED) {
@@ -208,8 +214,48 @@ void MultiAlarm::SaveEditor() {
                                                   static_cast<uint8_t>(minuteCounter.GetValue()),
                                                   editMode,
                                                   true}; // editing enables the alarm
-  multiAlarmController.SetAlarm(editingIndex, alarm);
-  ShowList();
+  completionAtSave = multiAlarmController.CompletionCount();
+  BeginSave(multiAlarmController.SetAlarm(editingIndex, alarm));
+}
+
+void MultiAlarm::BeginSave(bool accepted) {
+  if (!accepted) {
+    ShowSaveFailed();
+    return;
+  }
+  ShowSaving();
+  saveTask = lv_task_create(saveRefreshTask, 100, LV_TASK_PRIO_MID, this);
+}
+
+void MultiAlarm::ShowSaving() {
+  lv_obj_clean(lv_scr_act());
+  view = View::Saving;
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_text_static(label, "Saving alarm...");
+  lv_obj_align(label, nullptr, LV_ALIGN_CENTER, 0, 0);
+}
+
+void MultiAlarm::ShowSaveFailed() {
+  lv_obj_clean(lv_scr_act());
+  view = View::SaveFailed;
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
+  lv_label_set_text_static(label, "Save failed\nAlarm unchanged");
+  lv_obj_align(label, nullptr, LV_ALIGN_CENTER, 0, 0);
+}
+
+void MultiAlarm::RefreshSave() {
+  if (multiAlarmController.IsPending() ||
+      multiAlarmController.CompletionCount() == completionAtSave) {
+    return;
+  }
+  lv_task_del(saveTask);
+  saveTask = nullptr;
+  if (multiAlarmController.LastCommitSucceeded()) {
+    ShowList();
+  } else {
+    ShowSaveFailed();
+  }
 }
 
 bool MultiAlarm::OnTouchEvent(Pinetime::Applications::TouchEvents event) {
@@ -220,6 +266,9 @@ bool MultiAlarm::OnTouchEvent(Pinetime::Applications::TouchEvents event) {
     ShowList();
     return true;
   }
+  if (view == View::Saving) {
+    return true;
+  }
   return false; // list view: let swipe-down close the app as usual
 }
 
@@ -227,6 +276,9 @@ bool MultiAlarm::OnButtonPushed() {
   // In the editor, the physical button backs out to the list without saving.
   if (view == View::Edit) {
     ShowList();
+    return true;
+  }
+  if (view == View::Saving) {
     return true;
   }
   return false; // list view: let the button close the app normally

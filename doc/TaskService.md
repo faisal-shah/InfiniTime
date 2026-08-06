@@ -9,13 +9,12 @@ Service UUID `000a0000-78fc-48fe-8e23-433b3a1942d0` (service byte `0x0a`; `0x07`
 is the Prayer Service). Every characteristic requires an authenticated
 (passkey-paired) encrypted link, so only a paired phone can read or change tasks.
 
-The definition sync is the **staged-list** model — identical in shape to the
-[Schedule Service](ScheduleService.md), sharing `components/fs/StagedList.h` on
-the watch. See [ble.md](ble.md#companion-sync-models) for why this feature uses
-staged-list rather than compare-and-swap.
+The definition sync is a full-list transaction like the
+[Schedule Service](ScheduleService.md). Active and candidate lists are fixed RAM banks.
 
 **Completion never crosses the link.** Which tasks are ticked today is watch-only
-state (`/.system/tasks.state`), so it can never cause a merge conflict. The only
+state in RAM, so it can never cause a merge conflict. Rebooting clears today's
+ticks by design. The only
 completion-derived value the phone sees is the streak, in the digest.
 
 ## Characteristics
@@ -44,7 +43,7 @@ reorders or renames tasks.
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 1 | protocol version (1) |
+| 0 | 1 | protocol version (2) |
 | 1 | 1 | capacity (20) |
 | 2 | 1 | task count |
 | 3 | 4 | list version (u32) — echoes what the companion last committed |
@@ -55,16 +54,15 @@ reorders or renames tasks.
 | Message | Bytes | Meaning |
 |---------|-------|---------|
 | BeginSync | `00 00 <count> <version u32>` | open a transaction for `count` tasks |
-| TaskRecord | `01 01 <index> <31-byte record>` | stage one task (any order) |
+| TaskRecord | `01 02 <index> <31-byte record>` | stage one task (any order) |
 | CommitSync | `02 00 <count>` | commit; rejected unless every index was staged |
 | AbortSync | `03 00` | discard the transaction |
-| SetStreak | `04 00 <streak u16>` | overwrite the streak |
+| SetStreak | `04 00 <streak u16> <token u32>` | overwrite the streak |
 
-Full-replace, exactly like the Schedule Service: `BeginSync` opens a staging file
-and takes an SPI-flash wake lock, records are written straight into it in any
-order, and `CommitSync` renames the staging file over the live one on the system
-task. A power loss at any instant leaves the previous list intact. A disconnect
-mid-transaction discards it.
+Full-replace, exactly like the Schedule Service: records fill the inactive RAM
+candidate in any order. Commit queues the complete family snapshot; the old active
+list remains published until durable success. The list version is the Family State
+operation token.
 
 `SetStreak` lets the companion overwrite the streak — a parent forgiving a missed
 day, or setting a reward. It is the only completion-side value the phone can
@@ -75,6 +73,5 @@ write.
 At local midnight (`OnNewDay`) the watch evaluates the day that just ended: if
 there was at least one task and **every** task was ticked, the streak
 increments; otherwise it resets to 0. Then all ticks clear. If the watch was off
-across midnight, the same rollover runs on the next boot (the state file stores
-the day it belongs to). The write is best-effort — skipped while the SPI flash is
-asleep — because the on-load date check re-derives it anyway.
+across midnight, the same rollover runs on the next boot. Streak and rollover date
+are durable family-state fields; today's tick IDs are intentionally volatile.

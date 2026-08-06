@@ -104,6 +104,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                        Pinetime::Controllers::BrightnessController& brightnessController,
                        Pinetime::Controllers::TouchHandler& touchHandler,
                        Pinetime::Controllers::FS& filesystem,
+                       Pinetime::System::StorageTask& storageTask,
                        Pinetime::Drivers::SpiNorFlash& spiNorFlash)
   : lcd {lcd},
     touchPanel {touchPanel},
@@ -127,7 +128,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
     touchHandler {touchHandler},
     filesystem {filesystem},
     spiNorFlash {spiNorFlash},
-    lvgl {lcd, filesystem},
+    lvgl {lcd, storageTask},
     timer(this, TimerCallback),
     controllers {batteryController,
                  bleController,
@@ -145,6 +146,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  alertQueue,
                  brightnessController,
                  nullptr,
+                 storageTask,
                  filesystem,
                  timer,
                  nullptr,
@@ -564,7 +566,8 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
     case Apps::Launcher: {
       std::array<Screens::Tile::Applications, UserAppTypes::Count> apps;
       std::ranges::transform(userApps, apps.begin(), [this](const auto& userApp) {
-        return Screens::Tile::Applications {userApp.icon, userApp.app, userApp.isAvailable(controllers.filesystem)};
+        return Screens::Tile::Applications {
+          userApp.icon, userApp.app, userApp.isAvailable(controllers)};
       });
       currentScreen = std::make_unique<Screens::ApplicationList>(this,
                                                                  settingsController,
@@ -639,7 +642,7 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
       std::ranges::transform(userWatchFaces, items.begin(), [this](const WatchFaceDescription& userWatchFace) {
         return Screens::SettingWatchFace::Item {userWatchFace.name,
                                                 userWatchFace.watchFace,
-                                                userWatchFace.isAvailable(controllers.filesystem)};
+                                                userWatchFace.isAvailable(controllers)};
       });
       currentScreen = std::make_unique<Screens::SettingWatchFace>(this, std::move(items), settingsController, filesystem);
     } break;
@@ -706,7 +709,8 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
                                                             watchdog,
                                                             motionController,
                                                             touchPanel,
-                                                            spiNorFlash);
+                                                            spiNorFlash,
+                                                            *systemTask);
       break;
     case Apps::FlashLight:
       currentScreen = std::make_unique<Screens::FlashLight>(*systemTask, brightnessController);

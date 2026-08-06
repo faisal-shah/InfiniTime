@@ -35,6 +35,7 @@
 #endif
 
 #include "drivers/Watchdog.h"
+#include "storagetask/StorageTask.h"
 #include "systemtask/Messages.h"
 
 extern std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> NoInit_BackUpTime;
@@ -56,11 +57,13 @@ namespace Pinetime {
   }
 
   namespace System {
-    class SystemTask {
+    class SystemTask : public StorageTask::Listener,
+                       public StorageTask::PowerController {
     public:
       enum class SystemTaskState { Sleeping, Running, GoingToSleep, AODSleeping };
       SystemTask(Drivers::SpiMaster& spi,
                  Pinetime::Drivers::SpiNorFlash& spiNorFlash,
+                 StorageTask& storageTask,
                  Drivers::TwiMaster& twiMaster,
                  Drivers::Cst816S& touchPanel,
                  Controllers::Battery& batteryController,
@@ -89,6 +92,11 @@ namespace Pinetime {
       void Start();
       void PushMessage(Messages msg);
       bool TryPushMessage(Messages msg);
+      void OnFamilyStatePersisted(StorageTask::Operation operation,
+                                  uint32_t token,
+                                  bool success) override;
+      bool PrepareStorage() override;
+      void FinishStorage(bool wasAsleep) override;
 
       bool IsSleepDisabled() {
         return wakeLocksHeld > 0;
@@ -97,6 +105,17 @@ namespace Pinetime {
       Pinetime::Controllers::NimbleController& nimble() {
         return nimbleController;
       };
+
+      const StorageTask& storage() const {
+        return storageTask;
+      }
+      const Drivers::SpiMaster& spiBus() const {
+        return spi;
+      }
+      bool StorageWarningActive() const {
+        return (storageTask.Status().flags &
+                Controllers::CompanionProtocol::FamilyStateStorageWarningFlag) != 0;
+      }
 
       Pinetime::Controllers::NotificationManager& GetNotificationManager() {
         return notificationManager;
@@ -115,6 +134,7 @@ namespace Pinetime {
 
       Pinetime::Drivers::SpiMaster& spi;
       Pinetime::Drivers::SpiNorFlash& spiNorFlash;
+      StorageTask& storageTask;
       Pinetime::Drivers::TwiMaster& twiMaster;
       Pinetime::Drivers::Cst816S& touchPanel;
       Pinetime::Controllers::Battery& batteryController;
@@ -150,10 +170,17 @@ namespace Pinetime {
       uint8_t bleDiscoveryTimer = 0;
       TimerHandle_t measureBatteryTimer;
       uint8_t wakeLocksHeld = 0;
+      uint8_t storagePowerLocks = 0;
+      bool storagePowerTransition = false;
       SystemTaskState state = SystemTaskState::Running;
 
       void HandleButtonAction(Controllers::ButtonActions action);
+      void ProcessStorageCompletion();
       bool fastWakeUpDone = false;
+      StorageTask::Operation storageCompletionOperation = StorageTask::Operation::None;
+      uint32_t storageCompletionToken = 0;
+      bool storageCompletionSuccess = false;
+      volatile bool storageCompletionPending = false;
 
       void GoToRunning();
       void GoToSleep();

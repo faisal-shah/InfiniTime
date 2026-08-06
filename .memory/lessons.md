@@ -1,47 +1,49 @@
 # Lessons Learned
 
-## Gotchas
+## Reliability
 
-- NimBLE emits encryption change before it persists both security records.
-- The deprecated RAM store deletes records with a byte-count bug.
-- NimBLE cannot reliably stop and restart advertising in one host callback.
-- A full bond snapshot is too large for the existing SystemTask/BLE task
-  stacks.
-- CCCD-only mutations must dirty persistence even when security keys do not
-  change.
-- A broad `tools` ignore rule hid required protocol and metrics generators from
-  clean clones.
-- Standalone host CI needs recursive submodules because `AtomicFileReplace`
-  includes littlefs headers.
-- Leaving the companion update screen does not cancel its async DFU. A second
-  DFU before on-watch validation erases the secondary slot that held rollback.
-- A long button hold is only a watchdog reset while the application and
-  SystemTask are running; it cannot reset a bootloader/HAL hang before the
-  watchdog starts.
-- Mandatory first-format persistence belongs after the display starts, with BLE
-  gated until durability, so a flash failure remains diagnosable.
-- A fixed timeout on a cross-task restore handoff can permanently abort BLE even
-  when the host event completes later. Gate radio on completion instead.
+- An unbounded peripheral event wait turns a normal storage operation into a
+  watchdog reset; every hardware wait needs a deadline and explicit failure.
+- Low-level command success must be tracked separately from returned register
+  bytes. An unresponsive flash returning `0xff` can otherwise look enabled.
+- Terminal SPI timeout recovery must reset the peripheral before releasing the
+  mutex, not only before a retry.
+- Flash power state needs a storage reference count. A stale "was asleep"
+  snapshot can put flash back to sleep after the system has woken.
+- Moving work to another task is not enough if SystemTask synchronously waits
+  for it. Bond persistence must be callback-driven.
 
-## Patterns
+## Storage
 
-- Keep portable policy independent of NimBLE, FreeRTOS, and littlefs.
-- Post intent to the BLE host; never call GAP from SystemTask.
-- Coalesce MRU-only persistence and suppress touches that do not change order.
-- Treat invalid stores as evidence and recover only through explicit Forget All.
+- One explicit snapshot eliminates runtime feature reads and cross-file partial
+  commits.
+- Candidate state must remain immutable from queue submission through durable
+  completion.
+- New operations must remain blocked until the prior controller completion is
+  delivered, not merely until the file write finishes.
+- Disconnect cleanup may discard only uncommitted staging; queued persistence
+  still needs its completion callback.
+- Debounced settings and midnight rollover require retry state after transient
+  busy/write failures.
+- Task ticks can remain volatile when product behavior explicitly allows losing
+  them on reboot; definitions and streak evidence remain durable.
 
-## Decisions
+## Simulator/tooling
 
-| Decision | Rationale | Date |
-|---|---|---|
-| One active link remains | Matches PineTime controller limits and expected UX | 2026-08-04 |
-| A sixth peer evicts LRU | Deterministic capacity behavior | 2026-08-04 |
-| Version 2.0.0 imports no old bond format | Raw prior formats are deliberately unsupported | 2026-08-04 |
+- Simulator FreeRTOS critical sections must be real locks because simulated
+  tasks are host threads.
+- Polling queue/semaphore shims distort thousands of small resource reads;
+  condition variables keep StorageTask-backed LVGL practical.
+- Existing short flash image files must be padded and `fstream` fail state must
+  be cleared after short reads.
+- Scenario constants must come from generated protocol metadata.
+- Test-only DFU/files enablement belongs behind the simulator test-control
+  compile definition, never in production defaults.
 
-## Checkpoint Log
+## Product cutover
 
-| Date | Tasks Since Last Checkpoint | Notes |
-|---|---:|---|
-| 2026-08-04 | 9 | Firmware implementation, validation, docs, and commit complete |
-| 2026-08-04 | 2 | Clean-clone generator/CMake blockers fixed; 2.0.0 cutover documented |
-| 2026-08-05 | 4 | Deferred first-format write, DFU navigation gate, 40% preflight, readable Sys Info |
+- With a tiny fleet, a strict reset and manual re-entry is safer and simpler
+  than format adapters.
+- Upgrade-only mode needs a recovery path after app restart; protocol
+  confirmation cannot depend solely on ephemeral screen state.
+- Only explicit **Set time** should change the watch clock.

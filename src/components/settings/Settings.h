@@ -4,11 +4,16 @@
 #include <limits>
 #include <optional>
 #include "components/brightness/BrightnessController.h"
-#include "components/fs/FS.h"
+#include "components/fs/FamilyState.h"
 #include "displayapp/apps/Apps.h"
+#include <FreeRTOS.h>
+#include <task.h>
 #include <nrf_log.h>
 
 namespace Pinetime {
+  namespace System {
+    class StorageTask;
+  }
   namespace Controllers {
     class Settings {
     public:
@@ -55,7 +60,7 @@ namespace Pinetime {
         int colorIndex = 0;
       };
 
-      Settings(Pinetime::Controllers::FS& fs);
+      Settings(Pinetime::System::StorageTask& storageTask);
 
       Settings(const Settings&) = delete;
       Settings& operator=(const Settings&) = delete;
@@ -64,6 +69,8 @@ namespace Pinetime {
 
       void Init();
       void SaveSettings();
+      void Process();
+      void OnPersisted(uint32_t token, bool success);
 
       void SetWatchFace(Pinetime::Applications::WatchFace face) {
         if (face != settings.watchFace) {
@@ -352,12 +359,7 @@ namespace Pinetime {
       }
 
     private:
-      Pinetime::Controllers::FS& fs;
-
-      static constexpr uint32_t settingsVersion = 0x000a;
-
       struct SettingsData {
-        uint32_t version = settingsVersion;
         uint32_t stepsGoal = 10000;
         uint32_t screenTimeOut = 15000;
 
@@ -387,6 +389,13 @@ namespace Pinetime {
 
       SettingsData settings;
       bool settingsChanged = false;
+      bool saveRequested = false;
+      uint32_t settingsGeneration = 0;
+      uint32_t submittedGeneration = 0;
+      uint32_t pendingToken = 0;
+      uint32_t nextToken = 1;
+      TickType_t lastSaveRequest = 0;
+      static constexpr TickType_t DebounceTicks = pdMS_TO_TICKS(500);
 
       uint8_t appMenu = 0;
       uint8_t settingsMenu = 0;
@@ -397,8 +406,9 @@ namespace Pinetime {
       bool bleRadioEnabled = true;
       bool dfuAndFsEnabledTillReboot = false;
 
-      void LoadSettingsFromFile();
-      void SaveSettingsToFile();
+      void LoadFromFamilyState();
+      void ApplyToFamilyState(FamilyState::Settings& output) const;
+      Pinetime::System::StorageTask& storageTask;
     };
   }
 }
