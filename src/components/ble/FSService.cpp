@@ -4,6 +4,7 @@
 #include "components/ble/NotificationManager.h"
 #include "components/settings/Settings.h"
 #include "systemtask/SystemTask.h"
+#include <algorithm>
 
 using namespace Pinetime::Controllers;
 
@@ -16,9 +17,10 @@ int FSServiceCallback(uint16_t conn_handle, uint16_t attr_handle, struct ble_gat
   return fsService->OnFSServiceRequested(conn_handle, attr_handle, ctxt);
 }
 
-FSService::FSService(Pinetime::System::SystemTask& systemTask, Pinetime::Controllers::FS& fs)
+FSService::FSService(Pinetime::System::SystemTask& systemTask,
+                     Pinetime::System::StorageTask& storageTask)
   : systemTask {systemTask},
-    fs {fs},
+    storageTask {storageTask},
     characteristicDefinition {{.uuid = &fsVersionUuid.u,
                                .access_cb = FSServiceCallback,
                                .arg = this,
@@ -89,40 +91,58 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
   while (systemTask.IsSleeping()) {
     vTaskDelay(100); // 50ms
   }
-  lfs_dir_t dir = {0};
   lfs_info info = {0};
-  lfs_file f = {0};
+  const auto stopAndReturn = [this](int result) {
+    systemTask.PushMessage(Pinetime::System::Messages::StopFileTransfer);
+    return result;
+  };
   switch (command) {
     case commands::READ: {
       NRF_LOG_INFO("[FS_S] -> Read");
+      if (OS_MBUF_PKTLEN(om) < sizeof(ReadHeader)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       auto* header = (ReadHeader*) om->om_data;
       uint16_t plen = header->pathlen;
-      if (plen > maxpathlen) { //> counts for null term
-        return -1;
+      if (plen >= maxpathlen ||
+          OS_MBUF_PKTLEN(om) < sizeof(ReadHeader) + plen) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
       }
       memcpy(filepath, header->pathstr, plen);
-      filepath[plen] = 0; // Copy and null terminate string
-      ReadResponse resp;
+      filepath[plen] = 0;
+      ReadResponse resp {};
       os_mbuf* om;
       resp.command = commands::READ_DATA;
       resp.status = 0x01;
       resp.chunkoff = header->chunkoff;
-      int res = fs.Stat(filepath, &info);
-      if (res == LFS_ERR_NOENT && info.type != LFS_TYPE_DIR) {
+      int res = storageTask.Stat(filepath, info);
+      if (res != LFS_ERR_OK || info.type != LFS_TYPE_REG ||
+          header->chunkoff > info.size) {
         resp.status = (int8_t) res;
         resp.chunklen = 0;
         resp.totallen = 0;
         om = ble_hs_mbuf_from_flat(&resp, sizeof(ReadResponse));
       } else {
-        resp.chunklen = std::min(header->chunksize, info.size); // TODO add mtu somehow
+        resp.chunklen = std::min(
+          {header->chunksize,
+           info.size - header->chunkoff,
+           static_cast<uint32_t>(fileData.size())});
         resp.totallen = info.size;
-        fs.FileOpen(&f, filepath, LFS_O_RDONLY);
-        fs.FileSeek(&f, header->chunkoff);
-        uint8_t fileData[resp.chunklen] = {0};
-        resp.chunklen = fs.FileRead(&f, fileData, resp.chunklen);
+        uint32_t totalSize = 0;
+        res = storageTask.ReadFile(filepath,
+                                   header->chunkoff,
+                                   fileData.data(),
+                                   resp.chunklen,
+                                   totalSize);
+        if (res < 0) {
+          resp.status = static_cast<int8_t>(res);
+          resp.chunklen = 0;
+        } else {
+          resp.chunklen = static_cast<uint32_t>(res);
+          resp.totallen = totalSize;
+        }
         om = ble_hs_mbuf_from_flat(&resp, sizeof(ReadResponse));
-        os_mbuf_append(om, fileData, resp.chunklen);
-        fs.FileClose(&f);
+        os_mbuf_append(om, fileData.data(), resp.chunklen);
       }
 
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
@@ -130,93 +150,127 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
     }
     case commands::READ_PACING: {
       NRF_LOG_INFO("[FS_S] -> Readpacing");
+      if (OS_MBUF_PKTLEN(om) < sizeof(ReadPacing)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       auto* header = (ReadHeader*) om->om_data;
       ReadResponse resp;
       resp.command = commands::READ_DATA;
       resp.status = 0x01;
       resp.chunkoff = header->chunkoff;
-      int res = fs.Stat(filepath, &info);
-      if (res == LFS_ERR_NOENT && info.type != LFS_TYPE_DIR) {
+      int res = storageTask.Stat(filepath, info);
+      if (res != LFS_ERR_OK || info.type != LFS_TYPE_REG ||
+          header->chunkoff > info.size) {
         resp.status = (int8_t) res;
         resp.chunklen = 0;
         resp.totallen = 0;
       } else {
-        resp.chunklen = std::min(header->chunksize, info.size); // TODO add mtu somehow
+        resp.chunklen = std::min(
+          {header->chunksize,
+           info.size - header->chunkoff,
+           static_cast<uint32_t>(fileData.size())});
         resp.totallen = info.size;
-        fs.FileOpen(&f, filepath, LFS_O_RDONLY);
-        fs.FileSeek(&f, header->chunkoff);
       }
       os_mbuf* om;
       if (resp.chunklen > 0) {
-        uint8_t fileData[resp.chunklen] = {0};
-        resp.chunklen = fs.FileRead(&f, fileData, resp.chunklen);
+        uint32_t totalSize = 0;
+        res = storageTask.ReadFile(filepath,
+                                   header->chunkoff,
+                                   fileData.data(),
+                                   resp.chunklen,
+                                   totalSize);
+        if (res < 0) {
+          resp.status = static_cast<int8_t>(res);
+          resp.chunklen = 0;
+        } else {
+          resp.chunklen = static_cast<uint32_t>(res);
+          resp.totallen = totalSize;
+        }
         om = ble_hs_mbuf_from_flat(&resp, sizeof(ReadResponse));
-        os_mbuf_append(om, fileData, resp.chunklen);
+        os_mbuf_append(om, fileData.data(), resp.chunklen);
       } else {
         resp.chunklen = 0;
         om = ble_hs_mbuf_from_flat(&resp, sizeof(ReadResponse));
       }
-      fs.FileClose(&f);
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
       break;
     }
     case commands::WRITE: {
       NRF_LOG_INFO("[FS_S] -> Write");
+      if (OS_MBUF_PKTLEN(om) < sizeof(WriteHeader)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       auto* header = (WriteHeader*) om->om_data;
       uint16_t plen = header->pathlen;
-      if (plen > maxpathlen) { //> counts for null term
-        return -1;             // TODO make this actually return a BLE notif
+      if (plen >= maxpathlen ||
+          OS_MBUF_PKTLEN(om) < sizeof(WriteHeader) + plen) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
       }
       memcpy(filepath, header->pathstr, plen);
       filepath[plen] = 0; // Copy and null terminate string
       fileSize = header->totalSize;
-      WriteResponse resp;
+      WriteResponse resp {};
       resp.command = commands::WRITE_PACING;
       resp.offset = header->offset;
       resp.modTime = 0;
 
-      int res = fs.FileOpen(&f, filepath, LFS_O_RDWR | LFS_O_CREAT);
-      if (res == 0) {
-        fs.FileClose(&f);
-        resp.status = (res == 0) ? 0x01 : (int8_t) res;
-      }
-      resp.freespace = std::min<size_t>(fs.getSize() - (fs.GetFSSize() * fs.getBlockSize()), fileSize - header->offset);
+      const int res = storageTask.EnsureFile(filepath);
+      resp.status = res == LFS_ERR_OK ? 0x01 : static_cast<int8_t>(res);
+      resp.freespace = std::min<size_t>(
+        storageTask.FreeSpace(),
+        header->offset <= static_cast<uint32_t>(fileSize)
+          ? static_cast<uint32_t>(fileSize) - header->offset
+          : 0);
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(WriteResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
       break;
     }
     case commands::WRITE_DATA: {
       NRF_LOG_INFO("[FS_S] -> WriteData");
+      if (OS_MBUF_PKTLEN(om) < sizeof(WritePacing)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       auto* header = (WritePacing*) om->om_data;
-      WriteResponse resp;
+      if (header->dataSize > OS_MBUF_PKTLEN(om) - sizeof(WritePacing) ||
+          header->dataSize > fileData.size()) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
+      WriteResponse resp {};
       resp.command = commands::WRITE_PACING;
       resp.offset = header->offset;
-      int res = 0;
-
-      if (!(res = fs.FileOpen(&f, filepath, LFS_O_RDWR | LFS_O_CREAT))) {
-        if ((res = fs.FileSeek(&f, header->offset)) >= 0) {
-          res = fs.FileWrite(&f, header->data, header->dataSize);
-        }
-        fs.FileClose(&f);
-      }
+      const int res = storageTask.WriteFile(
+        filepath, header->offset, header->data, header->dataSize);
       if (res < 0) {
         resp.status = (int8_t) res;
+      } else {
+        resp.status = 0x01;
       }
-      resp.freespace = std::min<size_t>(fs.getSize() - (fs.GetFSSize() * fs.getBlockSize()), fileSize - header->offset);
+      resp.freespace = std::min<size_t>(
+        storageTask.FreeSpace(),
+        header->offset <= static_cast<uint32_t>(fileSize)
+          ? static_cast<uint32_t>(fileSize) - header->offset
+          : 0);
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(WriteResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
       break;
     }
     case commands::DELETE: {
       NRF_LOG_INFO("[FS_S] -> Delete");
+      if (OS_MBUF_PKTLEN(om) < sizeof(DelHeader)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       auto* header = (DelHeader*) om->om_data;
       uint16_t plen = header->pathlen;
-      char path[plen + 1] = {0};
+      if (plen >= maxpathlen ||
+          OS_MBUF_PKTLEN(om) < sizeof(DelHeader) + plen) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
+      char path[maxpathlen] = {0};
       memcpy(path, header->pathstr, plen);
       path[plen] = 0; // Copy and null terminate string
       DelResponse resp {};
       resp.command = commands::DELETE_STATUS;
-      int res = fs.FileDelete(path);
+      int res = storageTask.DeletePath(path);
       resp.status = (res == 0) ? 0x01 : (int8_t) res;
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(DelResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
@@ -224,15 +278,22 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
     }
     case commands::MKDIR: {
       NRF_LOG_INFO("[FS_S] -> MKDir");
+      if (OS_MBUF_PKTLEN(om) < sizeof(MKDirHeader)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       auto* header = (MKDirHeader*) om->om_data;
       uint16_t plen = header->pathlen;
-      char path[plen + 1] = {0};
+      if (plen >= maxpathlen ||
+          OS_MBUF_PKTLEN(om) < sizeof(MKDirHeader) + plen) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
+      char path[maxpathlen] = {0};
       memcpy(path, header->pathstr, plen);
       path[plen] = 0; // Copy and null terminate string
       MKDirResponse resp {};
       resp.command = commands::MKDIR_STATUS;
       resp.modification_time = 0;
-      int res = fs.DirCreate(path);
+      int res = storageTask.CreateDirectory(path);
       resp.status = (res == 0) ? 0x01 : (int8_t) res;
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(MKDirResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
@@ -240,9 +301,16 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
     }
     case commands::LISTDIR: {
       NRF_LOG_INFO("[FS_S] -> ListDir");
+      if (OS_MBUF_PKTLEN(om) < sizeof(ListDirHeader)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       ListDirHeader* header = (ListDirHeader*) om->om_data;
       uint16_t plen = header->pathlen;
-      char path[plen + 1] = {0};
+      if (plen >= maxpathlen ||
+          OS_MBUF_PKTLEN(om) < sizeof(ListDirHeader) + plen) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
+      char path[maxpathlen] = {0};
       path[plen] = 0; // Copy and null terminate string
       memcpy(path, header->pathstr, plen);
 
@@ -253,22 +321,17 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
       resp.totalentries = 0;
       resp.entry = 0;
       resp.modification_time = 0;
-      int res = fs.DirOpen(path, &dir);
-      if (res != 0) {
+      uint32_t totalEntries = 0;
+      int res = storageTask.ListDirectoryEntry(
+        path, 0, info, totalEntries);
+      if (res < 0) {
         resp.status = (int8_t) res;
         auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(ListDirResponse));
         ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
         break;
       };
-      while (fs.DirRead(&dir, &info)) {
-        resp.totalentries++;
-      }
-      fs.DirRewind(&dir);
-      while (true) {
-        res = fs.DirRead(&dir, &info);
-        if (res <= 0) {
-          break;
-        }
+      resp.totalentries = totalEntries;
+      while (res > 0) {
         switch (info.type) {
           case LFS_TYPE_REG: {
             resp.flags = 0;
@@ -293,8 +356,9 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
          */
         vTaskDelay(100); // Allow stuff to actually go out over the BLE conn
         resp.entry++;
+        res = storageTask.ListDirectoryEntry(
+          path, resp.entry, info, totalEntries);
       }
-      assert(fs.DirClose(&dir) == 0);
       resp.file_size = 0;
       resp.path_length = 0;
       resp.flags = 0;
@@ -304,16 +368,24 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
     }
     case commands::MOVE: {
       NRF_LOG_INFO("[FS_S] -> Move");
+      if (OS_MBUF_PKTLEN(om) < sizeof(MoveHeader)) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
       MoveHeader* header = (MoveHeader*) om->om_data;
-      uint16_t plen = header->OldPathLength;
-      // Null Terminate string
-      header->pathstr[plen] = 0;
-      char path[header->NewPathLength + 1] = {0};
+      const uint16_t plen = header->OldPathLength;
+      if (plen >= maxpathlen || header->NewPathLength >= maxpathlen ||
+          OS_MBUF_PKTLEN(om) <
+            sizeof(MoveHeader) + plen + 1 + header->NewPathLength) {
+        return stopAndReturn(BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN);
+      }
+      char oldPath[maxpathlen] = {0};
+      char path[maxpathlen] = {0};
+      memcpy(oldPath, header->pathstr, plen);
       memcpy(path, &header->pathstr[plen + 1], header->NewPathLength);
-      path[header->NewPathLength] = 0; // Copy and null terminate string
       MoveResponse resp {};
       resp.command = commands::MOVE_STATUS;
-      int8_t res = (int8_t) fs.Rename(header->pathstr, path);
+      int8_t res =
+        static_cast<int8_t>(storageTask.RenamePath(oldPath, path));
       resp.status = (res == 0) ? 1 : res;
       auto* om = ble_hs_mbuf_from_flat(&resp, sizeof(MoveResponse));
       ble_gattc_notify_custom(connectionHandle, transferCharacteristicHandle, om);
@@ -324,27 +396,4 @@ int FSService::FSCommandHandler(uint16_t connectionHandle, os_mbuf* om) {
   NRF_LOG_INFO("[FS_S] -> done ");
   systemTask.PushMessage(Pinetime::System::Messages::StopFileTransfer);
   return 0;
-}
-
-// Loads resp with file data given a valid filepath header and resp
-void FSService::prepareReadDataResp(ReadHeader* header, ReadResponse* resp) {
-  // uint16_t plen = header->pathlen;
-  resp->command = commands::READ_DATA;
-  resp->chunkoff = header->chunkoff;
-  resp->status = 0x01;
-  struct lfs_info info = {};
-  int res = fs.Stat(filepath, &info);
-  if (res == LFS_ERR_NOENT && info.type != LFS_TYPE_DIR) {
-    resp->status = 0x03;
-    resp->chunklen = 0;
-    resp->totallen = 0;
-  } else {
-    lfs_file f;
-    resp->chunklen = std::min(header->chunksize, info.size);
-    resp->totallen = info.size;
-    fs.FileOpen(&f, filepath, LFS_O_RDONLY);
-    fs.FileSeek(&f, header->chunkoff);
-    resp->chunklen = fs.FileRead(&f, resp->chunk, resp->chunklen);
-    fs.FileClose(&f);
-  }
 }

@@ -25,7 +25,11 @@ SpiNorFlash::SpiNorFlash(Spi& spi) : spi {spi} {
 
 bool SpiNorFlash::WaitUntilIdle(uint32_t timeoutTicks) {
   for (uint32_t waited = 0; waited < timeoutTicks; waited++) {
-    if (!WriteInProgress()) {
+    uint8_t status = 0;
+    if (!ReadStatusRegister(status)) {
+      return false;
+    }
+    if ((status & 0x01u) == 0) {
       return true;
     }
     vTaskDelay(1);
@@ -35,7 +39,11 @@ bool SpiNorFlash::WaitUntilIdle(uint32_t timeoutTicks) {
 
 bool SpiNorFlash::WaitUntilWriteEnabled(uint32_t timeoutTicks) {
   for (uint32_t waited = 0; waited < timeoutTicks; waited++) {
-    if (WriteEnabled()) {
+    uint8_t status = 0;
+    if (!ReadStatusRegister(status)) {
+      return false;
+    }
+    if ((status & 0x02u) != 0) {
       return true;
     }
     vTaskDelay(1);
@@ -87,16 +95,25 @@ void SpiNorFlash::Wakeup() {
 
 SpiNorFlash::Identification SpiNorFlash::ReadIdentification() {
   auto cmd = static_cast<uint8_t>(Commands::ReadIdentification);
-  Identification identification;
+  Identification identification {0xff, 0xff, 0xff};
   spi.Read(&cmd, 1, reinterpret_cast<uint8_t*>(&identification), sizeof(Identification));
   return identification;
 }
 
 uint8_t SpiNorFlash::ReadStatusRegister() {
-  auto cmd = static_cast<uint8_t>(Commands::ReadStatusRegister);
-  uint8_t status;
-  spi.Read(&cmd, sizeof(cmd), &status, sizeof(uint8_t));
+  uint8_t status = 0xFF;
+  ReadStatusRegister(status);
   return status;
+}
+
+bool SpiNorFlash::ReadStatusRegister(uint8_t& status) {
+  auto cmd = static_cast<uint8_t>(Commands::ReadStatusRegister);
+  // 0xFF is what an unresponsive chip clocks out, and it is also the value the
+  // SPI read leaves in place when it times out. Defaulting to it means a failed
+  // read reports "write in progress", so the completion polls below time out
+  // and surface the failure rather than mistaking silence for an idle chip.
+  status = 0xFF;
+  return spi.Read(&cmd, sizeof(cmd), &status, sizeof(uint8_t));
 }
 
 bool SpiNorFlash::WriteInProgress() {
@@ -109,23 +126,27 @@ bool SpiNorFlash::WriteEnabled() {
 
 uint8_t SpiNorFlash::ReadConfigurationRegister() {
   auto cmd = static_cast<uint8_t>(Commands::ReadConfigurationRegister);
-  uint8_t status;
+  uint8_t status = 0xFF;
   spi.Read(&cmd, sizeof(cmd), &status, sizeof(uint8_t));
   return status;
 }
 
-void SpiNorFlash::Read(uint32_t address, uint8_t* buffer, size_t size) {
+bool SpiNorFlash::Read(uint32_t address, uint8_t* buffer, size_t size) {
   static constexpr uint8_t cmdSize = 4;
   uint8_t cmd[cmdSize] = {static_cast<uint8_t>(Commands::Read),
                           static_cast<uint8_t>(address >> 16U),
                           static_cast<uint8_t>(address >> 8U),
                           static_cast<uint8_t>(address)};
-  spi.Read(reinterpret_cast<uint8_t*>(&cmd), cmdSize, buffer, size);
+  const bool ok = spi.Read(reinterpret_cast<uint8_t*>(&cmd), cmdSize, buffer, size);
+  if (!ok) {
+    bumpStat(stats.readFailures);
+  }
+  return ok;
 }
 
-void SpiNorFlash::WriteEnable() {
+bool SpiNorFlash::WriteEnable() {
   auto cmd = static_cast<uint8_t>(Commands::WriteEnable);
-  spi.Read(&cmd, sizeof(cmd), nullptr, 0);
+  return spi.Read(&cmd, sizeof(cmd), nullptr, 0);
 }
 
 void SpiNorFlash::SectorErase(uint32_t sectorAddress) {
@@ -136,22 +157,28 @@ void SpiNorFlash::SectorErase(uint32_t sectorAddress) {
                           static_cast<uint8_t>(sectorAddress)};
 
   eraseTimedOut = false;
-  WriteEnable();
-  if (!WaitUntilWriteEnabled(writeEnableTimeoutTicks)) {
+  if (!WriteEnable() ||
+      !WaitUntilWriteEnabled(writeEnableTimeoutTicks)) {
     eraseTimedOut = true;
+    bumpStat(stats.eraseTimeouts);
     return;
   }
 
-  spi.Read(reinterpret_cast<uint8_t*>(&cmd), cmdSize, nullptr, 0);
+  if (!spi.Read(reinterpret_cast<uint8_t*>(&cmd), cmdSize, nullptr, 0)) {
+    eraseTimedOut = true;
+    bumpStat(stats.eraseTimeouts);
+    return;
+  }
 
   if (!WaitUntilIdle(eraseTimeoutTicks)) {
     eraseTimedOut = true;
+    bumpStat(stats.eraseTimeouts);
   }
 }
 
 uint8_t SpiNorFlash::ReadSecurityRegister() {
   auto cmd = static_cast<uint8_t>(Commands::ReadSecurityRegister);
-  uint8_t status;
+  uint8_t status = 0xFF;
   spi.Read(&cmd, sizeof(cmd), &status, sizeof(uint8_t));
   return status;
 }
@@ -183,16 +210,22 @@ void SpiNorFlash::Write(uint32_t address, const uint8_t* buffer, size_t size) {
                             static_cast<uint8_t>(addr >> 8U),
                             static_cast<uint8_t>(addr)};
 
-    WriteEnable();
-    if (!WaitUntilWriteEnabled(writeEnableTimeoutTicks)) {
+    if (!WriteEnable() ||
+        !WaitUntilWriteEnabled(writeEnableTimeoutTicks)) {
       programTimedOut = true;
+      bumpStat(stats.programTimeouts);
       return;
     }
 
-    spi.WriteCmdAndBuffer(cmd, cmdSize, b, toWrite);
+    if (!spi.WriteCmdAndBuffer(cmd, cmdSize, b, toWrite)) {
+      programTimedOut = true;
+      bumpStat(stats.programTimeouts);
+      return;
+    }
 
     if (!WaitUntilIdle(programTimeoutTicks)) {
       programTimedOut = true;
+      bumpStat(stats.programTimeouts);
       return;
     }
 

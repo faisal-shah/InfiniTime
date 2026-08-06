@@ -37,7 +37,7 @@ def load_manifest(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def validate(manifest: dict[str, Any]) -> None:
-    if manifest.get("schema_version") != 1:
+    if manifest.get("schema_version") != 2:
         raise ValueError("unsupported companion protocol schema")
 
     characteristics = manifest.get("characteristics")
@@ -82,6 +82,14 @@ def validate(manifest: dict[str, Any]) -> None:
     if policy["resolving_list_entries"] < policy["retained_peers"]:
         raise ValueError("resolving-list capacity must cover every retained peer")
 
+    family = manifest["records"]["family_state"]
+    if family["status_size"] != 16:
+        raise ValueError("family-state status must remain 16 bytes")
+    for key in ("states", "operations", "errors", "flags", "att_errors"):
+        values = family[key]
+        if len(set(values.values())) != len(values):
+            raise ValueError(f"family-state {key} values must be unique")
+
 
 def derived(manifest: dict[str, Any]) -> dict[str, int]:
     persisted_notify_count = sum(1 for characteristic in manifest["characteristics"] if characteristic["persist_cccd"])
@@ -104,6 +112,7 @@ def render_infinitime_header(manifest: dict[str, Any], source: Path, digest: str
     policy = manifest["bond_policy"]
     values = derived(manifest)
     records = manifest["records"]
+    family = records["family_state"]
     bridge = [item for item in manifest["characteristics"] if item["bridge_id"] is not None]
 
     lines = [
@@ -128,12 +137,50 @@ def render_infinitime_header(manifest: dict[str, Any], source: Path, digest: str
         f"  inline constexpr uint8_t TaskRecordVersion = {records['task']['record_version']};",
         f"  inline constexpr size_t TaskRecordSize = {records['task']['record_size']};",
         f"  inline constexpr uint8_t TaskCapacity = {records['task']['capacity']};",
+        f"  inline constexpr uint8_t PrayerSettingsProtocolVersion = {records['prayer_settings']['protocol_version']};",
+        f"  inline constexpr uint8_t MultiAlarmProtocolVersion = {records['multi_alarm']['protocol_version']};",
+        f"  inline constexpr uint8_t FamilyStateProtocolVersion = {family['protocol_version']};",
+        f"  inline constexpr uint8_t FamilyStateSnapshotSchemaVersion = {family['snapshot_schema_version']};",
+        f"  inline constexpr size_t FamilyStateStatusSize = {family['status_size']};",
         f"  inline constexpr uint8_t CompanionManagementProtocolVersion = {records['companion_management']['protocol_version']};",
         f"  inline constexpr size_t CompanionManagementStatusSize = {records['companion_management']['status_size']};",
         f"  inline constexpr uint8_t CompanionManagementLruPolicy = {records['companion_management']['eviction_policy_lru']};",
         "",
-        "  enum class BridgeChar : uint8_t {",
+        "  enum class FamilyStateStorageState : uint8_t {",
     ]
+    lines.extend(f"    {pascal(name)} = {value}," for name, value in family["states"].items())
+    lines.extend(
+        [
+            "  };",
+            "",
+            "  enum class FamilyStateOperation : uint8_t {",
+        ]
+    )
+    lines.extend(f"    {pascal(name)} = {value}," for name, value in family["operations"].items())
+    lines.extend(
+        [
+            "  };",
+            "",
+            "  enum class FamilyStateError : uint8_t {",
+        ]
+    )
+    lines.extend(f"    {pascal(name)} = {value}," for name, value in family["errors"].items())
+    lines.extend(
+        [
+            "  };",
+            "",
+            f"  inline constexpr uint8_t FamilyStateStorageWarningFlag = {family['flags']['storage_warning']};",
+            f"  inline constexpr uint8_t FamilyStateBusyAttError = {family['att_errors']['busy']};",
+            f"  inline constexpr uint8_t FamilyStateProtocolAttError = {family['att_errors']['protocol']};",
+            f"  inline constexpr uint8_t FamilyStateStorageAttError = {family['att_errors']['storage']};",
+            "",
+        ]
+    )
+    lines.extend(
+        [
+        "  enum class BridgeChar : uint8_t {",
+        ]
+    )
     lines.extend(f"    {pascal(item['name'])} = {item['bridge_id']}," for item in bridge)
     lines.extend(["  };", "}", ""])
     return "\n".join(lines)
@@ -345,6 +392,7 @@ def render_python(manifest: dict[str, Any], source: Path, digest: str) -> str:
         + f"PERSISTED_NOTIFY_CHARACTERISTICS = {values['persisted_notify_count']}\n"
         + f"MAX_CCCDS = {values['max_cccds']}\n"
         + f"OVERFLOW_POLICY = {policy['overflow_policy']!r}\n"
+        + f"RECORDS = {pprint.pformat(manifest['records'], sort_dicts=True, width=120)}\n"
         + f"BRIDGE_CHAR = {pprint.pformat(bridge, sort_dicts=True, width=120)}\n"
         + f"CHARACTERISTICS = {pprint.pformat(characteristics, sort_dicts=True, width=120)}\n"
     )

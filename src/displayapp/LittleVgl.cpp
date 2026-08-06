@@ -3,52 +3,79 @@
 
 #include <FreeRTOS.h>
 #include <task.h>
+#include <algorithm>
+#include <cstring>
 #include "drivers/St7789.h"
-#include "littlefs/lfs.h"
-#include "components/fs/FS.h"
+#include "storagetask/StorageTask.h"
 
 using namespace Pinetime::Components;
 
 namespace {
+  struct FileHandle {
+    char path[256] {};
+    uint32_t offset = 0;
+    uint32_t size = 0;
+  };
+
   void InitTheme() {
     lv_theme_t* theme = lv_pinetime_theme_init();
     lv_theme_set_act(theme);
   }
 
   lv_fs_res_t lvglOpen(lv_fs_drv_t* drv, void* file_p, const char* path, lv_fs_mode_t /*mode*/) {
-    lfs_file_t* file = static_cast<lfs_file_t*>(file_p);
-    Pinetime::Controllers::FS* filesys = static_cast<Pinetime::Controllers::FS*>(drv->user_data);
-    int res = filesys->FileOpen(file, path, LFS_O_RDONLY);
-    if (res == 0) {
-      if (file->type == 0) {
-        return LV_FS_RES_FS_ERR;
-      } else {
-        return LV_FS_RES_OK;
-      }
+    auto* file = static_cast<FileHandle*>(file_p);
+    auto* storage =
+      static_cast<Pinetime::System::StorageTask*>(drv->user_data);
+    if (std::strlen(path) >= sizeof(file->path)) {
+      return LV_FS_RES_INV_PARAM;
+    }
+    lfs_info info {};
+    const int result = storage->Stat(path, info);
+    if (result == LFS_ERR_OK && info.type == LFS_TYPE_REG) {
+      std::strcpy(file->path, path);
+      file->offset = 0;
+      file->size = info.size;
+      return LV_FS_RES_OK;
     }
     return LV_FS_RES_NOT_EX;
   }
 
-  lv_fs_res_t lvglClose(lv_fs_drv_t* drv, void* file_p) {
-    Pinetime::Controllers::FS* filesys = static_cast<Pinetime::Controllers::FS*>(drv->user_data);
-    lfs_file_t* file = static_cast<lfs_file_t*>(file_p);
-    filesys->FileClose(file);
-
+  lv_fs_res_t lvglClose(lv_fs_drv_t* /*drv*/, void* /*file_p*/) {
     return LV_FS_RES_OK;
   }
 
   lv_fs_res_t lvglRead(lv_fs_drv_t* drv, void* file_p, void* buf, uint32_t btr, uint32_t* br) {
-    Pinetime::Controllers::FS* filesys = static_cast<Pinetime::Controllers::FS*>(drv->user_data);
-    lfs_file_t* file = static_cast<lfs_file_t*>(file_p);
-    filesys->FileRead(file, static_cast<uint8_t*>(buf), btr);
-    *br = btr;
+    auto* storage =
+      static_cast<Pinetime::System::StorageTask*>(drv->user_data);
+    auto* file = static_cast<FileHandle*>(file_p);
+    auto* output = static_cast<uint8_t*>(buf);
+    *br = 0;
+    while (*br < btr && file->offset < file->size) {
+      const uint32_t chunk = std::min<uint32_t>(
+        btr - *br,
+        Pinetime::Controllers::FamilyStateCodec::EncodedSize);
+      uint32_t totalSize = 0;
+      const int read = storage->ReadFile(
+        file->path, file->offset, output + *br, chunk, totalSize);
+      if (read < 0) {
+        return LV_FS_RES_FS_ERR;
+      }
+      if (read == 0) {
+        break;
+      }
+      file->offset += static_cast<uint32_t>(read);
+      file->size = totalSize;
+      *br += static_cast<uint32_t>(read);
+    }
     return LV_FS_RES_OK;
   }
 
-  lv_fs_res_t lvglSeek(lv_fs_drv_t* drv, void* file_p, uint32_t pos) {
-    Pinetime::Controllers::FS* filesys = static_cast<Pinetime::Controllers::FS*>(drv->user_data);
-    lfs_file_t* file = static_cast<lfs_file_t*>(file_p);
-    filesys->FileSeek(file, pos);
+  lv_fs_res_t lvglSeek(lv_fs_drv_t* /*drv*/, void* file_p, uint32_t pos) {
+    auto* file = static_cast<FileHandle*>(file_p);
+    if (pos > file->size) {
+      return LV_FS_RES_INV_PARAM;
+    }
+    file->offset = pos;
     return LV_FS_RES_OK;
   }
 }
@@ -73,7 +100,9 @@ bool touchpad_read(lv_indev_drv_t* indev_drv, lv_indev_data_t* data) {
   return lvgl->GetTouchPadInfo(data);
 }
 
-LittleVgl::LittleVgl(Pinetime::Drivers::St7789& lcd, Pinetime::Controllers::FS& filesystem) : lcd {lcd}, filesystem {filesystem} {
+LittleVgl::LittleVgl(Pinetime::Drivers::St7789& lcd,
+                     Pinetime::System::StorageTask& storageTask)
+  : lcd {lcd}, storageTask {storageTask} {
 }
 
 void LittleVgl::Init() {
@@ -119,14 +148,14 @@ void LittleVgl::InitFileSystem() {
   lv_fs_drv_t fs_drv;
   lv_fs_drv_init(&fs_drv);
 
-  fs_drv.file_size = sizeof(lfs_file_t);
+  fs_drv.file_size = sizeof(FileHandle);
   fs_drv.letter = 'F';
   fs_drv.open_cb = lvglOpen;
   fs_drv.close_cb = lvglClose;
   fs_drv.read_cb = lvglRead;
   fs_drv.seek_cb = lvglSeek;
 
-  fs_drv.user_data = &filesystem;
+  fs_drv.user_data = &storageTask;
 
   lv_fs_drv_register(&fs_drv);
 }

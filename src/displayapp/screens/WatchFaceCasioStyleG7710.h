@@ -37,13 +37,12 @@ namespace Pinetime {
                                  Controllers::HeartRateController& heartRateController,
                                  Controllers::MotionController& motionController,
                                  Controllers::PrayerController& prayerController,
-                                 Controllers::TaskController& taskController,
-                                 Controllers::FS& filesystem);
+                                 Controllers::TaskController& taskController);
         ~WatchFaceCasioStyleG7710() override;
 
         void Refresh() override;
 
-        static bool IsAvailable(Pinetime::Controllers::FS& filesystem);
+        static bool IsAvailable(Pinetime::System::StorageTask& storageTask);
 
       private:
         // Both are on the once-a-minute path and both are RAM-only: the
@@ -135,12 +134,12 @@ namespace Pinetime {
                                                      controllers.heartRateController,
                                                      controllers.motionController,
                                                      controllers.prayerController,
-                                                     controllers.tasksController,
-                                                     controllers.filesystem);
+                                                     controllers.tasksController);
       };
 
-      static bool IsAvailable(Pinetime::Controllers::FS& filesystem) {
-        return Screens::WatchFaceCasioStyleG7710::IsAvailable(filesystem);
+      static bool IsAvailable(AppControllers& controllers) {
+        return Screens::WatchFaceCasioStyleG7710::IsAvailable(
+          controllers.storageTask);
       }
     };
   }

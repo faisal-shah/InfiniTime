@@ -31,6 +31,7 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                        Pinetime::Controllers::BrightnessController& /*brightnessController*/,
                        Pinetime::Controllers::TouchHandler& /*touchHandler*/,
                        Pinetime::Controllers::FS& /*filesystem*/,
+                       Pinetime::System::StorageTask& /*storageTask*/,
                        Pinetime::Drivers::SpiNorFlash& /*spiNorFlash*/)
   : lcd {lcd}, bleController {bleController} {
 }

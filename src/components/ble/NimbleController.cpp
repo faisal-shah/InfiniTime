@@ -22,8 +22,6 @@
 #include "components/ble/NotificationManager.h"
 #include "components/beacon/BeaconController.h"
 #include "components/datetime/DateTimeController.h"
-#include "components/fs/AtomicFileReplace.h"
-#include "components/fs/FS.h"
 #include "systemtask/SystemTask.h"
 
 using namespace Pinetime::Controllers;
@@ -36,7 +34,7 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
                                    Pinetime::Drivers::SpiNorFlash& spiNorFlash,
                                    HeartRateController& heartRateController,
                                    MotionController& motionController,
-                                   FS& fs,
+                                   Pinetime::System::StorageTask& storageTask,
                                    ScheduleController& scheduleController,
                                    TaskController& taskController,
                                    PrayerController& prayerController,
@@ -46,7 +44,7 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     bleController {bleController},
     dateTimeController {dateTimeController},
     spiNorFlash {spiNorFlash},
-    fs {fs},
+    storageTask {storageTask},
     dfuService {systemTask, bleController, spiNorFlash},
 
     currentTimeClient {dateTimeController},
@@ -65,9 +63,10 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     immediateAlertService {systemTask, notificationManager},
     heartRateService {*this, heartRateController},
     motionService {*this, motionController},
-    fsService {systemTask, fs},
+    fsService {systemTask, storageTask},
     serviceDiscovery({&currentTimeClient, &alertNotificationClient}),
-    companionManagementService {*this} {
+    companionManagementService {*this},
+    familyStateService {systemTask.storage()} {
 }
 
 namespace {
@@ -101,9 +100,11 @@ namespace {
     uint8_t type = 0;
   };
 
-  [[gnu::noinline]] int StatBondFile(FS& fs, const char* path, BondFileInfo& output) {
+  [[gnu::noinline]] int StatBondFile(Pinetime::System::StorageTask& storageTask,
+                                    const char* path,
+                                    BondFileInfo& output) {
     lfs_info info {};
-    const int result = fs.Stat(path, &info);
+    const int result = storageTask.Stat(path, info);
     if (result == LFS_ERR_OK) {
       output.size = info.size;
       output.type = info.type;
@@ -111,14 +112,15 @@ namespace {
     return result;
   }
 
-  [[gnu::noinline]] bool ReadBondFile(FS& fs, const char* path, uint8_t* output, size_t size) {
-    FS::Lock lock(fs);
-    lfs_file_t file {};
-    if (fs.FileOpen(&file, path, LFS_O_RDONLY) != LFS_ERR_OK) {
-      return false;
-    }
-    const bool read = fs.FileRead(&file, output, size) == static_cast<int>(size);
-    return fs.FileClose(&file) == LFS_ERR_OK && read;
+  [[gnu::noinline]] bool ReadBondFile(
+    Pinetime::System::StorageTask& storageTask,
+    const char* path,
+    uint8_t* output,
+    size_t size) {
+    uint32_t totalSize = 0;
+    return storageTask.ReadFile(path, 0, output, size, totalSize) ==
+             static_cast<int>(size) &&
+           totalSize == size;
   }
 }
 
@@ -182,6 +184,7 @@ void NimbleController::Init() {
   motionService.Init();
   fsService.Init();
   companionManagementService.Init();
+  familyStateService.Init();
 
   int rc = ble_svc_gap_device_name_set(deviceName);
   ASSERT(rc == 0);
@@ -299,13 +302,28 @@ void NimbleController::PersistBondStore() {
     return;
   }
 
-  const TickType_t started = xTaskGetTickCount();
-  const bool success = WriteBondStoreFile(write.data, write.size);
-  bondWriteCompletion.generation = write.generation;
-  bondWriteCompletion.durationMs = static_cast<uint32_t>((xTaskGetTickCount() - started) * portTICK_PERIOD_MS);
-  bondWriteCompletion.bytes = static_cast<uint32_t>(write.size);
+  bondWriteStarted = xTaskGetTickCount();
+  bondWriteBytes = static_cast<uint32_t>(write.size);
+  if (!storageTask.QueueAtomicReplaceFile("/.system",
+                                          "/.system/ble-store.tmp",
+                                          "/.system/ble-store.dat",
+                                          write.data,
+                                          write.size,
+                                          write.generation,
+                                          *this)) {
+    OnStorageFilePersisted(write.generation, false);
+  }
+}
+
+void NimbleController::OnStorageFilePersisted(uint64_t context,
+                                              bool success) {
+  bondWriteCompletion.generation = context;
+  bondWriteCompletion.durationMs = static_cast<uint32_t>(
+    (xTaskGetTickCount() - bondWriteStarted) * portTICK_PERIOD_MS);
+  bondWriteCompletion.bytes = bondWriteBytes;
   bondWriteCompletion.success = success;
-  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondWriteCompleteEvent);
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(),
+                     &bondWriteCompleteEvent);
 }
 
 void NimbleController::CompleteBondStoreWrite() {
@@ -474,14 +492,6 @@ CompanionManagementStatus NimbleController::GetCompanionStatus() const {
   return status;
 }
 
-bool NimbleController::WriteBondStoreFile(const uint8_t* data, size_t size) {
-  static constexpr const char* TempPath = "/.system/ble-store.tmp";
-  static constexpr const char* DataPath = "/.system/ble-store.dat";
-
-  FS::Lock lock(fs);
-  return AtomicFileReplace(fs, "/.system", TempPath, DataPath, data, size);
-}
-
 bool NimbleController::PrepareBondStoreRestore() {
   static constexpr const char* DataPath = "/.system/ble-store.dat";
   static constexpr const char* LegacyPath = "/bond.dat";
@@ -499,8 +509,9 @@ bool NimbleController::PrepareBondStoreRestore() {
 
   BondFileInfo dataInfo;
   BondFileInfo legacyInfo;
-  const bool legacyExists = StatBondFile(fs, LegacyPath, legacyInfo) == LFS_ERR_OK;
-  const int statResult = StatBondFile(fs, DataPath, dataInfo);
+  const bool legacyExists =
+    StatBondFile(storageTask, LegacyPath, legacyInfo) == LFS_ERR_OK;
+  const int statResult = StatBondFile(storageTask, DataPath, dataInfo);
 
   if (statResult == LFS_ERR_OK) {
     if (dataInfo.type != LFS_TYPE_REG || dataInfo.size > BondStoreCodec::MaxEncodedSize ||
@@ -512,7 +523,8 @@ bool NimbleController::PrepareBondStoreRestore() {
     }
 
     auto& encoded = bondPersistence.BootBuffer();
-    if (!ReadBondFile(fs, DataPath, encoded.data(), dataInfo.size)) {
+    if (!ReadBondFile(
+          storageTask, DataPath, encoded.data(), dataInfo.size)) {
       bondPersistenceWritesEnabled = false;
       bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid,
                                  BondStoreCodec::DecodeError::Length);

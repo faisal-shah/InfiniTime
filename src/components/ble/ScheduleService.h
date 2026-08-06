@@ -10,7 +10,7 @@
 #undef min
 
 #include "components/ble/CustomServiceUuid.h"
-#include "components/ble/SyncWakeLock.h"
+#include "components/ble/generated/CompanionProtocol.h"
 
 int ScheduleServiceCallback(uint16_t connHandle, uint16_t attrHandle, struct ble_gatt_access_ctxt* ctxt, void* arg);
 
@@ -23,10 +23,8 @@ namespace Pinetime {
     class ScheduleController;
 
     // Schedule Service: companion-driven full-replace sync of recurrence rules.
-    // Protocol: doc/ScheduleService.md. Runs on the BLE task. Staging records
-    // go straight to the flash staging file (FS is mutex-protected), so
-    // BeginSync first takes a wake lock via StartFileTransfer to keep the SPI
-    // flash powered for the whole transaction; SystemTask does the commit.
+    // Protocol: doc/ScheduleService.md. Runs on the BLE task. Staging is
+    // RAM-only; SystemTask queues the complete candidate to StorageTask.
     class ScheduleService {
     public:
       ScheduleService(System::SystemTask& systemTask, ScheduleController& scheduleController);
@@ -38,7 +36,7 @@ namespace Pinetime {
     private:
       enum class MessageType : uint8_t { BeginSync = 0, EventRecord = 1, CommitSync = 2, AbortSync = 3 };
       static constexpr uint8_t messageVersion = 0;     // BeginSync / CommitSync / AbortSync
-      static constexpr uint8_t eventRecordVersion = 2; // EventRecord (43-byte records, with end date)
+      static constexpr uint8_t eventRecordVersion = CompanionProtocol::ScheduleRecordVersion;
 
       int OnSyncCommandWrite(struct ble_gatt_access_ctxt* ctxt);
       int OnDigestRead(struct ble_gatt_access_ctxt* ctxt);
@@ -56,7 +54,6 @@ namespace Pinetime {
       System::SystemTask& systemTask;
       ScheduleController& scheduleController;
       uint8_t selectedReadIndex = 0;
-      SyncWakeLock wakeLock;
     };
   }
 }

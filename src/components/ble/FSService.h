@@ -5,7 +5,8 @@
 #undef max
 #undef min
 
-#include "components/fs/FS.h"
+#include "storagetask/StorageTask.h"
+#include <array>
 
 namespace Pinetime {
   namespace System {
@@ -19,7 +20,8 @@ namespace Pinetime {
 
     class FSService {
     public:
-      FSService(Pinetime::System::SystemTask& systemTask, Pinetime::Controllers::FS& fs);
+      FSService(Pinetime::System::SystemTask& systemTask,
+                Pinetime::System::StorageTask& storageTask);
       void Init();
 
       int OnFSServiceRequested(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context);
@@ -27,7 +29,7 @@ namespace Pinetime {
 
     private:
       Pinetime::System::SystemTask& systemTask;
-      Pinetime::Controllers::FS& fs;
+      Pinetime::System::StorageTask& storageTask;
 
       static constexpr const char denyAlert[] = "InfiniTime\0File access attempted, but disabled in settings.";
       static constexpr const uint8_t denyAlertLength = sizeof(denyAlert); // for this to work denyAlert MUST be array
@@ -37,6 +39,7 @@ namespace Pinetime {
       static constexpr uint16_t fsTransferId {0x0200};
       uint16_t fsVersion = {0x0004};
       static constexpr uint16_t maxpathlen = 256;
+      static constexpr size_t maxChunkSize = 512;
       static constexpr ble_uuid16_t fsServiceUuid {
         .u {.type = BLE_UUID_TYPE_16},
         .value = {0xFEBB}}; // {0x72, 0x65, 0x66, 0x73, 0x6e, 0x61, 0x72, 0x54, 0x65, 0x6c, 0x69, 0x46, 0xBB, 0xFE, 0xAF, 0xAD}};
@@ -79,6 +82,7 @@ namespace Pinetime {
       FSState state;
       char filepath[maxpathlen]; // TODO ..ugh fixed filepath len
       int fileSize;
+      std::array<uint8_t, maxChunkSize> fileData {};
 
       using ReadHeader = struct __attribute__((packed)) {
         commands command;
@@ -197,7 +201,6 @@ namespace Pinetime {
       };
 
       int FSCommandHandler(uint16_t connectionHandle, os_mbuf* om);
-      void prepareReadDataResp(ReadHeader* header, ReadResponse* resp);
     };
   }
 }

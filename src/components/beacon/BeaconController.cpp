@@ -1,79 +1,86 @@
 #include "components/beacon/BeaconController.h"
 #include "components/beacon/BeaconRules.h"
-#include "components/fs/FS.h"
+#include "components/fs/Crc32.h"
+#include "storagetask/StorageTask.h"
 #include <cstring>
 #include <libraries/log/nrf_log.h>
 
 using namespace Pinetime::Controllers;
 
-BeaconController::BeaconController(Controllers::FS& fs) : fs {fs} {
+BeaconController::BeaconController(System::StorageTask& storageTask)
+  : storageTask {storageTask} {
 }
 
-void BeaconController::Init() {
-  FS::Lock lock(fs);
-  lfs_file_t file;
-  if (fs.FileOpen(&file, datPath, LFS_O_RDONLY) != LFS_ERR_OK) {
-    return; // no key stored -> hasKey stays false
-  }
-  FileContent content {};
-  const bool ok = fs.FileRead(&file, reinterpret_cast<uint8_t*>(&content), sizeof(content)) == sizeof(content) &&
-                  content.version == formatVersion && content.keyPresent == 1;
-  fs.FileClose(&file);
-  if (!ok) {
-    NRF_LOG_WARNING("[BeaconController] Invalid findmy.dat, ignoring");
-    return;
-  }
-  std::memcpy(advKey, content.advKey, KeySize);
-  hasKey = true;
-  NRF_LOG_INFO("[BeaconController] Loaded advertisement key");
+const FamilyState& BeaconController::Active() const {
+  return storageTask.ActiveState();
 }
 
-void BeaconController::StageKey(const uint8_t key[KeySize]) {
+bool BeaconController::HasKey() const {
+  return Active().findMyKeyPresent;
+}
+
+uint32_t BeaconController::MutationToken(const uint8_t key[KeySize]) {
+  const uint32_t token = Crc32::Compute(key, KeySize);
+  return token == 0 ? 1 : token;
+}
+
+bool BeaconController::StageKey(const uint8_t key[KeySize]) {
+  const uint32_t token = MutationToken(key);
+  if (!storageTask.BeginFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::BeaconKey,
+        token)) {
+    return false;
+  }
+  auto* candidate = storageTask.MutableCandidate(
+    CompanionProtocol::FamilyStateOperation::BeaconKey,
+    token);
+  if (candidate == nullptr) {
+    storageTask.CancelFamilyStateMutation(
+      CompanionProtocol::FamilyStateOperation::BeaconKey,
+      token);
+    return false;
+  }
+  candidate->findMyKeyPresent = true;
+  std::memcpy(candidate->findMyKey.data(), key, KeySize);
   std::memcpy(stagedKey, key, KeySize);
   stagedValid = true;
+  pendingToken = token;
+  return true;
 }
 
 void BeaconController::CommitStagedKey() {
-  if (!stagedValid) {
+  if (!stagedValid || pendingToken != MutationToken(stagedKey)) {
+    if (pendingToken != 0) {
+      storageTask.CancelFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::BeaconKey,
+        pendingToken);
+    }
+    stagedValid = false;
+    pendingToken = 0;
     return;
   }
-  std::memcpy(advKey, stagedKey, KeySize);
   stagedValid = false;
-  hasKey = true;
-  SaveToFile();
-  NRF_LOG_INFO("[BeaconController] Advertisement key committed");
+  if (!storageTask.CommitFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::BeaconKey,
+        pendingToken)) {
+    pendingToken = 0;
+  }
 }
 
-void BeaconController::SaveToFile() {
-  FS::Lock lock(fs);
-  lfs_dir systemDir;
-  if (fs.DirOpen("/.system", &systemDir) != LFS_ERR_OK) {
-    fs.DirCreate("/.system");
-  } else {
-    fs.DirClose(&systemDir);
-  }
-
-  lfs_file_t file;
-  if (fs.FileOpen(&file, stagePath, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
-    NRF_LOG_WARNING("[BeaconController] Failed to open findmy.stg for writing");
+void BeaconController::OnPersisted(uint32_t token, bool success) {
+  if (token != pendingToken) {
     return;
   }
-  FileContent content {formatVersion, 1, {}};
-  std::memcpy(content.advKey, advKey, KeySize);
-  const bool ok = fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&content), sizeof(content)) == sizeof(content);
-  fs.FileClose(&file);
-  if (!ok) {
-    fs.FileDelete(stagePath);
-    return;
+  pendingToken = 0;
+  if (success) {
+    NRF_LOG_INFO("[BeaconController] Advertisement key committed");
   }
-  // Atomic in littlefs: a power cut leaves either the old key or the new one.
-  fs.Rename(stagePath, datPath);
 }
 
 void BeaconController::BuildAddress(uint8_t out[6]) const {
-  BeaconRules::BuildAddress(advKey, out);
+  BeaconRules::BuildAddress(Active().findMyKey.data(), out);
 }
 
 void BeaconController::BuildPayload(uint8_t out[31]) const {
-  BeaconRules::BuildPayload(advKey, out);
+  BeaconRules::BuildPayload(Active().findMyKey.data(), out);
 }

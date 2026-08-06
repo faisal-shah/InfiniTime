@@ -25,8 +25,7 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
                                                    Controllers::HeartRateController& heartRateController,
                                                    Controllers::MotionController& motionController,
                                                    Controllers::PrayerController& prayerController,
-                                                   Controllers::TaskController& taskController,
-                                                   Controllers::FS& filesystem)
+                                                   Controllers::TaskController& taskController)
   : currentDateTime {{}},
     batteryIcon(false),
     dateTimeController {dateTimeController},
@@ -39,28 +38,15 @@ WatchFaceCasioStyleG7710::WatchFaceCasioStyleG7710(Controllers::DateTime& dateTi
     prayerController {prayerController},
     taskController {taskController} {
 
-  lfs_file f = {};
-  if (filesystem.FileOpen(&f, "/fonts/lv_font_dots_40.bin", LFS_O_RDONLY) >= 0) {
-    filesystem.FileClose(&f);
-    font_dot40 = lv_font_load("F:/fonts/lv_font_dots_40.bin");
-  }
+  font_dot40 = lv_font_load("F:/fonts/lv_font_dots_40.bin");
 
   // Same typeface as lv_font_dots_40, small enough that a two-digit month with
   // a two-digit day fits the top-left box and MAGHRIB fits the prayer row.
-  if (filesystem.FileOpen(&f, "/fonts/lv_font_dots_30.bin", LFS_O_RDONLY) >= 0) {
-    filesystem.FileClose(&f);
-    font_dot30 = lv_font_load("F:/fonts/lv_font_dots_30.bin");
-  }
+  font_dot30 = lv_font_load("F:/fonts/lv_font_dots_30.bin");
 
-  if (filesystem.FileOpen(&f, "/fonts/7segments_40.bin", LFS_O_RDONLY) >= 0) {
-    filesystem.FileClose(&f);
-    font_segment40 = lv_font_load("F:/fonts/7segments_40.bin");
-  }
+  font_segment40 = lv_font_load("F:/fonts/7segments_40.bin");
 
-  if (filesystem.FileOpen(&f, "/fonts/7segments_115.bin", LFS_O_RDONLY) >= 0) {
-    filesystem.FileClose(&f);
-    font_segment115 = lv_font_load("F:/fonts/7segments_115.bin");
-  }
+  font_segment115 = lv_font_load("F:/fonts/7segments_115.bin");
 
   label_battery_value = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_align(label_battery_value, lv_scr_act(), LV_ALIGN_IN_TOP_RIGHT, 0, 0);
@@ -412,28 +398,19 @@ void WatchFaceCasioStyleG7710::RefreshTasks() {
   lv_obj_realign(tasksIcon); // anchored to label_tasks, whose width just changed
 }
 
-bool WatchFaceCasioStyleG7710::IsAvailable(Pinetime::Controllers::FS& filesystem) {
-  lfs_file file = {};
-
-  if (filesystem.FileOpen(&file, "/fonts/lv_font_dots_40.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  if (filesystem.FileOpen(&file, "/fonts/lv_font_dots_30.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  if (filesystem.FileOpen(&file, "/fonts/7segments_40.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  if (filesystem.FileOpen(&file, "/fonts/7segments_115.bin", LFS_O_RDONLY) < 0) {
-    return false;
-  }
-
-  filesystem.FileClose(&file);
-  return true;
+bool WatchFaceCasioStyleG7710::IsAvailable(
+  Pinetime::System::StorageTask& storageTask) {
+  lfs_info info {};
+  return storageTask.Stat("/fonts/lv_font_dots_40.bin", info) ==
+           LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG &&
+         storageTask.Stat("/fonts/lv_font_dots_30.bin", info) ==
+           LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG &&
+         storageTask.Stat("/fonts/7segments_40.bin", info) ==
+           LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG &&
+         storageTask.Stat("/fonts/7segments_115.bin", info) ==
+           LFS_ERR_OK &&
+         info.type == LFS_TYPE_REG;
 }

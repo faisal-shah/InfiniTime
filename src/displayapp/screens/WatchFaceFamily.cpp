@@ -15,6 +15,7 @@
 #include "components/multialarm/MultiAlarmController.h"
 #include "components/prayer/PrayerController.h"
 #include "components/settings/Settings.h"
+#include "systemtask/SystemTask.h"
 #include "components/task/TaskController.h"
 
 using namespace Pinetime::Applications::Screens;
@@ -71,7 +72,8 @@ WatchFaceFamily::WatchFaceFamily(Controllers::DateTime& dateTimeController,
                                  Controllers::MotionController& motionController,
                                  Controllers::PrayerController& prayerController,
                                  Controllers::TaskController& taskController,
-                                 Controllers::SimpleWeatherService& weatherService)
+                                 Controllers::SimpleWeatherService& weatherService,
+                                 System::SystemTask& systemTask)
   : dateTimeController {dateTimeController},
     notificationManager {notificationManager},
     settingsController {settingsController},
@@ -80,6 +82,7 @@ WatchFaceFamily::WatchFaceFamily(Controllers::DateTime& dateTimeController,
     prayerController {prayerController},
     taskController {taskController},
     weatherService {weatherService},
+    systemTask {systemTask},
     batteryIcon(true),
     batteryController {batteryController},
     bleController {bleController},
@@ -101,6 +104,12 @@ WatchFaceFamily::WatchFaceFamily(Controllers::DateTime& dateTimeController,
   lv_label_set_text_static(plugIcon, Symbols::plug);
   alarmIcon = lv_label_create(statusRow, nullptr);
   lv_label_set_text_static(alarmIcon, Symbols::bell);
+  storageWarningIcon = lv_label_create(statusRow, nullptr);
+  lv_label_set_text_static(storageWarningIcon, "!");
+  lv_obj_set_style_local_text_color(storageWarningIcon,
+                                    LV_LABEL_PART_MAIN,
+                                    LV_STATE_DEFAULT,
+                                    LV_COLOR_ORANGE);
   label_battery = lv_label_create(statusRow, nullptr);
   lv_label_set_text_static(label_battery, "");
   batteryIcon.Create(statusRow);
@@ -336,7 +345,12 @@ void WatchFaceFamily::RefreshStatus() {
   powerPresent = batteryController.IsPowerPresent();
   bleConnected = bleController.IsConnected() && bleController.IsRadioEnabled();
   alarmEnabled = multiAlarmController.AnyEnabled();
-  if (!batteryPercent.IsUpdated() && !powerPresent.IsUpdated() && !bleConnected.IsUpdated() && !alarmEnabled.IsUpdated()) {
+  storageWarning = systemTask.StorageWarningActive();
+  if (!batteryPercent.IsUpdated() &&
+      !powerPresent.IsUpdated() &&
+      !bleConnected.IsUpdated() &&
+      !alarmEnabled.IsUpdated() &&
+      !storageWarning.IsUpdated()) {
     return;
   }
 
@@ -344,6 +358,7 @@ void WatchFaceFamily::RefreshStatus() {
   lv_obj_set_hidden(bleIcon, !bleConnected.Get());
   lv_obj_set_hidden(plugIcon, !powerPresent.Get());
   lv_obj_set_hidden(alarmIcon, !alarmEnabled.Get());
+  lv_obj_set_hidden(storageWarningIcon, !storageWarning.Get());
   lv_label_set_text_fmt(label_battery, "%d%%", percent);
   batteryIcon.SetBatteryPercentage(percent);
   FitStatusBand();

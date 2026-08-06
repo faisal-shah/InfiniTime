@@ -1,130 +1,216 @@
 #include "components/multialarm/MultiAlarmController.h"
+
 #include "components/datetime/DateTimeController.h"
-#include "components/fs/FS.h"
+#include "storagetask/StorageTask.h"
 #include "systemtask/SystemTask.h"
+
 #include <cstring>
 #include <libraries/log/nrf_log.h>
 
 using namespace Pinetime::Controllers;
 
 namespace {
-  void AlarmTimerCallback(TimerHandle_t xTimer) {
-    static_cast<MultiAlarmController*>(pvTimerGetTimerID(xTimer))->TimerFired();
+  void AlarmTimerCallback(TimerHandle_t timer) {
+    static_cast<MultiAlarmController*>(pvTimerGetTimerID(timer))->TimerFired();
   }
 }
 
-MultiAlarmController::MultiAlarmController(Controllers::DateTime& dateTimeController, Controllers::FS& fs)
-  : dateTimeController {dateTimeController}, fs {fs} {
+MultiAlarmController::MultiAlarmController(Controllers::DateTime& dateTimeController,
+                                           System::StorageTask& storageTask)
+  : dateTimeController {dateTimeController}, storageTask {storageTask} {
+}
+
+const FamilyState& MultiAlarmController::Active() const {
+  return storageTask.ActiveState();
+}
+
+void MultiAlarmController::RefreshCache() {
+  const auto& active = Active();
+  for (uint8_t index = 0; index < MaxAlarms; index++) {
+    const auto& input = active.alarms[index];
+    alarmCache[index] = {
+      input.hour,
+      input.minute,
+      input.mode == 1 ? Mode::Daily : Mode::Once,
+      input.enabled,
+    };
+  }
 }
 
 void MultiAlarmController::Init(System::SystemTask* systemTask) {
   this->systemTask = systemTask;
   alarmTimer = xTimerCreate("MultiAlarm", 1, pdFALSE, this, AlarmTimerCallback);
-  LoadFromFile();
+  RefreshCache();
   Reschedule();
 }
 
 time_t MultiAlarmController::Now() const {
   auto now = dateTimeController.CurrentDateTime();
-  return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
+  return std::chrono::system_clock::to_time_t(
+    std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
 }
 
 bool MultiAlarmController::AnyEnabled() const {
-  for (const auto& a : alarms) {
-    if (a.enabled) {
+  for (const auto& alarm : alarmCache) {
+    if (alarm.enabled) {
       return true;
     }
   }
   return false;
 }
 
-void MultiAlarmController::SetAlarm(uint8_t index, const Alarm& alarm) {
-  if (index >= MaxAlarms) {
-    return;
-  }
-  alarms[index] = alarm;
-  version++;
-  SaveToFile();
-  Reschedule();
+bool MultiAlarmController::BeginCandidate(uint32_t token) {
+  return pendingToken == 0 &&
+         storageTask.BeginFamilyStateMutation(
+           CompanionProtocol::FamilyStateOperation::MultiAlarm,
+           token);
 }
 
-void MultiAlarmController::SetEnabled(uint8_t index, bool enabled) {
+bool MultiAlarmController::SetAlarm(uint8_t index, const Alarm& alarm) {
   if (index >= MaxAlarms) {
-    return;
-  }
-  alarms[index].enabled = enabled;
-  version++;
-  SaveToFile();
-  Reschedule();
-}
-
-bool MultiAlarmController::StageWire(const uint8_t (&wire)[WireSize]) {
-  uint32_t expectedVersion;
-  std::memcpy(&expectedVersion, &wire[0], sizeof(expectedVersion));
-  // Compare-and-swap: reject synchronously if the watch moved on since the
-  // phone last pulled.
-  if (expectedVersion != version) {
     return false;
   }
-  Alarm next[MaxAlarms];
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    const size_t o = 4 + i * 4;
-    const uint8_t hour = wire[o + 0];
-    const uint8_t minute = wire[o + 1];
-    const uint8_t mode = wire[o + 2];
-    if (hour > 23 || minute > 59 || mode > 1) {
-      return false; // reject the whole write on any invalid field
-    }
-    next[i] = {hour, minute, static_cast<Mode>(mode), wire[o + 3] != 0};
+  const uint32_t token =
+    Active().alarmVersion == UINT32_MAX ? 1 : Active().alarmVersion + 1;
+  if (!BeginCandidate(token)) {
+    return false;
   }
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    staged[i] = next[i];
+  auto* candidate = storageTask.MutableCandidate(
+    CompanionProtocol::FamilyStateOperation::MultiAlarm,
+    token);
+  if (candidate == nullptr) {
+    storageTask.CancelFamilyStateMutation(
+      CompanionProtocol::FamilyStateOperation::MultiAlarm,
+      token);
+    return false;
   }
-  stagedExpectedVersion = expectedVersion;
-  stagedValid = true;
+  candidate->alarms[index] = {
+    alarm.hour,
+    alarm.minute,
+    static_cast<uint8_t>(alarm.mode),
+    alarm.enabled,
+  };
+  candidate->alarmVersion = token;
+  pendingToken = token;
+  if (!storageTask.CommitFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::MultiAlarm,
+        token)) {
+    pendingToken = 0;
+    return false;
+  }
   return true;
 }
 
+bool MultiAlarmController::SetEnabled(uint8_t index, bool enabled) {
+  if (index >= MaxAlarms) {
+    return false;
+  }
+  Alarm alarm = alarmCache[index];
+  alarm.enabled = enabled;
+  return SetAlarm(index, alarm);
+}
+
+MultiAlarmController::StageResult MultiAlarmController::StageWire(
+  const uint8_t (&wire)[WireSize]) {
+  uint32_t expectedVersion;
+  std::memcpy(&expectedVersion, &wire[0], sizeof(expectedVersion));
+  if (expectedVersion != Active().alarmVersion) {
+    return StageResult::Invalid;
+  }
+  const uint32_t token =
+    expectedVersion == UINT32_MAX ? 1 : expectedVersion + 1;
+  if (!BeginCandidate(token)) {
+    return StageResult::Busy;
+  }
+  auto* candidate = storageTask.MutableCandidate(
+    CompanionProtocol::FamilyStateOperation::MultiAlarm,
+    token);
+  if (candidate == nullptr) {
+    storageTask.CancelFamilyStateMutation(
+      CompanionProtocol::FamilyStateOperation::MultiAlarm,
+      token);
+    return StageResult::Invalid;
+  }
+  for (uint8_t index = 0; index < MaxAlarms; index++) {
+    const size_t offset = 4 + index * 4;
+    const uint8_t hour = wire[offset];
+    const uint8_t minute = wire[offset + 1];
+    const uint8_t mode = wire[offset + 2];
+    if (hour > 23 || minute > 59 || mode > 1) {
+      storageTask.CancelFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::MultiAlarm,
+        token);
+      return StageResult::Invalid;
+    }
+    candidate->alarms[index] = {
+      hour,
+      minute,
+      mode,
+      wire[offset + 3] != 0,
+    };
+  }
+  candidate->alarmVersion = token;
+  stagedExpectedVersion = expectedVersion;
+  stagedValid = true;
+  pendingToken = token;
+  return StageResult::Accepted;
+}
+
 void MultiAlarmController::CommitStagedFromCompanion() {
-  if (!stagedValid) {
+  if (!stagedValid || stagedExpectedVersion != Active().alarmVersion) {
+    if (pendingToken != 0) {
+      storageTask.CancelFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::MultiAlarm,
+        pendingToken);
+    }
+    stagedValid = false;
+    pendingToken = 0;
     return;
   }
   stagedValid = false;
-  // Re-check the CAS: a watch-side edit may have bumped version between stage
-  // and commit. A stale stage is dropped (the phone re-reads and retries).
-  if (stagedExpectedVersion != version) {
-    return;
+  if (!storageTask.CommitFamilyStateMutation(
+        CompanionProtocol::FamilyStateOperation::MultiAlarm,
+        pendingToken)) {
+    pendingToken = 0;
   }
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    alarms[i] = staged[i];
-  }
-  version++;
-  SaveToFile();
-  Reschedule();
 }
 
-void MultiAlarmController::Serialize(uint8_t (&out)[WireSize]) const {
-  std::memcpy(&out[0], &version, sizeof(version));
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    const size_t o = 4 + i * 4;
-    out[o + 0] = alarms[i].hour;
-    out[o + 1] = alarms[i].minute;
-    out[o + 2] = static_cast<uint8_t>(alarms[i].mode);
-    out[o + 3] = alarms[i].enabled ? 1 : 0;
+void MultiAlarmController::OnPersisted(uint32_t token, bool success) {
+  if (token != pendingToken) {
+    return;
+  }
+  pendingToken = 0;
+  lastCommitSucceeded = success;
+  completionCount++;
+  if (success) {
+    RefreshCache();
+    Reschedule();
+  }
+}
+
+void MultiAlarmController::Serialize(uint8_t (&output)[WireSize]) const {
+  const uint32_t version = Active().alarmVersion;
+  std::memcpy(&output[0], &version, sizeof(version));
+  for (uint8_t index = 0; index < MaxAlarms; index++) {
+    const size_t offset = 4 + index * 4;
+    const auto& alarm = alarmCache[index];
+    output[offset] = alarm.hour;
+    output[offset + 1] = alarm.minute;
+    output[offset + 2] = static_cast<uint8_t>(alarm.mode);
+    output[offset + 3] = alarm.enabled ? 1 : 0;
   }
 }
 
 void MultiAlarmController::Reschedule() {
   xTimerStop(alarmTimer, 0);
   hasNext = false;
-
   const time_t now = Now();
   std::optional<time_t> best;
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    const auto t = MultiAlarmRules::NextOccurrence(alarms[i], now);
-    if (t && (!best || *t < *best)) {
-      best = *t;
-      nextIndex = i;
+  for (uint8_t index = 0; index < MaxAlarms; index++) {
+    const auto occurrence = MultiAlarmRules::NextOccurrence(alarmCache[index], now);
+    if (occurrence && (!best || *occurrence < *best)) {
+      best = *occurrence;
+      nextIndex = index;
     }
   }
   if (!best) {
@@ -139,81 +225,30 @@ void MultiAlarmController::ArmTimer(int64_t seconds) {
   if (seconds < 1) {
     seconds = 1;
   }
-  if (seconds > static_cast<int64_t>(maxTimerSeconds)) {
-    seconds = maxTimerSeconds; // TimerFired re-checks and re-arms
+  if (seconds > maxTimerSeconds) {
+    seconds = maxTimerSeconds;
   }
-  xTimerChangePeriod(alarmTimer, static_cast<TickType_t>(seconds) * configTICK_RATE_HZ, 0);
+  xTimerChangePeriod(alarmTimer,
+                     static_cast<TickType_t>(seconds) * configTICK_RATE_HZ,
+                     0);
   xTimerStart(alarmTimer, 0);
 }
 
 void MultiAlarmController::TimerFired() {
-  // Timer daemon task, flash possibly asleep: RAM only. A one-shot alarm's
-  // disable + persist happens on SystemTask, which powers the flash first.
   if (!hasNext) {
     return;
   }
   const time_t now = Now();
   if (nextDueTime - now > 60) {
-    ArmTimer(nextDueTime - now); // armed at the cap; re-arm from cache
+    ArmTimer(nextDueTime - now);
     return;
   }
   lastFiredDue = nextDueTime;
   lastFiredIndex = nextIndex;
   systemTask->PushMessage(System::Messages::SetOffMultiAlarm);
-  // Re-arm for the next enabled alarm. A fired one-shot is disabled by the
-  // SystemTask handler (which then calls Reschedule again with flash awake);
-  // meanwhile advance past this instant so we don't re-fire the same one.
-  if (alarms[nextIndex].mode == Mode::Daily) {
+  if (alarmCache[nextIndex].mode == Mode::Daily) {
     Reschedule();
   } else {
-    hasNext = false; // wait for SystemTask to disable + reschedule
+    hasNext = false;
   }
-}
-
-void MultiAlarmController::LoadFromFile() {
-  FS::Lock lock(fs);
-  lfs_file_t file;
-  if (fs.FileOpen(&file, datPath, LFS_O_RDONLY) != LFS_ERR_OK) {
-    return; // no alarms yet
-  }
-  FileHeader header {};
-  AlarmRecord records[MaxAlarms] {};
-  const bool ok = fs.FileRead(&file, reinterpret_cast<uint8_t*>(&header), sizeof(header)) == sizeof(header) &&
-                  header.version == alarmsFormatVersion &&
-                  fs.FileRead(&file, reinterpret_cast<uint8_t*>(records), sizeof(records)) == sizeof(records);
-  fs.FileClose(&file);
-  if (!ok) {
-    NRF_LOG_WARNING("[MultiAlarm] Invalid alarms file, discarding");
-    return;
-  }
-  version = header.alarmsVersion;
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    alarms[i] = {records[i].hour,
-                 records[i].minute,
-                 records[i].mode == static_cast<uint8_t>(Mode::Daily) ? Mode::Daily : Mode::Once,
-                 records[i].enabled != 0};
-  }
-}
-
-void MultiAlarmController::SaveToFile() {
-  FS::Lock lock(fs);
-  lfs_dir systemDir;
-  if (fs.DirOpen("/.system", &systemDir) != LFS_ERR_OK) {
-    fs.DirCreate("/.system");
-  } else {
-    fs.DirClose(&systemDir);
-  }
-  lfs_file_t file;
-  if (fs.FileOpen(&file, datPath, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) != LFS_ERR_OK) {
-    NRF_LOG_WARNING("[MultiAlarm] Cannot open alarms file for write");
-    return;
-  }
-  const FileHeader header {alarmsFormatVersion, version};
-  fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(&header), sizeof(header));
-  AlarmRecord records[MaxAlarms] {};
-  for (uint8_t i = 0; i < MaxAlarms; i++) {
-    records[i] = {alarms[i].hour, alarms[i].minute, static_cast<uint8_t>(alarms[i].mode), static_cast<uint8_t>(alarms[i].enabled ? 1 : 0)};
-  }
-  fs.FileWrite(&file, reinterpret_cast<const uint8_t*>(records), sizeof(records));
-  fs.FileClose(&file);
 }

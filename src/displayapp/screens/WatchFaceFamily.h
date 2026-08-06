@@ -44,7 +44,8 @@ namespace Pinetime {
                         Controllers::MotionController& motionController,
                         Controllers::PrayerController& prayerController,
                         Controllers::TaskController& taskController,
-                        Controllers::SimpleWeatherService& weatherService);
+                        Controllers::SimpleWeatherService& weatherService,
+                        System::SystemTask& systemTask);
         ~WatchFaceFamily() override;
 
         void Refresh() override;
@@ -63,6 +64,7 @@ namespace Pinetime {
         Utility::DirtyValue<bool> powerPresent {};
         Utility::DirtyValue<bool> bleConnected {};
         Utility::DirtyValue<bool> alarmEnabled {};
+        Utility::DirtyValue<bool> storageWarning {};
         Utility::DirtyValue<std::optional<Pinetime::Controllers::SimpleWeatherService::CurrentWeather>> currentWeather {};
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::minutes>> currentDateTime {};
 
@@ -100,6 +102,7 @@ namespace Pinetime {
         Controllers::PrayerController& prayerController;
         Controllers::TaskController& taskController;
         Controllers::SimpleWeatherService& weatherService;
+        System::SystemTask& systemTask;
 
         // Face-local status row rather than the shared StatusIcons widget,
         // because that one has no numeric percentage and adding one there
@@ -108,6 +111,7 @@ namespace Pinetime {
         lv_obj_t* bleIcon;
         lv_obj_t* plugIcon;
         lv_obj_t* alarmIcon;
+        lv_obj_t* storageWarningIcon;
         lv_obj_t* label_battery;
         BatteryIcon batteryIcon;
 
@@ -146,7 +150,8 @@ namespace Pinetime {
                                             controllers.motionController,
                                             controllers.prayerController,
                                             controllers.tasksController,
-                                            *controllers.weatherController);
+                                            *controllers.weatherController,
+                                            *controllers.systemTask);
       };
 
       // No external resources: every glyph this face uses is compiled into

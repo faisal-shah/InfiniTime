@@ -6,6 +6,7 @@
 
 #include "drivers/Bma421.h"
 #include "components/ble/MotionService.h"
+#include "components/motion/StepRecoveryState.h"
 #include "utility/CircularBuffer.h"
 
 namespace Pinetime {
@@ -25,7 +26,8 @@ namespace Pinetime {
 
       static constexpr size_t stepHistorySize = 2; // Store this many day's step counter
 
-      void AdvanceDay();
+      void RestoreStepState(StepRecoveryState& state, uint32_t dayKey);
+      void AdvanceDay(uint32_t dayKey);
 
       void Update(int16_t x, int16_t y, int16_t z, uint32_t nbSteps);
 
@@ -77,6 +79,8 @@ namespace Pinetime {
     private:
       Utility::CircularBuffer<uint32_t, stepHistorySize> nbSteps = {0};
       uint32_t currentTripSteps = 0;
+      uint32_t stepOffset = 0;
+      StepRecoveryState* stepRecovery = nullptr;
 
       void SetSteps(Days day, uint32_t steps) {
         nbSteps[static_cast<std::underlying_type_t<Days>>(day)] = steps;

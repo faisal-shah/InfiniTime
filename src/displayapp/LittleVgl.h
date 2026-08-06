@@ -1,7 +1,7 @@
 #pragma once
 
 #include <lvgl/lvgl.h>
-#include <components/fs/FS.h>
+#include "storagetask/StorageTask.h"
 
 namespace Pinetime {
   namespace Drivers {
@@ -12,7 +12,8 @@ namespace Pinetime {
     class LittleVgl {
     public:
       enum class FullRefreshDirections { None, Up, Down, Left, Right, LeftAnim, RightAnim };
-      LittleVgl(Pinetime::Drivers::St7789& lcd, Pinetime::Controllers::FS& filesystem);
+      LittleVgl(Pinetime::Drivers::St7789& lcd,
+                Pinetime::System::StorageTask& storageTask);
 
       LittleVgl(const LittleVgl&) = delete;
       LittleVgl& operator=(const LittleVgl&) = delete;
@@ -43,7 +44,7 @@ namespace Pinetime {
       void InitFileSystem();
 
       Pinetime::Drivers::St7789& lcd;
-      Pinetime::Controllers::FS& filesystem;
+      Pinetime::System::StorageTask& storageTask;
 
       lv_disp_buf_t disp_buf_2;
       lv_color_t buf2_1[LV_HOR_RES_MAX * 4];

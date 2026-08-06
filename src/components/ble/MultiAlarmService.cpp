@@ -44,8 +44,13 @@ int MultiAlarmService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {
     }
     // Stage in RAM (validates + compare-and-swap); reject synchronously on an
     // invalid field or a version mismatch so the phone re-reads and retries.
-    if (!multiAlarmController.StageWire(wire)) {
-      return BLE_ATT_ERR_UNLIKELY;
+    switch (multiAlarmController.StageWire(wire)) {
+      case MultiAlarmController::StageResult::Accepted:
+        break;
+      case MultiAlarmController::StageResult::Busy:
+        return CompanionProtocol::FamilyStateBusyAttError;
+      case MultiAlarmController::StageResult::Invalid:
+        return BLE_ATT_ERR_UNLIKELY;
     }
     // SystemTask commits with the flash awake.
     systemTask.PushMessage(System::Messages::MultiAlarmSettingsReceived);

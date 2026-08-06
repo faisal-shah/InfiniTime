@@ -24,6 +24,7 @@ namespace Pinetime {
 
         void OnRowEvent(lv_obj_t* obj, lv_event_t event);
         void OnEditorEvent(lv_obj_t* obj, lv_event_t event);
+        void RefreshSave();
         bool OnButtonPushed() override;
         bool OnTouchEvent(TouchEvents event) override;
 
@@ -31,13 +32,16 @@ namespace Pinetime {
         void ShowList();
         void ShowEditor(uint8_t index);
         void SaveEditor();
+        void BeginSave(bool accepted);
+        void ShowSaving();
+        void ShowSaveFailed();
         void SetRowText(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm);
         void UpdateEditorAmPm();
 
         Controllers::MultiAlarmController& multiAlarmController;
         Controllers::Settings& settingsController;
 
-        enum class View { List, Edit } view = View::List;
+        enum class View { List, Edit, Saving, SaveFailed } view = View::List;
         uint8_t editingIndex = 0;
 
         lv_obj_t* listContainer = nullptr;
@@ -51,6 +55,8 @@ namespace Pinetime {
         lv_obj_t* btnSave = nullptr;
         lv_obj_t* btnAmPm = nullptr; // 12h mode only
         lv_obj_t* lblAmPm = nullptr;
+        lv_task_t* saveTask = nullptr;
+        uint32_t completionAtSave = 0;
         Controllers::MultiAlarmController::Mode editMode = Controllers::MultiAlarmController::Mode::Daily;
         Widgets::Counter hourCounter = Widgets::Counter(0, 23, jetbrains_mono_42);
         Widgets::Counter minuteCounter = Widgets::Counter(0, 59, jetbrains_mono_42);

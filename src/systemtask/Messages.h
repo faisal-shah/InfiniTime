@@ -49,7 +49,8 @@ namespace Pinetime {
       // admitted; the watch may now advertise and ask the user to pair again.
       BondFormatInitialized,
       // A sixth pairing evicted the least-recently-used companion.
-      BondPeerEvicted
+      BondPeerEvicted,
+      FamilyStatePersisted
     };
   }
 }

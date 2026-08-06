@@ -1,4 +1,5 @@
 #include "systemtask/SystemTask.h"
+#include "storagetask/StorageTask.h"
 #include <hal/nrf_rtc.h>
 #include <libraries/gpiote/app_gpiote.h>
 #include <libraries/log/nrf_log.h>
@@ -42,6 +43,7 @@ void MeasureBatteryTimerCallback(TimerHandle_t xTimer) {
 
 SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Pinetime::Drivers::SpiNorFlash& spiNorFlash,
+                       StorageTask& storageTask,
                        Drivers::TwiMaster& twiMaster,
                        Drivers::Cst816S& touchPanel,
                        Controllers::Battery& batteryController,
@@ -68,6 +70,7 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                        Pinetime::Controllers::ButtonHandler& buttonHandler)
   : spi {spi},
     spiNorFlash {spiNorFlash},
+    storageTask {storageTask},
     twiMaster {twiMaster},
     touchPanel {touchPanel},
     batteryController {batteryController},
@@ -100,12 +103,14 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
                      spiNorFlash,
                      heartRateController,
                      motionController,
-                     fs,
+                     storageTask,
                      scheduleController,
                      taskController,
                      prayerController,
                      multiAlarmController,
                      beaconController) {
+  storageTask.SetListener(this);
+  storageTask.SetPowerController(this);
 }
 
 void SystemTask::Start() {
@@ -142,7 +147,13 @@ void SystemTask::Work() {
   spiNorFlash.Init();
   spiNorFlash.Wakeup();
 
-  fs.Init();
+  const bool filesystemReady = fs.Init();
+  if (!filesystemReady) {
+    NRF_LOG_ERROR("[filesystem] mount failed");
+  }
+  if (filesystemReady && !storageTask.Start()) {
+    NRF_LOG_ERROR("[storage] task failed to start or load");
+  }
 
   nimbleController.Init();
 
@@ -313,24 +324,14 @@ void SystemTask::Work() {
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
         case Messages::PrayerSettingsReceived: {
-          // Committing writes the settings file; a BLE write can arrive while
-          // sleeping with the flash powered down. Wake just the flash; a
-          // silent settings push should not light the screen.
-          FlashWakeScope flash(*this);
           prayerController.CommitStaged();
           break;
         }
         case Messages::BeaconKeyReceived: {
-          // Persist the provisioned Find My key; same flash-wake bracket as a
-          // prayer settings write.
-          FlashWakeScope flash(*this);
           beaconController.CommitStagedKey();
           break;
         }
         case Messages::MultiAlarmSettingsReceived: {
-          // Persist a companion alarm write staged on the BLE task; same
-          // flash-wake bracket. Reschedule (RAM/timer) happens inside commit.
-          FlashWakeScope flash(*this);
           multiAlarmController.CommitStagedFromCompanion();
           break;
         }
@@ -413,7 +414,7 @@ void SystemTask::Work() {
           HandleButtonAction(action);
         } break;
         case Messages::OnDisplayTaskSleeping:
-        case Messages::OnDisplayTaskAOD:
+        case Messages::OnDisplayTaskAOD: {
           // The state was set to GoingToSleep when GoToSleep() was called
           // If the state is no longer GoingToSleep, we have since transitioned back to Running
           // In this case absorb the OnDisplayTaskSleeping/AOD
@@ -421,9 +422,13 @@ void SystemTask::Work() {
           if (state != SystemTaskState::GoingToSleep) {
             break;
           }
+          taskENTER_CRITICAL();
+          storagePowerTransition = true;
+          const bool storageActive = storagePowerLocks != 0;
+          taskEXIT_CRITICAL();
 
           // Must keep SPI and flash awake when still updating the display for always on
-          if (msg == Messages::OnDisplayTaskSleeping) {
+          if (!storageActive && msg == Messages::OnDisplayTaskSleeping) {
             if (BootloaderVersion::IsValid()) {
               // First versions of the bootloader do not expose their version and cannot initialize the SPI NOR FLASH
               // if it's in sleep mode. Avoid bricked device by disabling sleep mode on these versions.
@@ -437,24 +442,21 @@ void SystemTask::Work() {
             touchPanel.Sleep();
           }
 
-          if (msg == Messages::OnDisplayTaskSleeping) {
-            state = SystemTaskState::Sleeping;
-          } else {
-            state = SystemTaskState::AODSleeping;
-          }
+          taskENTER_CRITICAL();
+          state = msg == Messages::OnDisplayTaskSleeping
+                    ? SystemTaskState::Sleeping
+                    : SystemTaskState::AODSleeping;
+          storagePowerTransition = false;
+          taskEXIT_CRITICAL();
           break;
+        }
         case Messages::OnNewDay:
           motionSensor.ResetStepCounter();
-          motionController.AdvanceDay();
-          // RollOverDay counts yesterday's completed tasks to decide the streak,
-          // and that count comes from the task file. Midnight almost always
-          // arrives while asleep with the flash powered down, where reads return
-          // garbage on hardware -- so the streak would be computed from noise and
-          // then written back. Same bracket as the OnNewTime rescan.
-          {
-            FlashWakeScope flash(*this);
-            taskController.RollOverDay();
-          }
+          motionController.AdvanceDay(
+            static_cast<uint32_t>(dateTimeController.Year()) * 10000 +
+            static_cast<uint32_t>(dateTimeController.Month()) * 100 +
+            dateTimeController.Day());
+          taskController.RollOverDay();
           break;
         case Messages::OnNewHour:
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
@@ -508,11 +510,17 @@ void SystemTask::Work() {
         case Messages::BondPeerEvicted:
           ShowBondNotice("Bluetooth", "Oldest paired phone\nremoved (max 5)");
           break;
+        case Messages::FamilyStatePersisted:
+          ProcessStorageCompletion();
+          break;
         default:
           break;
       }
     }
     elapsed = xTaskGetTickCount() - lastStateUpdate;
+    if (storageCompletionPending) {
+      ProcessStorageCompletion();
+    }
     if (elapsed >= stateUpdatePeriod) {
       UpdateMotion();
       if (isBleDiscoveryTimerRunning) {
@@ -524,8 +532,11 @@ void SystemTask::Work() {
         } else {
           bleDiscoveryTimer--;
         }
+
       }
       monitor.Process();
+      settingsController.Process();
+      taskController.Process();
       NoInit_BackUpTime = dateTimeController.CurrentDateTime();
       if (nrf_gpio_pin_read(PinMap::Button) == 0) {
         watchdog.Reload();
@@ -536,38 +547,137 @@ void SystemTask::Work() {
 #pragma clang diagnostic pop
 }
 
-bool SystemTask::WakeFlashForWork() {
-  const bool flashWasAsleep = state == SystemTaskState::Sleeping || state == SystemTaskState::AODSleeping;
-  if (flashWasAsleep) {
-    if (state == SystemTaskState::Sleeping) {
-      spi.Wakeup();
-    }
-    spiNorFlash.Wakeup();
+void SystemTask::OnFamilyStatePersisted(StorageTask::Operation operation,
+                                        uint32_t token,
+                                        bool success) {
+  taskENTER_CRITICAL();
+  storageCompletionOperation = operation;
+  storageCompletionToken = token;
+  storageCompletionSuccess = success;
+  storageCompletionPending = true;
+  taskEXIT_CRITICAL();
+  TryPushMessage(Messages::FamilyStatePersisted);
+}
+
+void SystemTask::ProcessStorageCompletion() {
+  StorageTask::Operation operation;
+  uint32_t token;
+  bool success;
+  taskENTER_CRITICAL();
+  if (!storageCompletionPending) {
+    taskEXIT_CRITICAL();
+    return;
   }
-  return flashWasAsleep;
+  operation = storageCompletionOperation;
+  token = storageCompletionToken;
+  success = storageCompletionSuccess;
+  storageCompletionPending = false;
+  taskEXIT_CRITICAL();
+
+  switch (operation) {
+    case StorageTask::Operation::Schedule:
+      scheduleController.OnPersisted(token, success);
+      break;
+    case StorageTask::Operation::Tasks:
+    case StorageTask::Operation::TaskStreak:
+      taskController.OnPersisted(operation, token, success);
+      break;
+    case StorageTask::Operation::MultiAlarm:
+      multiAlarmController.OnPersisted(token, success);
+      break;
+    case StorageTask::Operation::PrayerSettings:
+      prayerController.OnPersisted(token, success);
+      break;
+    case StorageTask::Operation::BeaconKey:
+      beaconController.OnPersisted(token, success);
+      break;
+    case StorageTask::Operation::Settings:
+      settingsController.OnPersisted(token, success);
+      break;
+    default:
+      break;
+  }
+  storageTask.AcknowledgeFamilyStateCompletion(operation, token);
+}
+
+bool SystemTask::PrepareStorage() {
+  return WakeFlashForWork();
+}
+
+void SystemTask::FinishStorage(bool wasAsleep) {
+  RestoreFlashAfterWork(wasAsleep);
+}
+
+bool SystemTask::WakeFlashForWork() {
+  while (true) {
+    taskENTER_CRITICAL();
+    if (!storagePowerTransition) {
+      const bool firstLock = storagePowerLocks++ == 0;
+      const auto currentState = state;
+      taskEXIT_CRITICAL();
+      const bool flashWasAsleep =
+        firstLock &&
+        (currentState == SystemTaskState::Sleeping ||
+         currentState == SystemTaskState::AODSleeping);
+      if (flashWasAsleep) {
+        if (currentState == SystemTaskState::Sleeping) {
+          spi.Wakeup();
+        }
+        spiNorFlash.Wakeup();
+      }
+      return flashWasAsleep;
+    }
+    taskEXIT_CRITICAL();
+    vTaskDelay(1);
+  }
 }
 
 void SystemTask::RestoreFlashAfterWork(bool wasAsleep) {
-  // Mirror the sleep path's conditions, including the old-bootloader guard
-  // (early bootloaders cannot reinitialize a slept flash chip).
-  if (!wasAsleep) {
+  (void) wasAsleep;
+  SystemTaskState currentState;
+  bool shouldSleep;
+  while (true) {
+    taskENTER_CRITICAL();
+    if (!storagePowerTransition) {
+      if (storagePowerLocks != 0) {
+        storagePowerLocks--;
+      }
+      currentState = state;
+      shouldSleep =
+        storagePowerLocks == 0 &&
+        (currentState == SystemTaskState::Sleeping ||
+         currentState == SystemTaskState::AODSleeping);
+      taskEXIT_CRITICAL();
+      break;
+    }
+    taskEXIT_CRITICAL();
+    vTaskDelay(1);
+  }
+  if (!shouldSleep) {
     return;
   }
   if (BootloaderVersion::IsValid()) {
     spiNorFlash.Sleep();
   }
-  if (state == SystemTaskState::Sleeping) {
+  if (currentState == SystemTaskState::Sleeping) {
     spi.Sleep();
   }
 }
 
 void SystemTask::GoToRunning() {
+  taskENTER_CRITICAL();
   if (state == SystemTaskState::Running) {
+    taskEXIT_CRITICAL();
     return;
   }
-  if (state == SystemTaskState::Sleeping || state == SystemTaskState::AODSleeping) {
+  storagePowerTransition = true;
+  const auto previousState = state;
+  const bool storageActive = storagePowerLocks != 0;
+  taskEXIT_CRITICAL();
+  if (previousState == SystemTaskState::Sleeping ||
+      previousState == SystemTaskState::AODSleeping) {
     // SPI only switched off when entering Sleeping, not AOD or GoingToSleep
-    if (state == SystemTaskState::Sleeping) {
+    if (!storageActive && previousState == SystemTaskState::Sleeping) {
       spi.Wakeup();
       spiNorFlash.Wakeup();
     }
@@ -585,7 +695,10 @@ void SystemTask::GoToRunning() {
     nimbleController.RestartFastAdv();
   }
 
+  taskENTER_CRITICAL();
   state = SystemTaskState::Running;
+  storagePowerTransition = false;
+  taskEXIT_CRITICAL();
 };
 
 void SystemTask::GoToSleep() {

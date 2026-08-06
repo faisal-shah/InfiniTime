@@ -57,6 +57,26 @@ extern "C" {
 void vApplicationIdleHook(void) {
 }
 
+void vApplicationGetIdleTaskMemory(StaticTask_t** taskBuffer,
+                                   StackType_t** stackBuffer,
+                                   uint32_t* stackSize) {
+  static StaticTask_t idleTask;
+  static StackType_t idleStack[configMINIMAL_STACK_SIZE];
+  *taskBuffer = &idleTask;
+  *stackBuffer = idleStack;
+  *stackSize = configMINIMAL_STACK_SIZE;
+}
+
+void vApplicationGetTimerTaskMemory(StaticTask_t** taskBuffer,
+                                    StackType_t** stackBuffer,
+                                    uint32_t* stackSize) {
+  static StaticTask_t timerTask;
+  static StackType_t timerStack[configTIMER_TASK_STACK_DEPTH];
+  *taskBuffer = &timerTask;
+  *stackBuffer = timerStack;
+  *stackSize = configTIMER_TASK_STACK_DEPTH;
+}
+
 void SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler(void) {
   if (((NRF_SPIM0->INTENSET & (1 << 6)) != 0) && NRF_SPIM0->EVENTS_END == 1) {
     NRF_SPIM0->EVENTS_END = 0;

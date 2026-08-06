@@ -35,9 +35,24 @@ namespace {
   }
 }
 
-void MotionController::AdvanceDay() {
+void MotionController::RestoreStepState(StepRecoveryState& state,
+                                        uint32_t dayKey) {
+  stepRecovery = &state;
+  const auto restored = state.Restore(dayKey);
+  stepOffset = restored.value_or(0);
+  SetSteps(Days::Today, stepOffset);
+  if (!restored) {
+    state.Clear(dayKey);
+  }
+}
+
+void MotionController::AdvanceDay(uint32_t dayKey) {
   --nbSteps; // Higher index = further in the past
   SetSteps(Days::Today, 0);
+  stepOffset = 0;
+  if (stepRecovery != nullptr) {
+    stepRecovery->Clear(dayKey);
+  }
   if (service != nullptr) {
     service->OnNewStepCountValue(NbSteps(Days::Today));
   }
@@ -45,8 +60,13 @@ void MotionController::AdvanceDay() {
 
 void MotionController::Update(int16_t x, int16_t y, int16_t z, uint32_t nbSteps) {
   uint32_t oldSteps = NbSteps(Days::Today);
-  if (oldSteps != nbSteps && service != nullptr) {
-    service->OnNewStepCountValue(nbSteps);
+  uint32_t totalSteps = stepOffset + nbSteps;
+  if (totalSteps < oldSteps) {
+    stepOffset = oldSteps;
+    totalSteps = stepOffset + nbSteps;
+  }
+  if (oldSteps != totalSteps && service != nullptr) {
+    service->OnNewStepCountValue(totalSteps);
   }
 
   if (service != nullptr && (xHistory[0] != x || yHistory[0] != y || zHistory[0] != z)) {
@@ -73,11 +93,14 @@ void MotionController::Update(int16_t x, int16_t y, int16_t z, uint32_t nbSteps)
 
   stats = GetAccelStats();
 
-  int32_t deltaSteps = nbSteps - oldSteps;
+  int32_t deltaSteps = totalSteps - oldSteps;
   if (deltaSteps > 0) {
     currentTripSteps += deltaSteps;
   }
-  SetSteps(Days::Today, nbSteps);
+  SetSteps(Days::Today, totalSteps);
+  if (oldSteps != totalSteps && stepRecovery != nullptr) {
+    *stepRecovery = StepRecoveryState::Capture(stepRecovery->dayKey, totalSteps);
+  }
 }
 
 MotionController::AccelStats MotionController::GetAccelStats() const {

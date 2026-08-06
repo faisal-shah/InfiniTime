@@ -4,23 +4,21 @@
 #include <timers.h>
 #include <cstdint>
 #include <ctime>
+#include "components/ble/generated/CompanionProtocol.h"
 #include "components/datetime/DateTimeController.h"
+#include "components/fs/FamilyState.h"
 #include "components/prayer/PrayerRules.h"
 
 namespace Pinetime {
   namespace System {
     class SystemTask;
+    class StorageTask;
   }
 
   namespace Controllers {
-    class FS;
-
-    // Prayer times: settings live in RAM (9 bytes, persisted to
-    // /.system/prayer.dat) and the daily times are pure math over them, so
-    // unlike the schedule the whole alert path never touches the filesystem -
-    // only Init() (load) and a settings change (save) do. The timer callback
-    // is therefore trivially safe on the timer-daemon task with the flash
-    // asleep.
+    // Prayer times are computed from the active family-state RAM snapshot.
+    // Mutations publish only after StorageTask makes the complete snapshot
+    // durable, so alert and display paths never touch the filesystem.
     class PrayerController {
     public:
       // Wire/persist blob, byte-identical to the BLE characteristic value and
@@ -47,7 +45,7 @@ namespace Pinetime {
 
       static_assert(sizeof(Settings) == 9, "Settings layout is part of the BLE protocol");
 
-      static constexpr uint8_t formatVersion = 1;
+      static constexpr uint8_t formatVersion = CompanionProtocol::PrayerSettingsProtocolVersion;
 
       static bool Validate(const Settings& s) {
         return s.version == formatVersion && s.method <= 4 && s.asrMadhab <= 1 && (s.flags == 0x00 || s.flags == 0x01 || s.flags == 0x03) &&
@@ -55,27 +53,25 @@ namespace Pinetime {
                s.utcOffsetQuarters <= 56;
       }
 
-      PrayerController(Controllers::DateTime& dateTimeController, Controllers::FS& fs);
+      PrayerController(Controllers::DateTime& dateTimeController, System::StorageTask& storageTask);
 
-      // SystemTask, boot (flash awake): load settings, arm the alert timer.
+      // SystemTask, boot: arm the alert timer from the loaded family state.
       void Init(System::SystemTask* systemTask);
 
       // Any task; RAM only.
-      const Settings& GetSettings() const {
-        return settings;
-      }
+      Settings GetSettings() const;
 
       // Today's times from the RAM settings; pure math, any task.
       PrayerRules::Times ComputeToday() const;
 
-      // Watch settings screens (DisplayApp task; screen on so flash is
-      // awake): persist + re-arm.
-      void SetSettings(const Settings& newSettings);
+      // Watch settings screens: begin a durable-first mutation.
+      bool SetSettings(const Settings& newSettings);
 
-      // BLE write path: stage on the BLE task (RAM only), commit on the
-      // SystemTask with the flash awake (the caller brackets the wake).
-      void StageSettings(const Settings& newSettings);
+      // BLE write path: stage the candidate on the BLE task, then queue the
+      // commit on SystemTask.
+      bool StageSettings(const Settings& newSettings);
       void CommitStaged();
+      void OnPersisted(uint32_t token, bool success);
 
       // Recompute the next alert and re-arm the timer. RAM + pure math; no
       // filesystem, safe wherever the settings are current.
@@ -126,27 +122,24 @@ namespace Pinetime {
       // FreeRTOS timer periods are 32-bit ticks; cap each arm and re-check on
       // expiry (the next prayer is always <24h away, this is cheap insurance).
       static constexpr uint32_t maxTimerSeconds = 24 * 60 * 60;
-      static constexpr const char* datPath = "/.system/prayer.dat";
-      static constexpr const char* stagePath = "/.system/prayer.stg";
-
       time_t Now() const;
       // Prayer times for the civil day containing `dayAnchor`.
       PrayerRules::Times ComputeFor(time_t dayAnchor) const;
-      void LoadFromFile();
-      void SaveToFile();
+      static uint32_t MutationToken(const Settings& settings);
+      FamilyState* BeginCandidate(const Settings& settings, uint32_t token);
       // Due instants (local epoch) of the five alerting prayers for the civil
       // day containing `dayAnchor`, honoring the past-midnight wrap.
       uint8_t DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_t (&prayer)[5]) const;
       void ArmTimer(int64_t seconds);
 
       Controllers::DateTime& dateTimeController;
-      Controllers::FS& fs;
+      System::StorageTask& storageTask;
       System::SystemTask* systemTask = nullptr;
       TimerHandle_t alertTimer {};
 
-      Settings settings {};
       Settings staged {};
       bool stagedValid = false;
+      uint32_t pendingToken = 0;
 
       // Next-alert cache so TimerFired never computes or reads anything.
       bool hasNext = false;

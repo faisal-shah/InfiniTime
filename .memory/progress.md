@@ -5,51 +5,58 @@
 
 ## Resume Here
 
-- Next task: GATE-INCIDENT
-- Next action: commit and release the validated 2.0.2 prerelease, then confirm
-  nonzero MAC, restored/empty-ready boot state, connectable mode, and GAP starts
-  on the affected watch.
-- Last checkpoint: 2026-08-06 02:18 UTC
+- Next action: final review, commit and push all four repositories, then create
+  the PineTimeCompanion 0.34.0 and InfiniTime 3.0.0 prereleases and inspect CI.
+- Last checkpoint: 2026-08-06 19:12 UTC.
 
-## Phase 1 - Firmware policy
+## InfiniTime 3.0
 
-- [x] P1-T1 generate the shared protocol and capacities (2026-08-04)
-- [x] P1-T2 implement continuous advertising and bounded recovery (2026-08-04)
-- [x] P1-T3 implement five-peer LRU and NimBLE store/config (2026-08-04)
-- [x] GATE-P1 - host policy tests pass (2026-08-04)
+- [x] Generate strict schema-2 companion contract and 3.0 record versions.
+- [x] Reduce schedule capacity to 32.
+- [x] Add CRC-protected explicit family-state codec.
+- [x] Add fixed-allocation StorageTask and durable status characteristic.
+- [x] Convert schedules and task definitions to RAM active/candidate banks.
+- [x] Keep task ticks volatile while persisting streak and rollover date.
+- [x] Convert alarms, prayer, Find My and settings to family-state mutations.
+- [x] Add on-watch durable alarm saving state.
+- [x] Centralize bonds, FSService, LVGL and resource reads on StorageTask.
+- [x] Remove obsolete StagedList persistence.
+- [x] Add bounded SPIM recovery, flash failure propagation and diagnostics.
+- [x] Add no-init step recovery and storage breadcrumbs.
+- [x] Add Sys Info storage/SPI evidence and persistent family-face warning.
 
-## Phase 2 - Persistence and management
+## Companion 0.34.0
 
-- [x] P2-T1 implement atomic versioned bond persistence (2026-08-04)
-- [x] P2-T2 add Companion Management and Forget All UI (2026-08-04)
-- [x] P2-T3 remove full snapshots from task stacks (2026-08-04)
-- [x] GATE-P2 - measured stack chains fit existing task budgets (2026-08-04)
+- [x] Remove automatic time writes from ordinary operations and forwarding.
+- [x] Add strict generated 3.0 protocol metadata.
+- [x] Wait for exact durable operation/token completion.
+- [x] Make older firmware upgrade-only.
+- [x] Require screenshot acknowledgement and enforce the 32-entry gate.
+- [x] Confirm healthy 3.0 storage before clearing incompatible local state.
+- [x] Remove the secure Find My key during confirmed cutover.
+- [x] Allow 3.0 status confirmation after app restart.
 
-## Phase 3 - Integration
+## Validation
 
-- [x] P3-T1 add CI, power proxy, diagnostics, and docs (2026-08-04)
-- [x] P3-T2 build all six ARM targets (2026-08-05)
-- [x] P3-T3 pass 20 host tests and all eight cross-repository scenarios (2026-08-05)
-- [x] P3-T4 track generation tools, support modern CMake, and cut version 2.0.0 (2026-08-04)
-- [x] GATE-P3 - clean-worktree generator, host, CMake 3.28, and scenario validation pass (2026-08-04)
+- [x] All six ARM targets build.
+- [x] 26 firmware host tests pass.
+- [x] InfiniSim builds and both CTests pass.
+- [x] 262 companion TypeScript tests pass.
+- [x] 21 Kotlin tests pass.
+- [x] Companion typecheck and web export pass.
+- [x] Android debug and release APK builds pass.
+- [x] Live browser E2E passes against InfiniSim.
+- [x] Live bridge regression passes: 59 checks.
+- [x] All eight ptlab simulator scenarios pass, including DFU and raw
+  power-loss.
+- [x] Protocol generation check and 46 dev-tools tests pass.
+- [x] Updated shell scripts pass ShellCheck.
 
-## Phase 4 - Physical ship gate
+## Pending release/hardware gates
 
-- [ ] P4-T1 run sequential A-B-A access with independent centrals
-- [ ] P4-T2 verify five peers plus deterministic sixth-peer LRU
-- [ ] P4-T3 verify SMP gate, CCCD restore, and long-idle advertising
-- [ ] P4-T4 run the controlled upstream/candidate battery soak
-- [ ] GATE-P4 - attach hardware evidence to the exact release SHAs
-
-## Live incident
-
-- [x] INCIDENT-T1 establish that the second swap completed and 2.0.0 booted
-- [ ] INCIDENT-T2 diagnose the later dark/no-BLE state with SWD
-- [x] INCIDENT-T3 prevent navigation away from an active companion DFU (2026-08-05)
-- [x] INCIDENT-T4 remove the timed host-restore abort and validate delayed event completion (2026-08-05)
-- [ ] GATE-INCIDENT - verify 2.0.2 BLE startup on hardware; retain the unresolved
-  dark-watch/SPI incident as a separate physical risk
-
-## Blocked
-
-- The affected watch is sealed and no SWD probe is currently available.
+- [ ] Commit and push InfiniTime, InfiniSim, PineTimeCompanion and
+  pinetime-dev-tools.
+- [ ] Create and inspect PineTimeCompanion 0.34.0 prerelease.
+- [ ] Create and inspect InfiniTime 3.0.0 prerelease.
+- [ ] Run physical multi-device, sleep/wake, update, reset and power acceptance
+  on a watch.

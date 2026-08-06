@@ -109,6 +109,22 @@ add_infinitime_host_test(
   "${INFINITIME_ROOT}/src/components/schedule/ScheduleRulesTest.cpp"
 )
 add_infinitime_host_test(
+  spi_master_hardening_test
+  "${CMAKE_CURRENT_LIST_DIR}/SpiMasterHardeningTest.cpp"
+)
+add_infinitime_host_test(
+  step_recovery_state_test
+  "${CMAKE_CURRENT_LIST_DIR}/StepRecoveryStateTest.cpp"
+)
+add_infinitime_host_test(
+  storage_coordinator_test
+  "${CMAKE_CURRENT_LIST_DIR}/StorageCoordinatorTest.cpp"
+)
+add_infinitime_host_test(
+  storage_recovery_state_test
+  "${CMAKE_CURRENT_LIST_DIR}/StorageRecoveryStateTest.cpp"
+)
+add_infinitime_host_test(
   task_rules_test
   "${INFINITIME_ROOT}/src/components/task/TaskRulesTest.cpp"
 )
@@ -120,6 +136,16 @@ add_infinitime_host_test(
   companion_management_status_test
   "${CMAKE_CURRENT_LIST_DIR}/CompanionManagementStatusTest.cpp"
   "${INFINITIME_ROOT}/src/components/ble/CompanionManagementStatus.cpp"
+)
+add_infinitime_host_test(
+  family_state_status_test
+  "${CMAKE_CURRENT_LIST_DIR}/FamilyStateStatusTest.cpp"
+  "${INFINITIME_ROOT}/src/components/ble/FamilyStateStatus.cpp"
+)
+add_infinitime_host_test(
+  family_state_codec_test
+  "${CMAKE_CURRENT_LIST_DIR}/FamilyStateCodecTest.cpp"
+  "${INFINITIME_ROOT}/src/components/fs/FamilyStateCodec.cpp"
 )
 add_infinitime_host_test(
   bond_notice_queue_test

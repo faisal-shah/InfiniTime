@@ -66,25 +66,23 @@ FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
   ASSERT(mutex != nullptr);
 }
 
-void FS::Init() {
+bool FS::Init() {
   Lock lock(*this);
 
-  // try mount
   int err = lfs_mount(&lfs, &lfsConfig);
-
-  // reformat if we can't mount the filesystem
-  // this should only happen on the first boot
-  if (err != LFS_ERR_OK) {
-    lfs_format(&lfs, &lfsConfig);
-    err = lfs_mount(&lfs, &lfsConfig);
-    if (err != LFS_ERR_OK) {
-      return;
-    }
+  if (err != LFS_ERR_OK && err != LFS_ERR_CORRUPT) {
+    return false;
+  }
+  if (err == LFS_ERR_CORRUPT &&
+      (lfs_format(&lfs, &lfsConfig) != LFS_ERR_OK ||
+       lfs_mount(&lfs, &lfsConfig) != LFS_ERR_OK)) {
+    return false;
   }
 
 #ifndef PINETIME_IS_RECOVERY
   VerifyResource();
 #endif
+  return true;
 }
 
 void FS::VerifyResource() {
@@ -180,19 +178,21 @@ int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize);
   lfs.flashDriver.SectorErase(address);
-  return lfs.flashDriver.EraseFailed() ? -1 : 0;
+  return lfs.flashDriver.EraseFailed() ? LFS_ERR_IO : 0;
 }
 
 int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, const void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize) + off;
   lfs.flashDriver.Write(address, (uint8_t*) buffer, size);
-  return lfs.flashDriver.ProgramFailed() ? -1 : 0;
+  return lfs.flashDriver.ProgramFailed() ? LFS_ERR_IO : 0;
 }
 
 int FS::SectorRead(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
   const size_t address = startAddress + (block * blockSize) + off;
-  lfs.flashDriver.Read(address, static_cast<uint8_t*>(buffer), size);
-  return 0;
+  // A read that times out no longer reports success: littlefs turns the I/O
+  // error into a mount/format failure or a failed file operation instead of
+  // consuming 0xFF-filled garbage as if it were data.
+  return lfs.flashDriver.Read(address, static_cast<uint8_t*>(buffer), size) ? 0 : LFS_ERR_IO;
 }

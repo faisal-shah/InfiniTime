@@ -18,6 +18,7 @@
 #include "components/ble/BondPersistenceCoordinator.h"
 #include "components/ble/NimbleBondStoreAdapter.h"
 #include "components/ble/CompanionManagementService.h"
+#include "components/ble/FamilyStateService.h"
 #include "components/ble/CompanionManagementStatus.h"
 #include "components/ble/CurrentTimeClient.h"
 #include "components/ble/CurrentTimeService.h"
@@ -36,7 +37,7 @@
 #include "components/ble/PrayerService.h"
 #include "components/ble/MultiAlarmService.h"
 #include "components/ble/BeaconService.h"
-#include "components/fs/FS.h"
+#include "storagetask/StorageTask.h"
 
 namespace Pinetime {
   namespace Drivers {
@@ -52,7 +53,8 @@ namespace Pinetime {
     class DateTime;
     class NotificationManager;
 
-    class NimbleController : public CompanionStatusProvider {
+    class NimbleController : public CompanionStatusProvider,
+                             public Pinetime::System::StorageTask::FileListener {
 
     public:
       NimbleController(Pinetime::System::SystemTask& systemTask,
@@ -63,7 +65,7 @@ namespace Pinetime {
                        Pinetime::Drivers::SpiNorFlash& spiNorFlash,
                        HeartRateController& heartRateController,
                        MotionController& motionController,
-                       FS& fs,
+                       Pinetime::System::StorageTask& storageTask,
                        ScheduleController& scheduleController,
                        TaskController& taskController,
                        PrayerController& prayerController,
@@ -116,6 +118,10 @@ namespace Pinetime {
         return beaconService;
       };
 
+      Pinetime::Controllers::FamilyStateService& familyState() {
+        return familyStateService;
+      }
+
       uint16_t connHandle();
       void NotifyBatteryLevel(uint8_t level);
 
@@ -132,6 +138,7 @@ namespace Pinetime {
       // SystemTask side of the asynchronous writer. The queued message carries
       // no copy; it references the coordinator's immutable in-flight buffer.
       void PersistBondStore();
+      void OnStorageFilePersisted(uint64_t context, bool success) override;
 
       // Request seam for the UI/SystemTask: it only posts a host event. The
       // actual clear, radio transition, and atomic empty write all run on the
@@ -160,7 +167,6 @@ namespace Pinetime {
       void CompleteBondStoreWrite();
       void RestoreBondStoreOnHost();
       bool PrepareBondStoreRestore();
-      bool WriteBondStoreFile(const uint8_t* data, size_t size);
       void ProcessForgetAll();
       void QueueForgetAllEvent();
       void MaybeAdvanceForgetAll();
@@ -180,7 +186,7 @@ namespace Pinetime {
       Ble& bleController;
       DateTime& dateTimeController;
       Pinetime::Drivers::SpiNorFlash& spiNorFlash;
-      FS& fs;
+      Pinetime::System::StorageTask& storageTask;
       DfuService dfuService;
 
       DeviceInformationService deviceInformationService;
@@ -204,6 +210,7 @@ namespace Pinetime {
       FSService fsService;
       ServiceDiscovery serviceDiscovery;
       CompanionManagementService companionManagementService;
+      FamilyStateService familyStateService;
 
       // Wraps the store/config backend so every key and subscription change is
       // tracked for the asynchronous persistence writer, and resolves a full
@@ -224,6 +231,8 @@ namespace Pinetime {
         uint32_t bytes = 0;
         bool success = false;
       } bondWriteCompletion;
+      TickType_t bondWriteStarted = 0;
+      uint32_t bondWriteBytes = 0;
 
       struct ble_npl_event bondPersistenceEvent {};
       struct ble_npl_callout bondPersistenceCallout {};

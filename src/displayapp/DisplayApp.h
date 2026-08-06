@@ -50,6 +50,7 @@ namespace Pinetime {
 
   namespace System {
     class SystemTask;
+    class StorageTask;
   };
 
   namespace Applications {
@@ -79,6 +80,7 @@ namespace Pinetime {
                  Pinetime::Controllers::BrightnessController& brightnessController,
                  Pinetime::Controllers::TouchHandler& touchHandler,
                  Pinetime::Controllers::FS& filesystem,
+                 Pinetime::System::StorageTask& storageTask,
                  Pinetime::Drivers::SpiNorFlash& spiNorFlash);
       void Start(System::BootErrors error);
       void PushMessage(Display::Messages msg);
