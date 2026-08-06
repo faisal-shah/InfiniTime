@@ -42,7 +42,7 @@ seven-second watchdog resets the watch.
 
 ## Current measured image
 
-- InfiniTime app: 428,204 B text, 944 B data, 44,606 B BSS.
+- InfiniTime app: 428,380 B text, 944 B data, 44,606 B BSS.
 - RAM region: 45,554 B / 64 KiB, 69.51%.
 - StorageTask largest measured local frame: 400 B (`LoadFamilyState`);
   `ExecuteIo` is 360 B on a 2,800-byte static task stack.
@@ -51,3 +51,10 @@ seven-second watchdog resets the watch.
 
 - InfiniTime: 3.0.0.
 - PineTimeCompanion: 0.34.0.
+
+## Validated implementation commits
+
+- InfiniTime: `0762886a93379392f9f559213fd21d23e237a69a`.
+- InfiniSim: `25241eaf48ae596350cc16bb24d90844e24ca3f6`.
+- PineTimeCompanion: `be247595ab02b8dfcbcbf8be11f54eb5c6b7109e`.
+- pinetime-dev-tools: `1125437fcf68c6348938c0df7366255d429f7a77`.

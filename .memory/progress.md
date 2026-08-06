@@ -5,9 +5,9 @@
 
 ## Resume Here
 
-- Next action: final review, commit and push all four repositories, then create
-  the PineTimeCompanion 0.34.0 and InfiniTime 3.0.0 prereleases and inspect CI.
-- Last checkpoint: 2026-08-06 19:12 UTC.
+- Next action: push all four validated commits, then create the
+  PineTimeCompanion 0.34.0 and InfiniTime 3.0.0 prereleases and inspect CI.
+- Last checkpoint: 2026-08-06 20:00 UTC.
 
 ## InfiniTime 3.0
 
@@ -54,8 +54,8 @@
 
 ## Pending release/hardware gates
 
-- [ ] Commit and push InfiniTime, InfiniSim, PineTimeCompanion and
-  pinetime-dev-tools.
+- [x] Commit InfiniTime, InfiniSim, PineTimeCompanion and pinetime-dev-tools.
+- [ ] Push the four validated commits.
 - [ ] Create and inspect PineTimeCompanion 0.34.0 prerelease.
 - [ ] Create and inspect InfiniTime 3.0.0 prerelease.
 - [ ] Run physical multi-device, sleep/wake, update, reset and power acceptance
