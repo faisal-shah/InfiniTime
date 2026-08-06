@@ -51,6 +51,10 @@ seven-second watchdog resets the watch.
 
 - InfiniTime: 3.0.0.
 - PineTimeCompanion: 0.34.0.
+- Companion prerelease:
+  `https://github.com/faisal-shah/PineTimeCompanion/releases/tag/v0.34.0`.
+- Firmware prerelease:
+  `https://github.com/faisal-shah/InfiniTime/releases/tag/v3.0.0`.
 
 ## Validated implementation commits
 
@@ -58,3 +62,5 @@ seven-second watchdog resets the watch.
 - InfiniSim: `25241eaf48ae596350cc16bb24d90844e24ca3f6`.
 - PineTimeCompanion: `be247595ab02b8dfcbcbf8be11f54eb5c6b7109e`.
 - pinetime-dev-tools: `1125437fcf68c6348938c0df7366255d429f7a77`.
+- InfiniTime release target:
+  `6a8d0189a309a1b09a73ea21a6e184724d00999c`.

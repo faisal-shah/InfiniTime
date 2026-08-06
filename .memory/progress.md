@@ -5,9 +5,9 @@
 
 ## Resume Here
 
-- Next action: push all four validated commits, then create the
-  PineTimeCompanion 0.34.0 and InfiniTime 3.0.0 prereleases and inspect CI.
-- Last checkpoint: 2026-08-06 20:00 UTC.
+- Next action: install PineTimeCompanion 0.34.0, capture existing family data,
+  flash InfiniTime 3.0.0 to one watch, and run the physical acceptance matrix.
+- Last checkpoint: 2026-08-06 23:30 UTC.
 
 ## InfiniTime 3.0
 
@@ -55,8 +55,11 @@
 ## Pending release/hardware gates
 
 - [x] Commit InfiniTime, InfiniSim, PineTimeCompanion and pinetime-dev-tools.
-- [ ] Push the four validated commits.
-- [ ] Create and inspect PineTimeCompanion 0.34.0 prerelease.
-- [ ] Create and inspect InfiniTime 3.0.0 prerelease.
+- [x] Push the four validated commits.
+- [x] Create and inspect PineTimeCompanion 0.34.0 prerelease.
+- [x] Create and inspect InfiniTime 3.0.0 prerelease.
+- [x] Firmware host CI, firmware release build, companion cross-repo CI, and
+  all companion release jobs pass.
+- [x] Firmware and companion release assets are attached.
 - [ ] Run physical multi-device, sleep/wake, update, reset and power acceptance
   on a watch.
