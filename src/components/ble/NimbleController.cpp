@@ -138,8 +138,25 @@ int GAPEventCallback(struct ble_gap_event* event, void* arg) {
   return static_cast<NimbleController*>(arg)->OnGAPEvent(event);
 }
 
-void NimbleController::Init() {
+bool NimbleController::Init() {
+  // Bounded, because SystemTask is the only thing that feeds the watchdog and
+  // it is blocked here. An unbounded wait meant that any failure to reach host
+  // sync -- including the NimBLE tasks never having been created -- stopped the
+  // feed entirely, and the bootloader's watchdog reset the watch before the
+  // display was ever initialised. The result was an endless reboot into the
+  // bootloader logo with nothing on screen to explain it.
+  //
+  // The deadline is well inside the inherited watchdog period, and the caller
+  // starts the UI before getting here, so giving up leaves a usable watch with
+  // the radio reported as unavailable instead of a watch that looks bricked.
+  constexpr TickType_t syncTimeoutTicks = pdMS_TO_TICKS(3000);
+  const TickType_t syncDeadline = xTaskGetTickCount() + syncTimeoutTicks;
   while (!ble_hs_synced()) {
+    if (xTaskGetTickCount() >= syncDeadline) {
+      NRF_LOG_ERROR("[ble] host never reached sync; radio unavailable this boot");
+      hostSyncFailed = true;
+      return false;
+    }
     vTaskDelay(10);
   }
 
@@ -201,6 +218,7 @@ void NimbleController::Init() {
   radioEventsInitialized = true;
   ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondRestoreEvent);
   OnHostSync();
+  return true;
 }
 
 void NimbleController::BondStoreDirtyCallback(void* arg) {

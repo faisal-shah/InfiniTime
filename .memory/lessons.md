@@ -15,6 +15,19 @@
 - Never infer the physical watchdog deadline from application code. Inspect the
   bootloader that starts the peripheral; nRF52 WDT configuration locks after
   start.
+- Inspect the deployed **binary**, not the upstream source, for that deadline.
+  Mynewt `syscfg.yml` said 2000 ms; the shipped bootloader writes `CRV` for
+  7.000 s immediately before `TASKS_START`. Only the write that precedes the
+  start matters, because CRV is freely writable until then.
+- Whatever task feeds the watchdog must never contain an unbounded wait. The
+  failure is not a hang, it is a reset loop that looks exactly like a device
+  stuck on the bootloader logo.
+- Bring the display up before optional subsystems. A watch that boots with no
+  radio is diagnosable; a watch that never draws is indistinguishable from
+  bricked.
+- An estimated allocation budget is not a measurement. The simulator's heap
+  ballast can bisect the real boot floor in minutes; do that before redesigning
+  memory around an audit estimate.
 - Simulator success is not a physical boot gate unless it reproduces inherited
   bootloader state, real heap capacity, and allocation failures.
 - A firmware can fit in the 64-KiB RAM region and still fail deterministically

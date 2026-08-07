@@ -1,0 +1,419 @@
+Start testing: Aug 06 23:14 CDT
+----------------------------------------------------------
+1/26 Testing: alert_queue_test
+1/26 Test: alert_queue_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/alert_queue_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"alert_queue_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+16 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"alert_queue_test" end time: Aug 06 23:14 CDT
+"alert_queue_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/26 Testing: atomic_file_replace_test
+2/26 Test: atomic_file_replace_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/atomic_file_replace_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"atomic_file_replace_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+9 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"atomic_file_replace_test" end time: Aug 06 23:14 CDT
+"atomic_file_replace_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/26 Testing: beacon_rules_test
+3/26 Test: beacon_rules_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/beacon_rules_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"beacon_rules_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+5 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"beacon_rules_test" end time: Aug 06 23:14 CDT
+"beacon_rules_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/26 Testing: ble_radio_state_machine_test
+4/26 Test: ble_radio_state_machine_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/ble_radio_state_machine_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"ble_radio_state_machine_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+92 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"ble_radio_state_machine_test" end time: Aug 06 23:14 CDT
+"ble_radio_state_machine_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/26 Testing: bond_boot_persistence_gate_test
+5/26 Test: bond_boot_persistence_gate_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/bond_boot_persistence_gate_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"bond_boot_persistence_gate_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+16 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bond_boot_persistence_gate_test" end time: Aug 06 23:14 CDT
+"bond_boot_persistence_gate_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/26 Testing: ble_advertising_power_proxy_test
+6/26 Test: ble_advertising_power_proxy_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/ble_advertising_power_proxy_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"ble_advertising_power_proxy_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+23 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"ble_advertising_power_proxy_test" end time: Aug 06 23:14 CDT
+"ble_advertising_power_proxy_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/26 Testing: bond_registry_test
+7/26 Test: bond_registry_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/bond_registry_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"bond_registry_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+54 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bond_registry_test" end time: Aug 06 23:14 CDT
+"bond_registry_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/26 Testing: bond_store_codec_test
+8/26 Test: bond_store_codec_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/bond_store_codec_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"bond_store_codec_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+23 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bond_store_codec_test" end time: Aug 06 23:14 CDT
+"bond_store_codec_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/26 Testing: bond_persistence_coordinator_test
+9/26 Test: bond_persistence_coordinator_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/bond_persistence_coordinator_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"bond_persistence_coordinator_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+37 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bond_persistence_coordinator_test" end time: Aug 06 23:14 CDT
+"bond_persistence_coordinator_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/26 Testing: bond_store_policy_test
+10/26 Test: bond_store_policy_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/bond_store_policy_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"bond_store_policy_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+137 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bond_store_policy_test" end time: Aug 06 23:14 CDT
+"bond_store_policy_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/26 Testing: multialarm_rules_test
+11/26 Test: multialarm_rules_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/multialarm_rules_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"multialarm_rules_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+6 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"multialarm_rules_test" end time: Aug 06 23:14 CDT
+"multialarm_rules_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/26 Testing: prayer_rules_test
+12/26 Test: prayer_rules_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/prayer_rules_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"prayer_rules_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+87 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"prayer_rules_test" end time: Aug 06 23:14 CDT
+"prayer_rules_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/26 Testing: prayer_window_test
+13/26 Test: prayer_window_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/prayer_window_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"prayer_window_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+24 checks, 0 failures
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"prayer_window_test" end time: Aug 06 23:14 CDT
+"prayer_window_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/26 Testing: schedule_rules_test
+14/26 Test: schedule_rules_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/schedule_rules_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"schedule_rules_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+50 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"schedule_rules_test" end time: Aug 06 23:14 CDT
+"schedule_rules_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/26 Testing: spi_master_hardening_test
+15/26 Test: spi_master_hardening_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/spi_master_hardening_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"spi_master_hardening_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+31 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"spi_master_hardening_test" end time: Aug 06 23:14 CDT
+"spi_master_hardening_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/26 Testing: step_recovery_state_test
+16/26 Test: step_recovery_state_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/step_recovery_state_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"step_recovery_state_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+7 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"step_recovery_state_test" end time: Aug 06 23:14 CDT
+"step_recovery_state_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/26 Testing: storage_coordinator_test
+17/26 Test: storage_coordinator_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/storage_coordinator_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"storage_coordinator_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+22 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"storage_coordinator_test" end time: Aug 06 23:14 CDT
+"storage_coordinator_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/26 Testing: storage_recovery_state_test
+18/26 Test: storage_recovery_state_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/storage_recovery_state_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"storage_recovery_state_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"storage_recovery_state_test" end time: Aug 06 23:14 CDT
+"storage_recovery_state_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/26 Testing: task_rules_test
+19/26 Test: task_rules_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/task_rules_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"task_rules_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+
+25 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"task_rules_test" end time: Aug 06 23:14 CDT
+"task_rules_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/26 Testing: companion_protocol_test
+20/26 Test: companion_protocol_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/companion_protocol_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"companion_protocol_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+22 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"companion_protocol_test" end time: Aug 06 23:14 CDT
+"companion_protocol_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+21/26 Testing: companion_management_status_test
+21/26 Test: companion_management_status_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/companion_management_status_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"companion_management_status_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+20 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"companion_management_status_test" end time: Aug 06 23:14 CDT
+"companion_management_status_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+22/26 Testing: family_state_status_test
+22/26 Test: family_state_status_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/family_state_status_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"family_state_status_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+27 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"family_state_status_test" end time: Aug 06 23:14 CDT
+"family_state_status_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+23/26 Testing: family_state_codec_test
+23/26 Test: family_state_codec_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/family_state_codec_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"family_state_codec_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+21 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"family_state_codec_test" end time: Aug 06 23:14 CDT
+"family_state_codec_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/26 Testing: bond_notice_queue_test
+24/26 Test: bond_notice_queue_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/bond_notice_queue_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"bond_notice_queue_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+19 checks, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"bond_notice_queue_test" end time: Aug 06 23:14 CDT
+"bond_notice_queue_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/26 Testing: nimble_bond_store_adapter_api_test
+25/26 Test: nimble_bond_store_adapter_api_test
+Command: "/home/faisal/repos/faisal-shah/InfiniTime/build-host-tests/nimble_bond_store_adapter_api_test"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"nimble_bond_store_adapter_api_test" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"nimble_bond_store_adapter_api_test" end time: Aug 06 23:14 CDT
+"nimble_bond_store_adapter_api_test" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/26 Testing: companion_protocol_codegen_check
+26/26 Test: companion_protocol_codegen_check
+Command: "/home/faisal/.local/bin/uv" "run" "/home/faisal/repos/faisal-shah/InfiniTime/tools/generate_companion_protocol.py" "--workspace-root" "/home/faisal/repos/faisal-shah/InfiniTime" "--targets" "infinitime" "--check"
+Directory: /home/faisal/repos/faisal-shah/InfiniTime/build-host-tests
+"companion_protocol_codegen_check" start time: Aug 06 23:14 CDT
+Output:
+----------------------------------------------------------
+companion protocol outputs are current
+<end of output>
+Test time =   0.09 sec
+----------------------------------------------------------
+Test Passed.
+"companion_protocol_codegen_check" end time: Aug 06 23:14 CDT
+"companion_protocol_codegen_check" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 06 23:14 CDT

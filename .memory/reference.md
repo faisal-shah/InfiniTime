@@ -11,7 +11,7 @@
 
 ## Leading root causes
 
-### Deterministic heap exhaustion
+### Heap headroom is thin but NOT exhausted (corrected 2026-08-07)
 
 - v2.0.2 BSS: 28,572 B.
 - 3.0.1 BSS: 44,460 B.
@@ -25,23 +25,66 @@
   persistent startup allocations exceed that budget before all mutexes,
   timers, and LVGL allocations.
 
-This is the leading explanation for failing before a watch face replaces the
-bootloader image.
+Measured, not estimated:
 
-### Inherited two-second watchdog
+- Hardware heap is `__StackLimit - __HeapLimit` = 0x2000fc00 - 0x2000b1a8 =
+  **19,032 B**. That part of the audit is confirmed.
+- InfiniSim bisection with `INFINISIM_HEAP_BALLAST`: 3.0.1 boots and renders the
+  watch face with **19,032 B** usable, and still boots at 9,000 B. It first
+  fails between 9,000 and 6,000 B. Simulator boot demand is therefore ~7-9 KiB.
+- The simulator substitutes a virtual BLE adapter, so hardware additionally pays
+  for NimBLE's two dynamic tasks: `ll` at (120+200) words and `ble` at (120+600)
+  words, = 4,160 B of stack plus two TCBs, ~4.3 KiB total.
+- Hardware demand is therefore ~12-13 KiB against 19,032 B, leaving roughly
+  5-7 KiB of headroom.
 
-Deployed bootloader source:
-`/tmp/pinetime-mcuboot-bootloader/targets/nrf52_boot/syscfg.yml`
+Heap exhaustion is thin but is **not** the deterministic green-screen cause.
+Confirm on hardware with the Sys Info free-heap readout once the watch boots,
+before spending effort on a StorageTask RAM redesign.
 
-```yaml
-SANITY_INTERVAL: 1000
-WATCHDOG_INTERVAL: 2000
+### Boot order: the actual green-screen cause (found 2026-08-07)
+
+`SystemTask::Work()` called `nimbleController.Init()` **before**
+`displayApp.Start()`, and `NimbleController::Init()` opened with an unbounded
+
+```cpp
+while (!ble_hs_synced()) { vTaskDelay(10); }
 ```
 
-Mynewt starts the nRF52832 WDT before MCUBoot. The later attempt in
-`pinetime_boot.c` to configure seven seconds cannot change a running nRF WDT.
-The application therefore inherits about two seconds. Released 3.0.0 had no
-early feeds and synchronously waited up to five seconds for StorageTask boot.
+with no watchdog feed inside the loop. SystemTask is the only feeder. So any
+failure to reach host sync -- including the ignored `xTaskCreate` results for
+the `ll` and `ble` tasks -- stopped the feed, the 7-second watchdog reset the
+watch before the display was ever initialised, and the boot repeated forever.
+From outside that is exactly "stuck on the green bootloader pinecone for
+minutes": the bootloader logo is redrawn every reset and the application never
+gets far enough to replace it.
+
+Fixed by starting the UI first and bounding the sync wait at 3 s. A radio that
+fails now costs Bluetooth for that boot and leaves a usable watch, instead of
+looking bricked.
+
+### Inherited watchdog is SEVEN seconds, not two (corrected 2026-08-07)
+
+The two-second figure came from Mynewt `syscfg.yml`. The **deployed binary**
+disagrees. Disassembling the shipped `bootloader.bin` (identical in v1.26.0 and
+v2.0.2, sha256 `eda2f27c…`):
+
+- Only three routines reference the WDT base `0x40010000`.
+- Only one of them writes `TASKS_START` (offset 0x000), at file offset `0x1dc6`.
+- Immediately before it, at `0x1dbc`, it writes `CRV` (offset 0x504) from the
+  literal at `0x1dd0` = `0x00037fff` = 229,375.
+- `(229375 + 1) / 32768` = **7.000 s**. Two seconds would be `CRV = 0xffff`.
+
+`hal_watchdog_init` (offset `0x129c`) does compute CRV from a parameter and may
+well be called with 2000 ms, but it never starts the watchdog, and CRV is freely
+writable until `TASKS_START`. The last CRV write before the start is always the
+7-second literal.
+
+The inherited deadline is therefore 7 s, which is what InfiniTime already
+assumes. Do not redesign the boot sequence around a 2-second budget.
+
+The real defect was never the budget. It was that nothing fed the watchdog at
+all during an unbounded wait -- see the boot-order defect below.
 
 ## Current committed checkpoint intent
 

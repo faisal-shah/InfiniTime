@@ -165,9 +165,6 @@ void SystemTask::Work() {
     }
   }
 
-  nimbleController.Init();
-  watchdog.Reload();
-
   twiMaster.Init();
   /*
    * TODO We disable this warning message until we ensure it won't be displayed
@@ -201,6 +198,15 @@ void SystemTask::Work() {
   displayApp.Register(&nimbleController.music());
   displayApp.Register(&nimbleController.navigation());
   displayApp.Start(bootError);
+  watchdog.Reload();
+
+  // Bring the radio up only once the UI is running. SystemTask is the sole
+  // watchdog feeder, so anything it blocks on before this point is invisible:
+  // the display is never initialised and the watch reboots into the
+  // bootloader logo with no way to tell why. With the UI already started, a
+  // radio that fails to initialise costs Bluetooth for this boot and nothing
+  // else.
+  nimbleController.Init();
   watchdog.Reload();
 
   heartRateSensor.Init();
