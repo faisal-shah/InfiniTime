@@ -5,61 +5,75 @@
 
 ## Resume Here
 
-- Next action: install PineTimeCompanion 0.34.0, capture existing family data,
-  flash InfiniTime 3.0.0 to one watch, and run the physical acceptance matrix.
-- Last checkpoint: 2026-08-06 23:30 UTC.
+- Next task: INCIDENT-3.0-BOOT
+- Next action: redesign the 3.0 RAM/boot architecture to restore at least
+  several KiB of measured heap headroom and support the deployed bootloader's
+  locked two-second watchdog. Do not flash another physical watch before the
+  release-blocking audits in `.memory/reference.md` are resolved.
+- Last checkpoint: 2026-08-07 03:20 UTC.
 
-## InfiniTime 3.0
+## Released software
 
-- [x] Generate strict schema-2 companion contract and 3.0 record versions.
-- [x] Reduce schedule capacity to 32.
-- [x] Add CRC-protected explicit family-state codec.
-- [x] Add fixed-allocation StorageTask and durable status characteristic.
-- [x] Convert schedules and task definitions to RAM active/candidate banks.
-- [x] Keep task ticks volatile while persisting streak and rollover date.
-- [x] Convert alarms, prayer, Find My and settings to family-state mutations.
-- [x] Add on-watch durable alarm saving state.
-- [x] Centralize bonds, FSService, LVGL and resource reads on StorageTask.
-- [x] Remove obsolete StagedList persistence.
-- [x] Add bounded SPIM recovery, flash failure propagation and diagnostics.
-- [x] Add no-init step recovery and storage breadcrumbs.
-- [x] Add Sys Info storage/SPI evidence and persistent family-face warning.
+- [x] PineTimeCompanion 0.34.0 published with all assets.
+- [x] InfiniTime 3.0.0 published, then renamed **DO NOT INSTALL** after the first
+  physical watch remained at the green bootloader pinecone.
+- [x] Firmware 3.0.0 deterministic CI/simulator/browser suites passed.
+- [x] Four repositories pushed.
 
-## Companion 0.34.0
+## Physical incident
 
-- [x] Remove automatic time writes from ordinary operations and forwarding.
-- [x] Add strict generated 3.0 protocol metadata.
-- [x] Wait for exact durable operation/token completion.
-- [x] Make older firmware upgrade-only.
-- [x] Require screenshot acknowledgement and enforce the 32-entry gate.
-- [x] Confirm healthy 3.0 storage before clearing incompatible local state.
-- [x] Remove the secure Find My key during confirmed cutover.
-- [x] Allow 3.0 status confirmation after app restart.
+- [x] First watch flashed 3.0.0 and remained at the green bootloader pinecone
+  for several minutes.
+- [x] Blue-button rollback restored 2.0.2.
+- [x] Another reset retried the still-pending 3.0 image and returned to the
+  green pinecone.
+- [x] User was instructed to blue-rollback again and validate 2.0.2 before
+  another reset.
+- [x] Independent boot, storage-liveness, and memory/image audits completed.
+- [ ] Confirm the watch is currently on validated 2.0.2.
 
-## Validation
+## Critical findings
 
-- [x] All six ARM targets build.
-- [x] 26 firmware host tests pass.
-- [x] InfiniSim builds and both CTests pass.
-- [x] 262 companion TypeScript tests pass.
-- [x] 21 Kotlin tests pass.
-- [x] Companion typecheck and web export pass.
-- [x] Android debug and release APK builds pass.
-- [x] Live browser E2E passes against InfiniSim.
-- [x] Live bridge regression passes: 59 checks.
-- [x] All eight ptlab simulator scenarios pass, including DFU and raw
-  power-loss.
-- [x] Protocol generation check and 46 dev-tools tests pass.
-- [x] Updated shell scripts pass ShellCheck.
+- [ ] P0-BOOT-WDT — deployed bootloader starts and locks a roughly **2-second**
+  watchdog before application handoff. Application attempts to configure seven
+  seconds do not change a running nRF52 WDT.
+- [ ] P0-RAM — 3.0 added a 12,656-byte `StorageTask` object and reduced
+  FreeRTOS heap to about 19 KiB. Audited mandatory boot allocations exceed that
+  budget before all mutexes/timers/LVGL allocations; deterministic heap
+  exhaustion is the leading green-screen cause.
+- [ ] P0-BLE-BOOT — `NimbleController::Init()` waits indefinitely for host sync
+  before DisplayApp starts; NimBLE task creation results are ignored.
+- [ ] P0-TWI — boot-time TWI paths contain unbounded event and mutex waits.
+- [ ] P0-STORAGE — storage I/O timeout/completion, power-transition,
+  GATT-blocking, async LCD SPI, and alarm-failure findings in
+  `.memory/reference.md` require fixes/tests.
+- [ ] P0-DFU — enforce maximum DFU image size and harden recovery-loader write
+  verification.
 
-## Pending release/hardware gates
+## Current partial 3.0.1 patch
 
-- [x] Commit InfiniTime, InfiniSim, PineTimeCompanion and pinetime-dev-tools.
-- [x] Push the four validated commits.
-- [x] Create and inspect PineTimeCompanion 0.34.0 prerelease.
-- [x] Create and inspect InfiniTime 3.0.0 prerelease.
-- [x] Firmware host CI, firmware release build, companion cross-repo CI, and
-  all companion release jobs pass.
-- [x] Firmware and companion release assets are attached.
-- [ ] Run physical multi-device, sleep/wake, update, reset and power acceptance
-  on a watch.
+- [x] Version bumped to 3.0.1.
+- [x] Removed the cross-task five-second StorageTask boot semaphore wait.
+- [x] Family state loads synchronously before the StorageTask worker starts.
+- [x] Added early watchdog reload checkpoints.
+- [x] Added an InfiniSim six-second storage-boot-delay regression.
+- [x] Six ARM targets, 26 host tests, and simulator tests pass.
+- [ ] **Not safe to release or physically flash.** It does not solve the RAM
+  deficit, inherited two-second WDT, NimBLE boot gate, or TWI waits.
+
+## Release gate
+
+- [ ] GATE-BOOT — physical boot succeeds repeatedly on the deployed bootloader
+  with measured timestamps and no reset.
+- [ ] GATE-RAM — automated allocation accounting and physical free-heap evidence
+  show several KiB of headroom after full UI/BLE startup.
+- [ ] GATE-LIVENESS — all audit findings have fixes and deterministic fault
+  tests.
+- [ ] GATE-PHYSICAL — multi-device, sleep/wake, reset, durability, advertising,
+  forwarding, and power tests pass on one sacrificial watch.
+- [ ] Only then publish a replacement firmware prerelease.
+
+## Blocked
+
+- InfiniTime 3.0.0 is blocked and must not be installed.
+- No replacement physical flash until all P0 gates above are complete.

@@ -1,46 +1,50 @@
-# InfiniTime 3.0 Family Storage Plan
+# InfiniTime 3.0 Recovery Plan
 
 ## Goal
 
-Make routine family companion operations unable to stall the watch until its
-seven-second watchdog fires, while supporting sequential access from several
-paired phones and computers.
+Recover from the blocked 3.0.0 physical boot failure without risking another
+watch, then preserve the family-state feature set within proven boot, RAM, and
+liveness budgets.
 
-## Released Architecture
+## Phase 1 — Reproduce physical constraints
 
-- One explicit CRC-protected `family-state.dat` snapshot stores settings,
-  32 schedules, 20 task definitions, streak/date, five alarms, prayer settings,
-  and the Find My key.
-- Runtime feature data is RAM-authoritative with fixed active/candidate banks.
-- StorageTask is the only post-boot littlefs owner, including bonds, FSService,
-  LVGL and resource reads.
-- Durable-first mutations publish only after temp-file sync and atomic rename.
-- One shared Family State GATT status reports operation, token, generation,
-  failure and warning state.
-- SPIM waits and mutex acquisition are bounded; the bus resets, retries once,
-  then returns an explicit I/O failure.
-- Same-day steps and storage breadcrumbs survive watchdog/software resets in
-  validated no-init records.
-- PineTimeCompanion 0.34.0 implements the strict 3.0 cutover, durable polling,
-  32-item gate, upgrade-only mode, and explicit Set time behavior.
+1. Model the deployed bootloader's pre-armed locked two-second watchdog.
+2. Model the exact physical FreeRTOS heap and every startup allocation.
+3. Fault-inject task/queue/timer allocation failure, permanent BLE no-sync,
+   LFCLK failure, TWI stalls, and slow/corrupt storage.
+4. Gate: no reset/crash; display a clock or explicit recovery screen.
 
-## Completed Gates
+## Phase 2 — Reduce RAM and boot coupling
 
-1. Protocol generation and strict format cutover.
-2. Family-state codec and fixed-allocation StorageTask.
-3. RAM schedule/tasks and durable small-state controllers.
-4. Complete post-boot filesystem ownership.
-5. Reset survival, diagnostics, warning UI and SPI hardening.
-6. Companion, simulator and ptlab integration.
-7. Six ARM builds, host/simulator/companion/Android/browser validation.
-8. All eight simulator scenarios, including DFU and raw power loss.
-9. Four repositories pushed; CI and release workflows passed.
-10. PineTimeCompanion 0.34.0 and InfiniTime 3.0.0 prereleases published with
-    complete assets.
+1. Redesign StorageTask buffers/state banks to recover several KiB of heap.
+2. Start DisplayApp before BLE readiness and background storage services.
+3. Bound LFCLK, TWI, mount, family load, and bond restore phases.
+4. Check all task creation and allocation results.
+5. Gate: measured post-startup heap headroom with physical-equivalent budget.
 
-## Physical Acceptance
+## Phase 3 — Resolve liveness audit
 
-Install companion 0.34.0 first, capture the existing family data, and flash
-3.0.0 on one watch. Then run sequential multi-device access, sleep/wake writes,
-watchdog/software reset recovery, five-peer/LRU behavior, forwarding handoff,
-long-idle advertising, and power acceptance before promoting the prereleases.
+1. Generation-tagged storage completions.
+2. Serialized flash power state machine.
+3. Async FSService and bounded message queues.
+4. Async SPI write completion recovery.
+5. Typed contention vs I/O failure handling.
+6. Immutable/pinned published state.
+7. Alarm persistence retry/rescheduling.
+8. Gate: deterministic fault suite passes.
+
+## Phase 4 — Harden update and recovery
+
+1. Enforce DFU slot bounds.
+2. Verify recovery-loader erase/program/readback.
+3. Fix recovery image build dependencies and release assets.
+4. Decide signed-image/key-management scope.
+5. Gate: corrupt/oversized/stale-image tests pass.
+
+## Phase 5 — Physical release gate
+
+1. Confirm validated 2.0.2 baseline.
+2. Flash one replacement candidate only after all prior gates.
+3. Repeat boot/reset, multi-device, sleep/wake, durability, advertising,
+   forwarding, and power tests.
+4. Publish a replacement prerelease only with attached physical evidence.

@@ -40,21 +40,29 @@ seven-second watchdog resets the watch.
 - Old family feature files are never imported; missing family-state loads
   defaults. BLE bonds are not intentionally cleared by the 3.0 cutover.
 
-## Current measured image
+## Current measured image and RAM incident
 
-- InfiniTime app: 428,380 B text, 944 B data, 44,606 B BSS.
-- RAM region: 45,554 B / 64 KiB, 69.51%.
-- StorageTask largest measured local frame: 400 B (`LoadFamilyState`);
-  `ExecuteIo` is 360 B on a 2,800-byte static task stack.
+- Current 3.0.1 app: 428,356 B text, 944 B data, 44,460 B BSS.
+- `.noinit`: 66 B; main stack reservation: 1,024 B.
+- FreeRTOS heap begins with only about 19 KiB available.
+- `StorageTask` object: 12,656 B:
+  - two `FamilyState` banks: 4,280 B;
+  - codec buffer: 2,146 B;
+  - I/O request/buffer: 3,224 B;
+  - static task stack: 2,800 B.
+- Independent audit estimates mandatory dynamic boot allocations exceed this
+  remaining heap before all mutexes, timers, and LVGL allocations. Heap
+  exhaustion is the leading physical green-screen root cause.
 
 ## Release versions
 
-- InfiniTime: 3.0.0.
+- InfiniTime: 3.0.0 is blocked; current unreleased work is 3.0.1.
 - PineTimeCompanion: 0.34.0.
 - Companion prerelease:
   `https://github.com/faisal-shah/PineTimeCompanion/releases/tag/v0.34.0`.
 - Firmware prerelease:
   `https://github.com/faisal-shah/InfiniTime/releases/tag/v3.0.0`.
+  Its title is **DO NOT INSTALL: boot hang investigation**.
 
 ## Validated implementation commits
 
@@ -64,3 +72,12 @@ seven-second watchdog resets the watch.
 - pinetime-dev-tools: `1125437fcf68c6348938c0df7366255d429f7a77`.
 - InfiniTime release target:
   `6a8d0189a309a1b09a73ea21a6e184724d00999c`.
+
+## Bootloader constraint
+
+The deployed PineTime MCUBoot bootloader's Mynewt configuration uses
+`WATCHDOG_INTERVAL: 2000`. It starts the nRF52832 watchdog before application
+handoff. nRF52 watchdog configuration is locked once started, so the
+application inherits a roughly two-second deadline regardless of its attempted
+seven-second setup. All pre-steady-state phases must feed this inherited
+watchdog, and no single operation may block longer than its remaining deadline.
