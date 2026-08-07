@@ -4,6 +4,10 @@
 
 #include <littlefs/lfs.h>
 
+#if defined(INFINISIM_ENABLE_BLE_TEST_CONTROL)
+  #include <cstdlib>
+#endif
+
 using Pinetime::Controllers::AtomicFileReplace;
 using Pinetime::Controllers::FamilyState;
 using Pinetime::Controllers::FamilyStateCodec;
@@ -31,11 +35,9 @@ bool StorageTask::Start() {
                              sizeof(Message),
                              queueStorage,
                              &queueBuffer);
-  bootComplete = xSemaphoreCreateBinaryStatic(&bootSemaphore);
   ioAccess = xSemaphoreCreateBinaryStatic(&ioAccessSemaphore);
   ioComplete = xSemaphoreCreateBinaryStatic(&ioCompleteSemaphore);
-  if (queue == nullptr || bootComplete == nullptr ||
-      ioAccess == nullptr || ioComplete == nullptr) {
+  if (queue == nullptr || ioAccess == nullptr || ioComplete == nullptr) {
     return false;
   }
   xSemaphoreGive(ioAccess);
@@ -52,14 +54,20 @@ bool StorageTask::Start() {
   }
 #endif
   started = true;
-  return xSemaphoreTake(bootComplete, BootWaitTicks) == pdTRUE;
+  return true;
 }
 
 void StorageTask::Process(void* instance) {
   static_cast<StorageTask*>(instance)->Work();
 }
 
-void StorageTask::Work() {
+void StorageTask::LoadAtBoot() {
+#if defined(INFINISIM_ENABLE_BLE_TEST_CONTROL)
+  if (const char* delay = std::getenv("INFINISIM_STORAGE_BOOT_DELAY_MS");
+      delay != nullptr) {
+    vTaskDelay(pdMS_TO_TICKS(std::strtoul(delay, nullptr, 10)));
+  }
+#endif
   RecordRecovery(Operation::BootInitialization,
                  Controllers::StorageRecoveryState::Phase::Pending,
                  Error::None,
@@ -75,8 +83,9 @@ void StorageTask::Work() {
                  bootStatus.error,
                  0,
                  true);
-  xSemaphoreGive(bootComplete);
+}
 
+void StorageTask::Work() {
   Message message;
   while (true) {
     if (xQueueReceive(queue, &message, portMAX_DELAY) != pdTRUE) {

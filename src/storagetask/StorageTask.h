@@ -44,6 +44,7 @@ namespace Pinetime::System {
 
     explicit StorageTask(Controllers::FS& fs);
 
+    void LoadAtBoot();
     bool Start();
     bool BeginFamilyStateMutation(Operation operation, uint32_t token);
     Controllers::FamilyState* MutableCandidate(Operation operation, uint32_t token);
@@ -156,7 +157,6 @@ namespace Pinetime::System {
     static constexpr const char* DataPath = "/.system/family-state.dat";
     static constexpr uint16_t StackWords = 700;
     static constexpr uint8_t QueueLength = 2;
-    static constexpr TickType_t BootWaitTicks = pdMS_TO_TICKS(5000);
     static constexpr TickType_t IoAccessWaitTicks = pdMS_TO_TICKS(500);
     static constexpr TickType_t IoCompleteWaitTicks = pdMS_TO_TICKS(5000);
 
@@ -168,8 +168,6 @@ namespace Pinetime::System {
     StaticQueue_t queueBuffer {};
     uint8_t queueStorage[QueueLength * sizeof(Message)] {};
 
-    SemaphoreHandle_t bootComplete = nullptr;
-    StaticSemaphore_t bootSemaphore {};
     SemaphoreHandle_t ioAccess = nullptr;
     StaticSemaphore_t ioAccessSemaphore {};
     SemaphoreHandle_t ioComplete = nullptr;

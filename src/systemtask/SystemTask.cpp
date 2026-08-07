@@ -136,8 +136,12 @@ void SystemTask::Process(void* instance) {
 void SystemTask::Work() {
   BootErrors bootError = BootErrors::None;
 
+  // MCUBoot starts the hardware watchdog immediately before handing control
+  // to the application. Feed it before any initialization work.
+  watchdog.Reload();
   watchdog.Setup(7, Drivers::Watchdog::SleepBehaviour::Run, Drivers::Watchdog::HaltBehaviour::Pause);
   watchdog.Start();
+  watchdog.Reload();
   NRF_LOG_INFO("Last reset reason : %s", Pinetime::Drivers::ResetReasonToString(watchdog.GetResetReason()));
   if (!nrfx_gpiote_is_init()) {
     nrfx_gpiote_init();
@@ -146,16 +150,23 @@ void SystemTask::Work() {
   spi.Init();
   spiNorFlash.Init();
   spiNorFlash.Wakeup();
+  watchdog.Reload();
 
   const bool filesystemReady = fs.Init();
+  watchdog.Reload();
   if (!filesystemReady) {
     NRF_LOG_ERROR("[filesystem] mount failed");
   }
-  if (filesystemReady && !storageTask.Start()) {
-    NRF_LOG_ERROR("[storage] task failed to start or load");
+  if (filesystemReady) {
+    storageTask.LoadAtBoot();
+    watchdog.Reload();
+    if (!storageTask.Start()) {
+      NRF_LOG_ERROR("[storage] task failed to start");
+    }
   }
 
   nimbleController.Init();
+  watchdog.Reload();
 
   twiMaster.Init();
   /*
@@ -183,12 +194,14 @@ void SystemTask::Work() {
   motionSensor.Init();
   motionController.Init(motionSensor.DeviceType());
   settingsController.Init();
+  watchdog.Reload();
 
   displayApp.Register(this);
   displayApp.Register(&nimbleController.weather());
   displayApp.Register(&nimbleController.music());
   displayApp.Register(&nimbleController.navigation());
   displayApp.Start(bootError);
+  watchdog.Reload();
 
   heartRateSensor.Init();
   heartRateSensor.Disable();

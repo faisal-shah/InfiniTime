@@ -12,6 +12,13 @@
   snapshot can put flash back to sleep after the system has woken.
 - Moving work to another task is not enough if SystemTask synchronously waits
   for it. Bond persistence must be callback-driven.
+- Never infer the physical watchdog deadline from application code. Inspect the
+  bootloader that starts the peripheral; nRF52 WDT configuration locks after
+  start.
+- Simulator success is not a physical boot gate unless it reproduces inherited
+  bootloader state, real heap capacity, and allocation failures.
+- A firmware can fit in the 64-KiB RAM region and still fail deterministically
+  because static BSS consumes heap required by dynamic RTOS and LVGL startup.
 
 ## Storage
 
@@ -47,3 +54,9 @@
 - Upgrade-only mode needs a recovery path after app restart; protocol
   confirmation cannot depend solely on ephemeral screen state.
 - Only explicit **Set time** should change the watch clock.
+
+## Checkpoint Log
+
+| Date | Tasks Since Last Checkpoint | Notes |
+|---|---:|---|
+| 2026-08-07 | 1 | 3.0.0 green-pinecone incident; release blocked; three independent critical audits recorded |
