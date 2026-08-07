@@ -6,11 +6,12 @@
 ## Resume Here
 
 - Next task: INCIDENT-3.0-BOOT
-- Next action: redesign the 3.0 RAM/boot architecture to restore at least
-  several KiB of measured heap headroom and support the deployed bootloader's
-  locked two-second watchdog. Do not flash another physical watch before the
-  release-blocking audits in `.memory/reference.md` are resolved.
-- Last checkpoint: 2026-08-07 03:20 UTC.
+- Next action: the boot-order defect is fixed (UI starts before the radio; the
+  host-sync wait is bounded). Remaining P0 liveness/DFU items still stand. Read
+  the two corrections in `.memory/reference.md` FIRST: the inherited watchdog is
+  7 s not 2 s, and heap has ~5-7 KiB headroom rather than a deficit. Do not
+  redesign StorageTask RAM or model a 2-second WDT on the old premises.
+- Last checkpoint: 2026-08-07 (boot-order fix).
 
 ## Released software
 
@@ -34,15 +35,21 @@
 
 ## Critical findings
 
-- [ ] P0-BOOT-WDT — deployed bootloader starts and locks a roughly **2-second**
-  watchdog before application handoff. Application attempts to configure seven
-  seconds do not change a running nRF52 WDT.
-- [ ] P0-RAM — 3.0 added a 12,656-byte `StorageTask` object and reduced
-  FreeRTOS heap to about 19 KiB. Audited mandatory boot allocations exceed that
-  budget before all mutexes/timers/LVGL allocations; deterministic heap
-  exhaustion is the leading green-screen cause.
-- [ ] P0-BLE-BOOT — `NimbleController::Init()` waits indefinitely for host sync
-  before DisplayApp starts; NimBLE task creation results are ignored.
+- [x] P0-BOOT-WDT — **CORRECTED.** The deployed `bootloader.bin` starts the WDT
+  with `CRV = 0x37fff` = **7.000 s**, not 2 s (2 s would be `0xffff`). Only one
+  routine writes `TASKS_START`, and it sets the 7-second CRV immediately before.
+  The locked-configuration reasoning is right; the number was wrong.
+- [~] P0-RAM — **PARTLY CORRECTED.** Heap really is 19,032 B, but 3.0.1 boots
+  and renders in InfiniSim at that exact budget, and still boots at 9,000 B.
+  Adding NimBLE's ~4.3 KiB of dynamic task stacks puts hardware demand near
+  12-13 KiB, leaving ~5-7 KiB. Thin, worth reclaiming eventually, but not the
+  deterministic cause. Verify with hardware free-heap before any redesign.
+- [x] P0-BLE-BOOT — **THIS WAS THE GREEN-SCREEN CAUSE, now fixed.** The
+  unbounded `ble_hs_synced()` wait ran before `displayApp.Start()` with no
+  watchdog feed inside it, and SystemTask is the only feeder, so a stalled sync
+  reset the watch at 7 s forever with nothing ever drawn. The UI now starts
+  first and the wait is bounded at 3 s. NimBLE `xTaskCreate` results are still
+  ignored upstream, but that now degrades to a logged timeout, not a hang.
 - [ ] P0-TWI — boot-time TWI paths contain unbounded event and mutex waits.
 - [ ] P0-STORAGE — storage I/O timeout/completion, power-transition,
   GATT-blocking, async LCD SPI, and alarm-failure findings in

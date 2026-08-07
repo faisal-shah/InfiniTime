@@ -71,7 +71,13 @@ namespace Pinetime {
                        PrayerController& prayerController,
                        MultiAlarmController& multiAlarmController,
                        BeaconController& beaconController);
-      void Init();
+      bool Init();
+
+      // True when host sync did not arrive before Init() gave up. The radio is
+      // unavailable for this boot; the rest of the watch is unaffected.
+      bool HostSyncFailed() const {
+        return hostSyncFailed;
+      }
       int OnGAPEvent(ble_gap_event* event);
       void StartDiscovery();
 
@@ -243,6 +249,7 @@ namespace Pinetime {
       BondBootPersistenceGate bootPersistenceGate;
       bool bondPersistenceWritesEnabled = true;
       bool bondPersistenceEventsInitialized = false;
+      bool hostSyncFailed = false;
 
       // A first 2.x boot restores an empty RAM store immediately, then queues
       // the final-format file through the normal asynchronous writer. Radio
