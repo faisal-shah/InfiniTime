@@ -8,7 +8,7 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 # .github/workflows/release.yml fails the build if they disagree. The fork
 # tracks upstream 1.16.x. Version 2.0.0 is the deliberate family
 # multi-companion storage and connection-policy cutover.
-project(pinetime VERSION 3.0.1 LANGUAGES C CXX ASM)
+project(pinetime VERSION 3.0.2 LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
