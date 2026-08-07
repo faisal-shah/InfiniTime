@@ -71,8 +71,8 @@ namespace {
 }
 
 int main() {
-  Check(FamilyStateCodec::PayloadSize == 2122, "fixed payload size");
-  Check(FamilyStateCodec::EncodedSize == 2146, "fixed encoded size");
+  Check(FamilyStateCodec::PayloadSize == 1186, "fixed payload size");
+  Check(FamilyStateCodec::EncodedSize == 1210, "fixed encoded size");
 
   const auto fixture = Fixture();
   FamilyStateCodec::Buffer encoded;

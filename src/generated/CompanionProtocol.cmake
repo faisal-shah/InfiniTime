@@ -1,5 +1,5 @@
 # Generated from protocol/companion.json.
-# Manifest SHA-256: f4881c3833b552227463a5af2f4a07f110ec1c67f7ff44d1f193af15b9d6750c
+# Manifest SHA-256: 1cdc7fce2dc132ec67cdd7d34c4fd724290d4ab637c10b742b37f13f5a6eacc2
 # Do not edit by hand.
 set(COMPANION_ACTIVE_CONNECTIONS 1)
 set(COMPANION_RETAINED_PEERS 5)

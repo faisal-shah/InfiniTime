@@ -1,5 +1,6 @@
 #pragma once
 
+#include "components/ble/BondStoreCodec.h"
 #include "components/fs/FS.h"
 #include "components/fs/FamilyState.h"
 #include "components/fs/FamilyStateCodec.h"
@@ -116,17 +117,30 @@ namespace Pinetime::System {
       AtomicReplace,
     };
 
+    // Paths are bounded by what this firmware actually generates. The longest
+    // is "/.system/family-state.tmp" at 25 characters; the BLE filesystem
+    // service works in the same tree. Requests carrying anything longer are
+    // rejected by BeginIo rather than truncated. Three 256-byte buffers cost
+    // 768 bytes of a 64 KiB part to hold 25-character strings.
+    static constexpr size_t PathSize = 64;
+
+    // The staging buffer only ever carries a bond snapshot or a single BLE
+    // file-transfer chunk. The family-state snapshot never passes through it --
+    // PersistFamilyState writes straight from `encoded` -- so sizing this to
+    // the family-state image reserved 842 bytes that nothing could ever use.
+    static constexpr size_t IoDataSize = Controllers::BondStoreCodec::MaxEncodedSize;
+
     struct IoRequest {
       IoKind kind = IoKind::Stat;
-      char path[256] {};
-      char secondPath[256] {};
-      char thirdPath[256] {};
+      char path[PathSize] {};
+      char secondPath[PathSize] {};
+      char thirdPath[PathSize] {};
       uint32_t offset = 0;
       uint32_t size = 0;
       uint32_t totalSize = 0;
       int result = LFS_ERR_IO;
       lfs_info info {};
-      std::array<uint8_t, Controllers::FamilyStateCodec::EncodedSize> data {};
+      std::array<uint8_t, IoDataSize> data {};
       uint64_t context = 0;
       FileListener* listener = nullptr;
       bool asynchronous = false;
