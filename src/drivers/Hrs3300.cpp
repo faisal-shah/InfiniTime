@@ -27,45 +27,65 @@ namespace {
 Hrs3300::Hrs3300(TwiMaster& twiMaster, uint8_t twiAddress) : twiMaster {twiMaster}, twiAddress {twiAddress} {
 }
 
-void Hrs3300::Init() {
+bool Hrs3300::Init() {
   nrf_gpio_cfg_input(30, NRF_GPIO_PIN_NOPULL);
 
-  Disable();
+  if (!Disable()) {
+    return false;
+  }
   vTaskDelay(100);
 
   // HRS disabled, 50ms wait time between ADC conversion period, current 12.5mA
-  WriteRegister(static_cast<uint8_t>(Registers::Enable), 0x50);
+  if (!WriteRegister(static_cast<uint8_t>(Registers::Enable), 0x50)) {
+    return false;
+  }
 
   // Current 12.5mA and low nibble 0xF.
   // Note: Setting low nibble to 0x8 per the datasheet results in
   // modulated LED driver output. Setting to 0xF results in clean,
   // steady output during the ADC conversion period.
-  WriteRegister(static_cast<uint8_t>(Registers::PDriver), ledDriveCurrentValue);
+  if (!WriteRegister(static_cast<uint8_t>(Registers::PDriver), ledDriveCurrentValue)) {
+    return false;
+  }
 
   // HRS and ALS both in 15-bit mode results in ~50ms LED drive period
   // and presumably ~50ms ADC conversion period.
-  WriteRegister(static_cast<uint8_t>(Registers::Res), 0x77);
+  if (!WriteRegister(static_cast<uint8_t>(Registers::Res), 0x77)) {
+    return false;
+  }
 
   // Gain set to 1x
-  WriteRegister(static_cast<uint8_t>(Registers::Hgain), 0x00);
+  return WriteRegister(static_cast<uint8_t>(Registers::Hgain), 0x00);
 }
 
-void Hrs3300::Enable() {
+bool Hrs3300::Enable() {
   NRF_LOG_INFO("ENABLE");
-  auto value = ReadRegister(static_cast<uint8_t>(Registers::Enable));
+  uint8_t value = 0;
+  if (!ReadRegister(static_cast<uint8_t>(Registers::Enable), value)) {
+    return false;
+  }
   value |= 0x80;
-  WriteRegister(static_cast<uint8_t>(Registers::Enable), value);
+  if (!WriteRegister(static_cast<uint8_t>(Registers::Enable), value)) {
+    return false;
+  }
 
-  WriteRegister(static_cast<uint8_t>(Registers::PDriver), ledDriveCurrentValue);
+  return WriteRegister(static_cast<uint8_t>(Registers::PDriver), ledDriveCurrentValue);
 }
 
-void Hrs3300::Disable() {
+bool Hrs3300::Disable() {
   NRF_LOG_INFO("DISABLE");
-  auto value = ReadRegister(static_cast<uint8_t>(Registers::Enable));
-  value &= ~0x80;
-  WriteRegister(static_cast<uint8_t>(Registers::Enable), value);
+  uint8_t value = 0;
+  bool enableDisabled = false;
+  if (ReadRegister(static_cast<uint8_t>(Registers::Enable), value)) {
+    value &= ~0x80;
+    enableDisabled = WriteRegister(static_cast<uint8_t>(Registers::Enable), value);
+  }
 
-  WriteRegister(static_cast<uint8_t>(Registers::PDriver), 0);
+  // Even if the read-modify-write failed, make one independent best effort to
+  // turn off the LED driver. The TWI layer recovers the peripheral after each
+  // failed transaction, so this second bounded write may still succeed.
+  const bool ledDisabled = WriteRegister(static_cast<uint8_t>(Registers::PDriver), 0);
+  return enableDisabled && ledDisabled;
 }
 
 Hrs3300::PackedHrsAls Hrs3300::ReadHrsAls() {
@@ -77,11 +97,12 @@ Hrs3300::PackedHrsAls Hrs3300::ReadHrsAls() {
   // Add one to largest relative index to find the length
   constexpr uint8_t length = static_cast<uint8_t>(*std::max_element(std::begin(dataRegisters), std::end(dataRegisters))) - baseOffset + 1;
 
-  Hrs3300::PackedHrsAls res;
-  uint8_t buf[length];
+  Hrs3300::PackedHrsAls res {};
+  uint8_t buf[length] {};
   auto ret = twiMaster.Read(twiAddress, baseOffset, buf, length);
   if (ret != TwiMaster::ErrorCodes::NoError) {
     NRF_LOG_INFO("READ ERROR");
+    return res;
   }
   // hrs
   uint8_t m = static_cast<uint8_t>(Registers::C0DataM) - baseOffset;
@@ -97,20 +118,26 @@ Hrs3300::PackedHrsAls Hrs3300::ReadHrsAls() {
   h = static_cast<uint8_t>(Registers::C1dataH) - baseOffset;
   l = static_cast<uint8_t>(Registers::C1dataL) - baseOffset;
   res.als = ((buf[h] & 0x3f) << 11) | (buf[m] << 3) | (buf[l] & 0x07);
+  res.isValid = true;
 
   return res;
 }
 
-void Hrs3300::WriteRegister(uint8_t reg, uint8_t data) {
+bool Hrs3300::WriteRegister(uint8_t reg, uint8_t data) {
   auto ret = twiMaster.Write(twiAddress, reg, &data, 1);
-  if (ret != TwiMaster::ErrorCodes::NoError)
+  if (ret != TwiMaster::ErrorCodes::NoError) {
     NRF_LOG_INFO("WRITE ERROR");
+    return false;
+  }
+  return true;
 }
 
-uint8_t Hrs3300::ReadRegister(uint8_t reg) {
-  uint8_t value;
+bool Hrs3300::ReadRegister(uint8_t reg, uint8_t& value) {
+  value = 0;
   auto ret = twiMaster.Read(twiAddress, reg, &value, 1);
-  if (ret != TwiMaster::ErrorCodes::NoError)
+  if (ret != TwiMaster::ErrorCodes::NoError) {
     NRF_LOG_INFO("READ ERROR");
-  return value;
+    return false;
+  }
+  return true;
 }

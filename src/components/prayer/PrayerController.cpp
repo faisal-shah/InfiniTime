@@ -24,14 +24,15 @@ namespace {
   };
 }
 
-PrayerController::PrayerController(Controllers::DateTime& dateTimeController,
-                                   System::StorageTask& storageTask)
+PrayerController::PrayerController(Controllers::DateTime& dateTimeController, System::StorageTask& storageTask)
   : dateTimeController {dateTimeController}, storageTask {storageTask} {
 }
 
 void PrayerController::Init(System::SystemTask* systemTask) {
   this->systemTask = systemTask;
-  alertTimer = xTimerCreate("Prayer", 1, pdFALSE, this, AlertTimerCallback);
+  if (!alertTimer.Create("Prayer", 1, pdFALSE, this, AlertTimerCallback)) {
+    NRF_LOG_ERROR("[prayer] timer unavailable; prayer alerts disabled");
+  }
   Reschedule();
 }
 
@@ -99,25 +100,17 @@ bool PrayerController::CurrentWindow(Window& out) const {
 }
 
 uint32_t PrayerController::MutationToken(const Settings& settings) {
-  const uint32_t token =
-    Crc32::Compute(reinterpret_cast<const uint8_t*>(&settings), sizeof(settings));
+  const uint32_t token = Crc32::Compute(reinterpret_cast<const uint8_t*>(&settings), sizeof(settings));
   return token == 0 ? 1 : token;
 }
 
-FamilyState* PrayerController::BeginCandidate(const Settings& settings,
-                                              uint32_t token) {
-  if (!storageTask.BeginFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::PrayerSettings,
-        token)) {
+FamilyState* PrayerController::BeginCandidate(const Settings& settings, uint32_t token) {
+  if (!storageTask.BeginFamilyStateMutation(CompanionProtocol::FamilyStateOperation::PrayerSettings, token)) {
     return nullptr;
   }
-  auto* candidate = storageTask.MutableCandidate(
-    CompanionProtocol::FamilyStateOperation::PrayerSettings,
-    token);
+  auto* candidate = storageTask.MutableCandidate(CompanionProtocol::FamilyStateOperation::PrayerSettings, token);
   if (candidate == nullptr) {
-    storageTask.CancelFamilyStateMutation(
-      CompanionProtocol::FamilyStateOperation::PrayerSettings,
-      token);
+    storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::PrayerSettings, token);
     return nullptr;
   }
   candidate->prayer = {
@@ -141,9 +134,7 @@ bool PrayerController::SetSettings(const Settings& newSettings) {
   if (BeginCandidate(newSettings, token) == nullptr) {
     return false;
   }
-  if (!storageTask.CommitFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::PrayerSettings,
-        token)) {
+  if (!storageTask.CommitFamilyStateMutation(CompanionProtocol::FamilyStateOperation::PrayerSettings, token)) {
     pendingToken = 0;
     return false;
   }
@@ -166,18 +157,14 @@ bool PrayerController::StageSettings(const Settings& newSettings) {
 void PrayerController::CommitStaged() {
   if (!stagedValid || pendingToken != MutationToken(staged)) {
     if (pendingToken != 0) {
-      storageTask.CancelFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::PrayerSettings,
-        pendingToken);
+      storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::PrayerSettings, pendingToken);
     }
     stagedValid = false;
     pendingToken = 0;
     return;
   }
   stagedValid = false;
-  if (!storageTask.CommitFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::PrayerSettings,
-        pendingToken)) {
+  if (!storageTask.CommitFamilyStateMutation(CompanionProtocol::FamilyStateOperation::PrayerSettings, pendingToken)) {
     pendingToken = 0;
   }
 }
@@ -189,8 +176,7 @@ void PrayerController::OnPersisted(uint32_t token, bool success) {
   pendingToken = 0;
   if (success) {
     Reschedule();
-    NRF_LOG_INFO("[PrayerController] Settings committed (method %u)",
-                 GetSettings().method);
+    NRF_LOG_INFO("[PrayerController] Settings committed (method %u)", GetSettings().method);
   }
 }
 
@@ -230,8 +216,11 @@ uint8_t PrayerController::DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_
 }
 
 void PrayerController::Reschedule() {
-  xTimerStop(alertTimer, 0);
   hasNext = false;
+  if (!alertTimer.IsCreated()) {
+    return;
+  }
+  (void) alertTimer.Stop();
 
   const auto settings = GetSettings();
   if (!settings.AlertsEnabled()) {
@@ -270,18 +259,23 @@ void PrayerController::Reschedule() {
                nextHour,
                nextMinute,
                static_cast<int>(nextDueTime - now));
-  ArmTimer(nextDueTime - now);
+  if (!ArmTimer(nextDueTime - now)) {
+    hasNext = false;
+  }
 }
 
-void PrayerController::ArmTimer(int64_t seconds) {
+bool PrayerController::ArmTimer(int64_t seconds) {
   if (seconds < 1) {
     seconds = 1;
   }
   if (seconds > maxTimerSeconds) {
     seconds = maxTimerSeconds; // TimerFired() re-checks and re-arms
   }
-  xTimerChangePeriod(alertTimer, static_cast<TickType_t>(seconds) * configTICK_RATE_HZ, 0);
-  xTimerStart(alertTimer, 0);
+  if (!alertTimer.ChangePeriod(static_cast<TickType_t>(seconds) * configTICK_RATE_HZ)) {
+    NRF_LOG_WARNING("[prayer] failed to arm alert timer");
+    return false;
+  }
+  return true;
 }
 
 void PrayerController::TimerFired() {
@@ -291,13 +285,20 @@ void PrayerController::TimerFired() {
   }
   const time_t now = Now();
   if (nextDueTime - now > graceSeconds) {
-    ArmTimer(nextDueTime - now);
+    if (!ArmTimer(nextDueTime - now)) {
+      hasNext = false;
+    }
     return;
   }
 
   lastFiredDue = nextDueTime;
   lastFiredPrayer = nextPrayer;
-  systemTask->PushMessage(System::Messages::SetOffPrayerAlert);
+  if (systemTask == nullptr || !systemTask->TryPushMessage(System::Messages::SetOffPrayerAlert)) {
+    if (!ArmTimer(1)) {
+      hasNext = false;
+    }
+    return;
+  }
   // Immediately re-arm for the next prayer: alerting state lives in the
   // AlertQueue now, so nothing here waits for a dismissal.
   Reschedule();

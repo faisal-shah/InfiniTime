@@ -92,7 +92,7 @@ ble_svc_gatt_changed(uint16_t start_handle, uint16_t end_handle)
     ble_gatts_chr_updated(ble_svc_gatt_changed_val_handle);
 }
 
-void
+int
 ble_svc_gatt_init(void)
 {
     int rc;
@@ -101,8 +101,9 @@ ble_svc_gatt_init(void)
     SYSINIT_ASSERT_ACTIVE();
 
     rc = ble_gatts_count_cfg(ble_svc_gatt_defs);
-    SYSINIT_PANIC_ASSERT(rc == 0);
+    if (rc != 0) {
+        return rc;
+    }
 
-    rc = ble_gatts_add_svcs(ble_svc_gatt_defs);
-    SYSINIT_PANIC_ASSERT(rc == 0);
+    return ble_gatts_add_svcs(ble_svc_gatt_defs);
 }

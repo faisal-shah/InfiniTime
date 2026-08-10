@@ -17,53 +17,58 @@ namespace Pinetime {
       St7789(St7789&&) = delete;
       St7789& operator=(St7789&&) = delete;
 
-      void Init();
+      [[nodiscard]] bool Init();
       void Uninit();
 
-      void VerticalScrollStartAddress(uint16_t line);
+      bool VerticalScrollStartAddress(uint16_t line);
 
-      void DrawBuffer(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint8_t* data, size_t size);
+      [[nodiscard]] bool DrawBuffer(uint16_t x,
+                                    uint16_t y,
+                                    uint16_t width,
+                                    uint16_t height,
+                                    const uint8_t* data,
+                                    size_t size);
 
-      void LowPowerOn();
-      void LowPowerOff();
-      void Sleep();
-      void Wakeup();
+      bool LowPowerOn();
+      bool LowPowerOff();
+      bool Sleep();
+      bool Wakeup();
 
     private:
       Spi& spi;
       uint8_t pinDataCommand;
       uint8_t pinReset;
-      uint8_t verticalScrollingStartAddress = 0;
-      bool sleepIn;
-      TickType_t lastSleepExit;
+      uint16_t verticalScrollingStartAddress = 0;
+      bool sleepIn = true;
+      TickType_t lastSleepExit = 0;
 
       void HardwareReset();
-      void SoftwareReset();
-      void Command2Enable();
-      void SleepOut();
+      bool SoftwareReset();
+      bool Command2Enable();
+      bool SleepOut();
       void EnsureSleepOutPostDelay();
-      void SleepIn();
-      void PixelFormat();
-      void MemoryDataAccessControl();
-      void DisplayInversionOn();
-      void NormalModeOn();
-      void WriteToRam(const uint8_t* data, size_t size);
-      void IdleModeOn();
-      void IdleModeOff();
-      void FrameRateNormalSet();
-      void IdleFrameRateOff();
-      void IdleFrameRateOn();
-      void DisplayOn();
-      void DisplayOff();
-      void PowerControl();
-      void GateControl();
-      void PorchSet();
+      bool SleepIn();
+      bool PixelFormat();
+      bool MemoryDataAccessControl();
+      bool DisplayInversionOn();
+      bool NormalModeOn();
+      bool WriteToRam(const uint8_t* data, size_t size);
+      bool IdleModeOn();
+      bool IdleModeOff();
+      bool FrameRateNormalSet();
+      bool IdleFrameRateOff();
+      bool IdleFrameRateOn();
+      bool DisplayOn();
+      bool DisplayOff();
+      bool PowerControl();
+      bool GateControl();
+      bool PorchSet();
 
-      void SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-      void SetVdv();
-      void WriteCommand(uint8_t cmd);
-      void WriteCommand(const uint8_t* data, size_t size);
-      void WriteSpi(const uint8_t* data, size_t size, const std::function<void()>& preTransactionHook);
+      bool SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
+      bool SetVdv();
+      bool WriteCommand(uint8_t cmd);
+      bool WriteCommand(const uint8_t* data, size_t size);
+      bool WriteSpi(const uint8_t* data, size_t size, const std::function<void()>& preTransactionHook);
 
       enum class Commands : uint8_t {
         SoftwareReset = 0x01,
@@ -91,8 +96,8 @@ namespace Pinetime {
         GateControl = 0xb7,
         Porch = 0xb2,
       };
-      void WriteData(uint8_t data);
-      void WriteData(const uint8_t* data, size_t size);
+      bool WriteData(uint8_t data);
+      bool WriteData(const uint8_t* data, size_t size);
 
       static constexpr uint16_t Width = 240;
       static constexpr uint16_t Height = 320;

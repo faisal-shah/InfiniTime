@@ -5,9 +5,9 @@
 #include "displayapp/widgets/Counter.h"
 #include "displayapp/Controllers.h"
 #include "Symbols.h"
+#include "utility/XorShift32.h"
 
 #include <array>
-#include <random>
 
 namespace Pinetime {
   namespace Applications {
@@ -29,7 +29,7 @@ namespace Pinetime {
         lv_task_t* refreshTask;
         bool enableShakeForDice = false;
 
-        std::mt19937 gen;
+        Utility::XorShift32 random;
 
         std::array<lv_color_t, 3> resultColors = {LV_COLOR_YELLOW, LV_COLOR_MAGENTA, LV_COLOR_AQUA};
         uint8_t currentColorIndex;

@@ -1,5 +1,8 @@
 #include "displayapp/screens/Weather.h"
 
+#include <algorithm>
+#include <cstdio>
+
 #include <lvgl/lvgl.h>
 
 #include "components/ble/SimpleWeatherService.h"
@@ -137,7 +140,10 @@ void Weather::Refresh() {
   if (currentForecast.IsUpdated()) {
     auto optCurrentForecast = currentForecast.Get();
     if (optCurrentForecast) {
-      std::tm localTime = *std::localtime(reinterpret_cast<const time_t*>(&optCurrentForecast->timestamp));
+      // The protocol timestamp is local seconds since the Unix epoch. Derive
+      // the weekday directly so an arbitrary 64-bit BLE value never crosses
+      // the target's narrower time_t / localtime boundary.
+      const uint8_t forecastDay = static_cast<uint8_t>((optCurrentForecast->timestamp / 86400 + 4) % 7);
 
       for (int i = 0; i < optCurrentForecast->nbDays; i++) {
         int16_t maxTemp = optCurrentForecast->days[i]->maxTemperature.Celsius();
@@ -148,36 +154,38 @@ void Weather::Refresh() {
         }
         lv_table_set_cell_type(forecast, 2, i, TemperatureStyle(optCurrentForecast->days[i]->maxTemperature));
         lv_table_set_cell_type(forecast, 3, i, TemperatureStyle(optCurrentForecast->days[i]->minTemperature));
-        uint8_t wday = localTime.tm_wday + i + 1;
+        uint8_t wday = forecastDay + i + 1;
         if (wday > 7) {
           wday -= 7;
         }
         const char* dayOfWeek = Controllers::DateTime::DayOfWeekShortToStringLow(static_cast<Controllers::DateTime::Days>(wday));
         lv_table_set_cell_value(forecast, 0, i, dayOfWeek);
         lv_table_set_cell_value(forecast, 1, i, Symbols::GetSymbol(optCurrentForecast->days[i]->iconId, false));
-        // Pad cells based on the largest number of digits on each column
-        char maxPadding[3] = "  ";
-        char minPadding[3] = "  ";
-        int diff = snprintf(nullptr, 0, "%d", maxTemp) - snprintf(nullptr, 0, "%d", minTemp);
-        if (diff <= 0) {
-          maxPadding[-diff] = '\0';
-          minPadding[0] = '\0';
-        } else {
-          maxPadding[0] = '\0';
-          minPadding[diff] = '\0';
-        }
-        lv_table_set_cell_value_fmt(forecast, 2, i, "%s%d", maxPadding, maxTemp);
-        lv_table_set_cell_value_fmt(forecast, 3, i, "%s%d", minPadding, minTemp);
+        // Right-align both values to the wider signed int16 representation.
+        // Formatting directly avoids indexing a tiny padding array with an
+        // unchecked digit-count difference.
+        char maxText[8];
+        char minText[8];
+        const int maxLength = std::snprintf(maxText, sizeof(maxText), "%d", maxTemp);
+        const int minLength = std::snprintf(minText, sizeof(minText), "%d", minTemp);
+        const int width = std::max(maxLength, minLength);
+        std::snprintf(maxText, sizeof(maxText), "%*d", width, maxTemp);
+        std::snprintf(minText, sizeof(minText), "%*d", width, minTemp);
+        lv_table_set_cell_value(forecast, 2, i, maxText);
+        lv_table_set_cell_value(forecast, 3, i, minText);
       }
-    } else {
-      for (int i = 0; i < Controllers::SimpleWeatherService::MaxNbForecastDays; i++) {
-        lv_table_set_cell_value(forecast, 0, i, "");
-        lv_table_set_cell_value(forecast, 1, i, "");
-        lv_table_set_cell_value(forecast, 2, i, "");
-        lv_table_set_cell_value(forecast, 3, i, "");
-        lv_table_set_cell_type(forecast, 2, i, LV_TABLE_PART_CELL1);
-        lv_table_set_cell_type(forecast, 3, i, LV_TABLE_PART_CELL1);
-      }
+    }
+
+    // Clear both a missing forecast and columns left behind when a forecast
+    // shrinks (for example, from five days to two).
+    const int firstUnused = optCurrentForecast ? optCurrentForecast->nbDays : 0;
+    for (int i = firstUnused; i < Controllers::SimpleWeatherService::MaxNbForecastDays; i++) {
+      lv_table_set_cell_value(forecast, 0, i, "");
+      lv_table_set_cell_value(forecast, 1, i, "");
+      lv_table_set_cell_value(forecast, 2, i, "");
+      lv_table_set_cell_value(forecast, 3, i, "");
+      lv_table_set_cell_type(forecast, 2, i, LV_TABLE_PART_CELL1);
+      lv_table_set_cell_type(forecast, 3, i, LV_TABLE_PART_CELL1);
     }
   }
 }

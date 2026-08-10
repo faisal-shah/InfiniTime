@@ -22,8 +22,9 @@ namespace Pinetime {
       };
 
       struct PackedHrsAls {
-        uint16_t hrs;
-        uint16_t als;
+        uint16_t hrs = 0;
+        uint16_t als = 0;
+        bool isValid = false;
       };
 
       Hrs3300(TwiMaster& twiMaster, uint8_t twiAddress);
@@ -32,17 +33,17 @@ namespace Pinetime {
       Hrs3300(Hrs3300&&) = delete;
       Hrs3300& operator=(Hrs3300&&) = delete;
 
-      void Init();
-      void Enable();
-      void Disable();
+      bool Init();
+      bool Enable();
+      bool Disable();
       PackedHrsAls ReadHrsAls();
 
     private:
       TwiMaster& twiMaster;
       uint8_t twiAddress;
 
-      void WriteRegister(uint8_t reg, uint8_t data);
-      uint8_t ReadRegister(uint8_t reg);
+      bool WriteRegister(uint8_t reg, uint8_t data);
+      bool ReadRegister(uint8_t reg, uint8_t& value);
     };
   }
 }

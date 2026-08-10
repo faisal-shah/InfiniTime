@@ -90,7 +90,7 @@ ble_npl_get_current_task_id(void)
 static inline void
 ble_npl_eventq_init(struct ble_npl_eventq *evq)
 {
-    evq->q = xQueueCreate(32, sizeof(struct ble_npl_eventq *));
+    (void)npl_freertos_eventq_init(evq);
 }
 
 static inline struct ble_npl_event *
@@ -120,7 +120,7 @@ ble_npl_event_run(struct ble_npl_event *ev)
 static inline bool
 ble_npl_eventq_is_empty(struct ble_npl_eventq *evq)
 {
-    return xQueueIsQueueEmptyFromISR(evq->q);
+    return evq == NULL || evq->q == NULL || xQueueIsQueueEmptyFromISR(evq->q);
 }
 
 static inline void
@@ -189,14 +189,14 @@ ble_npl_sem_release(struct ble_npl_sem *sem)
 static inline uint16_t
 ble_npl_sem_get_count(struct ble_npl_sem *sem)
 {
-    return uxSemaphoreGetCount(sem->handle);
+    return sem == NULL || sem->handle == NULL ? 0 : uxSemaphoreGetCount(sem->handle);
 }
 
 static inline void
 ble_npl_callout_init(struct ble_npl_callout *co, struct ble_npl_eventq *evq,
                      ble_npl_event_fn *ev_cb, void *ev_arg)
 {
-    npl_freertos_callout_init(co, evq, ev_cb, ev_arg);
+    (void)npl_freertos_callout_init(co, evq, ev_cb, ev_arg);
 }
 
 static inline ble_npl_error_t
@@ -208,19 +208,20 @@ ble_npl_callout_reset(struct ble_npl_callout *co, ble_npl_time_t ticks)
 static inline void
 ble_npl_callout_stop(struct ble_npl_callout *co)
 {
-    xTimerStop(co->handle, portMAX_DELAY);
+    (void)npl_freertos_callout_stop(co);
 }
 
 static inline bool
 ble_npl_callout_is_active(struct ble_npl_callout *co)
 {
-    return xTimerIsTimerActive(co->handle) == pdTRUE;
+    return co != NULL && co->handle != NULL &&
+           xTimerIsTimerActive(co->handle) == pdTRUE;
 }
 
 static inline ble_npl_time_t
 ble_npl_callout_get_ticks(struct ble_npl_callout *co)
 {
-    return xTimerGetExpiryTime(co->handle);
+    return co == NULL || co->handle == NULL ? 0 : xTimerGetExpiryTime(co->handle);
 }
 
 static inline uint32_t
@@ -233,7 +234,9 @@ ble_npl_callout_remaining_ticks(struct ble_npl_callout *co,
 static inline void
 ble_npl_callout_set_arg(struct ble_npl_callout *co, void *arg)
 {
-    co->ev.arg = arg;
+    if (co != NULL) {
+        co->ev.arg = arg;
+    }
 }
 
 static inline uint32_t
@@ -251,7 +254,7 @@ ble_npl_time_ms_to_ticks(uint32_t ms, ble_npl_time_t *out_ticks)
 static inline ble_npl_error_t
 ble_npl_time_ticks_to_ms(ble_npl_time_t ticks, uint32_t *out_ms)
 {
-    return ble_npl_time_ticks_to_ms(ticks, out_ms);
+    return npl_freertos_time_ticks_to_ms(ticks, out_ms);
 }
 
 static inline ble_npl_time_t

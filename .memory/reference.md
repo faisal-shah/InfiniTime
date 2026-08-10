@@ -1,171 +1,96 @@
-# InfiniTime 3.0 Boot Incident Handoff
+# InfiniTime 3.0.3 Boot Incident Reference
+
+> Historical/frozen as of the 2026-08-10 clean-rewrite pivot. Planning continues
+> on `family-rewrite` in `doc/family-rewrite/`. Candidate hashes below are the
+> last fully packaged pre-final-weather-fix snapshot, not the current dirty tree.
+
+> Current through the 2026-08-10 automated gate. The complete assessment and
+> physical procedure are in `doc/3.0.3-boot-incident.md`.
 
 ## Physical evidence
 
-- First physical 3.0.0 flash completed, rebooted, and remained at the green
-  bootloader pinecone for multiple minutes.
-- Blue rollback restored 2.0.2.
-- A later reset retried the still-unvalidated 3.0 image and returned to green.
-- User must blue-rollback again and validate 2.0.2 before another reset.
-- Firmware v3.0.0 is marked **DO NOT INSTALL**.
+- The 3.0.3 DFU UI reported `Image OK`, then two full green-pinecone passes
+  occurred, and the user observed the watch return to 2.0.2.
+- The four supplied photographs do not show a version page. They do show a
+  live recovered boot at 87 seconds, reset `softr`, heap 34,968 total / 11,712
+  free / 6,568 minimum, zero malloc failures, zero stack overflows, task high
+  water marks, BLE state, and external-flash ID.
+- The leading interpretation is MCUboot TEST forward swap, an early reset
+  before confirmation, then automatic REVERT to the confirmed 2.0.2.
+- A pre-entry bootloader fault cannot be excluded without SWD, but the exact
+  published image is structurally valid and no bootloader fault-blink report
+  was observed.
+- On 2026-08-10 confirmed 2.0.2 also became black/unresponsive for hours with
+  Family selected. Exact code supports a display-only SPI/sleep wedge masked by
+  SystemTask watchdog feeds. Recover by holding only until the pinecone appears
+  and releasing immediately/by about eight seconds; do not hold into blue/red.
 
-## Leading root causes
+## Published 3.0.3 anchors
 
-### Heap headroom is thin but NOT exhausted (corrected 2026-08-07)
+- Annotated tag `v3.0.3` resolves to commit `743728d5`.
+- Preserved branch: `backup/family-features-v3.0.3`.
+- App image: 429,364 B; SHA-256
+  `e2ce13fae59fc81b23832f938e4fa64b3e727bcb25dfef5c589a29f77bbb3275`.
+- DFU ZIP SHA-256:
+  `9769bced853095aa5f43c4f8c293f81e6de1cf1c1eca6d361fbf2cbf2757af80`.
+- MCUboot slot 475,136 B; trailer 0x1b0; maximum image boundary 0x73e50.
+- Shipped bootloader starts a locked 7.000-second WDT (`CRV=0x37fff`) just
+  before application handoff. The earlier two-second interpretation was wrong.
 
-- v2.0.2 BSS: 28,572 B.
-- 3.0.1 BSS: 44,460 B.
-- Current `StorageTask`: 12,656 B:
-  - two full `FamilyState` banks: 4,280 B;
-  - codec buffer: 2,146 B;
-  - I/O request/buffer: 3,224 B;
-  - worker stack: 2,800 B.
-- Remaining FreeRTOS heap is about 19 KiB.
-- Independent audit found mandatory task/queue allocations plus observed
-  persistent startup allocations exceed that budget before all mutexes,
-  timers, and LVGL allocations.
+## Root-cause assessment
 
-Measured, not estimated:
+- `Image OK` proves only InfiniTime's DFU CRC16, not MCUboot acceptance,
+  application entry, confirmation, or stable operation.
+- The complete 3.0.3 heap is 23,288 B. The recovered 2.0.2 photo shows 23,256 B
+  currently allocated and 28,400 B peak, invalidating the old simulator-based
+  margin claim.
+- 3.0.3 initialized NimBLE before the scheduler/display first frame. Essential
+  allocation/assert failures request a software reset, consistent with
+  `softr`; the exact first reset site is unknowable after the fact.
+- The upstream AOD flash-awake change is an important secondary liveness fix,
+  not the leading explanation for the immediate post-update revert.
+- Inherited weather equality makes stable unequal low/high values redraw at the
+  20-ms face cadence. The old callback also accepted unchecked MTU-truncated
+  mbufs, raced UI readers, and could feed extreme values to an out-of-bounds
+  Weather-app padding index. Timestamp freshness now also avoids signed
+  duration overflow on arbitrary 64-bit values. This is a credible
+  trigger/amplifier chain, not a retained trace of either incident.
+- Exact RAM baseline: upstream raw heap 40,928 B; 2.0.2 34,968 B plus 2,112 B
+  of added persistent runtime allocation; 3.0.3 23,288 B. Family v2 models at
+  5,328 B versus Digital 3,240 B. See
+  `doc/family-features-ram-analysis.md`.
 
-- Hardware heap is `__StackLimit - __HeapLimit` = 0x2000fc00 - 0x2000b1a8 =
-  **19,032 B**. That part of the audit is confirmed.
-- InfiniSim bisection with `INFINISIM_HEAP_BALLAST`: 3.0.1 boots and renders the
-  watch face with **19,032 B** usable, and still boots at 9,000 B. It first
-  fails between 9,000 and 6,000 B. Simulator boot demand is therefore ~7-9 KiB.
-- The simulator substitutes a virtual BLE adapter, so hardware additionally pays
-  for NimBLE's two dynamic tasks: `ll` at (120+200) words and `ble` at (120+600)
-  words, = 4,160 B of stack plus two TCBs, ~4.3 KiB total.
-- Hardware demand is therefore ~12-13 KiB against 19,032 B, leaving roughly
-  5-7 KiB of headroom.
+## Current engineering candidate
 
-Heap exhaustion is thin but is **not** the deterministic green-screen cause.
-Confirm on hardware with the Sys Info free-heap readout once the watch boots,
-before spending effort on a StorageTask RAM redesign.
+- Branch is rebased on fork `main` `8d7a04e9` and includes upstream AOD commit
+  `71d1f5b4`.
+- UI first-frame precedes optional BLE. Hardware waits and storage/display
+  transitions are bounded; an unsafe black-display state stops watchdog feeds
+  so an unconfirmed TEST image can revert.
+- DFU/recovery validate exact slot/factory bounds, header, all 39 external
+  vectors, TLVs, SHA-256, CRC, and programmed readback.
+- Protocol capacity is restored to 32 schedules / 20 tasks; malformed 3.0.3
+  snapshots are intentionally reset rather than misread as schema 1.
+- Default faces are Digital, Analog, and Terminal. High-heap faces, including
+  Family, require an explicit custom build; persisted unavailable choices fall
+  back to Digital.
+- Weather messages are copied/validated at exact current or compact/fixed
+  forecast lengths and published through synchronized snapshots; stable values
+  quiesce and shrinking forecasts clear old columns.
+- App payload is 408,784 B and complete MCUboot image is 408,856 B. Linker RAM
+  is 45,296 B; raw heap is 19,216 B and heap_4-usable heap is 19,208 B.
+- Modeled persistent allocation 12,648 B plus worst default screen 3,096 B
+  gives only a 3,464 B optimistic coalesced floor. This is not a hardware
+  measurement.
 
-### Boot order: the actual green-screen cause (found 2026-08-07)
+## Gate status
 
-`SystemTask::Work()` called `nimbleController.Init()` **before**
-`displayApp.Start()`, and `NimbleController::Init()` opened with an unbounded
-
-```cpp
-while (!ble_hs_synced()) { vTaskDelay(10); }
-```
-
-with no watchdog feed inside the loop. SystemTask is the only feeder. So any
-failure to reach host sync -- including the ignored `xTaskCreate` results for
-the `ll` and `ble` tasks -- stopped the feed, the 7-second watchdog reset the
-watch before the display was ever initialised, and the boot repeated forever.
-From outside that is exactly "stuck on the green bootloader pinecone for
-minutes": the bootloader logo is redrawn every reset and the application never
-gets far enough to replace it.
-
-Fixed by starting the UI first and bounding the sync wait at 3 s. A radio that
-fails now costs Bluetooth for that boot and leaves a usable watch, instead of
-looking bricked.
-
-### Inherited watchdog is SEVEN seconds, not two (corrected 2026-08-07)
-
-The two-second figure came from Mynewt `syscfg.yml`. The **deployed binary**
-disagrees. Disassembling the shipped `bootloader.bin` (identical in v1.26.0 and
-v2.0.2, sha256 `eda2f27c…`):
-
-- Only three routines reference the WDT base `0x40010000`.
-- Only one of them writes `TASKS_START` (offset 0x000), at file offset `0x1dc6`.
-- Immediately before it, at `0x1dbc`, it writes `CRV` (offset 0x504) from the
-  literal at `0x1dd0` = `0x00037fff` = 229,375.
-- `(229375 + 1) / 32768` = **7.000 s**. Two seconds would be `CRV = 0xffff`.
-
-`hal_watchdog_init` (offset `0x129c`) does compute CRV from a parameter and may
-well be called with 2000 ms, but it never starts the watchdog, and CRV is freely
-writable until `TASKS_START`. The last CRV write before the start is always the
-7-second literal.
-
-The inherited deadline is therefore 7 s, which is what InfiniTime already
-assumes. Do not redesign the boot sequence around a 2-second budget.
-
-The real defect was never the budget. It was that nothing fed the watchdog at
-all during an unbounded wait -- see the boot-order defect below.
-
-## Current committed checkpoint intent
-
-The current work is an incomplete 3.0.1 incident checkpoint:
-
-- version bumped to 3.0.1;
-- family state loads synchronously before the StorageTask worker starts;
-- the cross-task five-second boot wait is removed;
-- early watchdog reload checkpoints were added;
-- InfiniSim has a six-second storage-delay test.
-
-It builds, but **must not be released or physically flashed**. The simulator
-test still models an application-configured seven-second watchdog rather than
-the deployed locked two-second bootloader WDT.
-
-## P0 audit findings to resolve
-
-### Boot and RAM
-
-1. Redesign StorageTask RAM and recover several KiB of measured heap headroom.
-   Do not keep two state banks plus two independent 2–3-KiB scratch buffers.
-2. Add deterministic startup allocation accounting and a minimum heap-headroom
-   CI gate.
-3. Check every RTOS/LVGL allocation and show a static recovery UI on failure.
-4. Model a pre-armed, configuration-locked two-second WDT in InfiniSim.
-5. Start the display before BLE readiness. `NimbleController::Init()` currently
-   waits indefinitely for `ble_hs_synced()`.
-6. Check NimBLE LL and host task-creation return values.
-7. Add LFCLK startup timeout/fallback.
-8. Bound every TWI mutex/event wait and reset the peripheral on failure.
-
-### Storage and liveness
-
-1. Replace `ioCompleted/ioAbandoned` with generation-tagged completions; current
-   timeout timing can cross-complete the next request.
-2. Serialize flash decide-and-power transitions; current sleep decision can
-   race a concurrent wake.
-3. Move FSService work off the NimBLE callback. It currently blocks on
-   SystemTask/storage and LISTDIR is O(n²) with delays.
-4. Replace unbounded family `PushMessage()` calls with bounded enqueue/rollback.
-5. Add a timeout/recovery for multi-byte asynchronous SPI writes when END IRQ
-   is lost.
-6. Treat storage contention as a short retry, not a flash failure with
-   multi-minute backoff.
-7. Stop exposing reusable active-bank references across tasks; use copied or
-   reader-pinned immutable snapshots.
-8. On one-shot alarm disable failure, immediately schedule later alarms and
-   retry the durable disable.
-9. Reject every mutation if FS/StorageTask is unavailable; never leave status
-   pending.
-
-### DFU, recovery, and image
-
-1. Bound DFU `totalSize` to the secondary slot/trailer and enforce remaining
-   space on every append.
-2. Recovery loader must bound the final chunk, check erase/program failures,
-   and verify readback before showing success.
-3. Make `recoveryImage.h` a declared CMake output/dependency. Incremental builds
-   can embed stale recovery firmware.
-4. Publish the standalone recovery image.
-5. Separate security decision: signed MCUBoot images are recommended.
-
-## Exact takeover sequence
-
-1. Confirm the watch is on **validated 2.0.2**.
-2. Keep v3.0.0 blocked.
-3. Redesign RAM first and prove startup heap headroom.
-4. Reproduce the locked two-second boot WDT in simulation.
-5. Move UI before BLE readiness and bound LFCLK/TWI/boot storage.
-6. Fix every storage-liveness P0 item with fault-injection tests.
-7. Fix DFU/recovery P0 items.
-8. Re-run six ARM targets, host/simulator/companion/Android, all ptlab
-   scenarios, bridge regression, and browser E2E.
-9. Physically test repeated boot from validated 2.0.2 with timestamped evidence.
-10. Only then create a replacement prerelease.
-
-## Repositories
-
-- InfiniTime: `family-features`.
-- InfiniSim: `family-features`.
-- PineTimeCompanion: `master` (0.34.0 remains usable).
-- pinetime-dev-tools: `main`.
-- Blocked release:
-  `https://github.com/faisal-shah/InfiniTime/releases/tag/v3.0.0`.
+- Passed: fresh six-target ARM build/package/image verification; 43/43 normal
+  and ASan/UBSan host tests; generated protocol check; 3/3 fresh InfiniSim
+  CTests; broad GUI plus focused weather matrix.
+- Open: connected hardware total/largest heap, screen fragmentation churn,
+  panel liveness, TEST swap/revert/confirmation, full sleep/AOD/storage/wake,
+  interrupted update, and two 24-hour soak cycles.
+- Do not install or republish 3.0.0 through 3.0.3. Do not publish 3.0.4. Before
+  any controlled physical test, commit the candidate, build from a clean tree,
+  and record the exact app-image SHA; dirty builds display only old `HEAD`.

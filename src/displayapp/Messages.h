@@ -27,6 +27,9 @@ namespace Pinetime {
         BeaconModeEnable,
         BeaconModeDisable,
         BondForgetAllRequested,
+        // The dependency-free boot frame is drawn before persisted settings
+        // are loaded. Rebuild the clock once those settings are available.
+        ReloadClock,
       };
     }
   }

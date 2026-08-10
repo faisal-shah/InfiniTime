@@ -15,6 +15,7 @@ namespace Pinetime {
   namespace Drivers {
     class Watchdog;
   }
+
   namespace System {
     class SystemTask;
   }
@@ -49,7 +50,7 @@ namespace Pinetime {
         const Pinetime::Drivers::SpiNorFlash& spiNorFlash;
         const Pinetime::System::SystemTask& systemTask;
 
-        static constexpr uint8_t ScreenCount = 9;
+        static constexpr uint8_t ScreenCount = 10;
         ScreenList<ScreenCount> screens;
 
         static bool sortById(const TaskStatus_t& lhs, const TaskStatus_t& rhs);
@@ -63,6 +64,7 @@ namespace Pinetime {
         std::unique_ptr<Screen> CreateScreen7();
         std::unique_ptr<Screen> CreateScreen8();
         std::unique_ptr<Screen> CreateScreen9();
+        std::unique_ptr<Screen> CreateScreen10();
       };
     }
   }

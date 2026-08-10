@@ -1,12 +1,38 @@
 #include "drivers/TwiMaster.h"
+
 #include <cstring>
 #include <hal/nrf_gpio.h>
+#include <libraries/delay/nrf_delay.h>
 #include <nrfx_log.h>
+#include <task.h>
 
 using namespace Pinetime::Drivers;
 
-// TODO use shortcut to automatically send STOP when receive LastTX, for example
-// TODO use DMA/IRQ
+namespace {
+  // All current users transfer at most 17 bytes at approximately 390 kHz, so
+  // a healthy transaction completes in well under a millisecond. Twenty
+  // milliseconds leaves generous clock-stretching margin while remaining far
+  // below the inherited seven-second watchdog deadline.
+  constexpr TickType_t transferTimeoutTicks = pdMS_TO_TICKS(20) == 0 ? 1 : pdMS_TO_TICKS(20);
+
+  // A bus owner can only retain the mutex for the bounded transfer and abort
+  // waits above. This deadline also protects against a task that dies while
+  // owning the bus.
+  constexpr TickType_t mutexTimeoutTicks = pdMS_TO_TICKS(100) == 0 ? 1 : pdMS_TO_TICKS(100);
+
+  // FreeRTOS ticks are the real deadline. This cap is a second, independent
+  // escape hatch if the tick interrupt is unexpectedly unavailable while the
+  // CPU can still execute this polling loop.
+  constexpr uint32_t eventSpinCap = 250000;
+
+  constexpr uint32_t pinDisconnected = 0xffffffffUL;
+  constexpr uint32_t busPulseDelayUs = 5;
+  constexpr uint8_t busClearClockPulses = 9;
+
+  bool TimeoutExpired(TickType_t start, TickType_t now, TickType_t timeout) {
+    return static_cast<TickType_t>(now - start) >= timeout;
+  }
+}
 
 TwiMaster::TwiMaster(NRF_TWIM_Type* module, uint32_t frequency, uint8_t pinSda, uint8_t pinScl)
   : module {module}, frequency {frequency}, pinSda {pinSda}, pinScl {pinScl} {
@@ -22,158 +48,287 @@ void TwiMaster::ConfigurePins() const {
                               (GPIO_PIN_CNF_SENSE_Disabled << GPIO_PIN_CNF_SENSE_Pos);
 }
 
-void TwiMaster::Init() {
-  if (mutex == nullptr) {
-    mutex = xSemaphoreCreateBinary();
+void TwiMaster::ConfigureRecoveryPins() const {
+  // S0D1 emulates the wired-AND/open-drain behavior required by I2C: writing
+  // one releases the line, while writing zero drives it low.
+  NRF_GPIO->PIN_CNF[pinScl] = (GPIO_PIN_CNF_DIR_Output << GPIO_PIN_CNF_DIR_Pos) | (GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos) |
+                              (GPIO_PIN_CNF_PULL_Disabled << GPIO_PIN_CNF_PULL_Pos) | (GPIO_PIN_CNF_DRIVE_S0D1 << GPIO_PIN_CNF_DRIVE_Pos) |
+                              (GPIO_PIN_CNF_SENSE_Disabled << GPIO_PIN_CNF_SENSE_Pos);
+
+  NRF_GPIO->PIN_CNF[pinSda] = (GPIO_PIN_CNF_DIR_Output << GPIO_PIN_CNF_DIR_Pos) | (GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos) |
+                              (GPIO_PIN_CNF_PULL_Disabled << GPIO_PIN_CNF_PULL_Pos) | (GPIO_PIN_CNF_DRIVE_S0D1 << GPIO_PIN_CNF_DRIVE_Pos) |
+                              (GPIO_PIN_CNF_SENSE_Disabled << GPIO_PIN_CNF_SENSE_Pos);
+}
+
+void TwiMaster::ClearEventsAndErrors() {
+  module->EVENTS_LASTRX = 0;
+  module->EVENTS_STOPPED = 0;
+  module->EVENTS_LASTTX = 0;
+  module->EVENTS_ERROR = 0;
+  module->EVENTS_RXSTARTED = 0;
+  module->EVENTS_SUSPENDED = 0;
+  module->EVENTS_TXSTARTED = 0;
+
+  // ERRORSRC is write-one-to-clear.
+  const uint32_t errorSource = module->ERRORSRC;
+  module->ERRORSRC = errorSource;
+}
+
+bool TwiMaster::ApplyConfig() {
+  if (module == nullptr) {
+    return false;
   }
 
+  module->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);
+  module->SHORTS = 0;
+
   ConfigurePins();
+  module->FREQUENCY = frequency;
+  module->PSEL.SCL = pinScl;
+  module->PSEL.SDA = pinSda;
+  module->TXD.LIST = 0;
+  module->RXD.LIST = 0;
+  ClearEventsAndErrors();
 
-  twiBaseAddress = module;
+  module->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
+  return module->ENABLE == (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
+}
 
-  twiBaseAddress->FREQUENCY = frequency;
+bool TwiMaster::Init() {
+  if (module == nullptr) {
+    return false;
+  }
 
-  twiBaseAddress->PSEL.SCL = pinScl;
-  twiBaseAddress->PSEL.SDA = pinSda;
-  twiBaseAddress->EVENTS_LASTRX = 0;
-  twiBaseAddress->EVENTS_STOPPED = 0;
-  twiBaseAddress->EVENTS_LASTTX = 0;
-  twiBaseAddress->EVENTS_ERROR = 0;
-  twiBaseAddress->EVENTS_RXSTARTED = 0;
-  twiBaseAddress->EVENTS_SUSPENDED = 0;
-  twiBaseAddress->EVENTS_TXSTARTED = 0;
+  if (mutex == nullptr) {
+    mutex = xSemaphoreCreateMutexStatic(&mutexStorage);
+    if (mutex == nullptr) {
+      return false;
+    }
+  }
 
-  twiBaseAddress->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
+  if (xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+    return false;
+  }
 
+  initialized = ApplyConfig();
   xSemaphoreGive(mutex);
+  return initialized;
+}
+
+bool TwiMaster::WakeupLocked() {
+  if (!initialized) {
+    return false;
+  }
+
+  ClearEventsAndErrors();
+  module->SHORTS = 0;
+  module->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
+  return module->ENABLE == (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
+}
+
+bool TwiMaster::SleepLocked() {
+  module->SHORTS = 0;
+  module->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);
+  return module->ENABLE == (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);
+}
+
+TwiMaster::WaitResult TwiMaster::WaitForEvent(volatile uint32_t& event, bool stopOnError) {
+  const TickType_t start = xTaskGetTickCount();
+  uint32_t spins = 0;
+
+  while (event == 0) {
+    if (stopOnError && module->EVENTS_ERROR != 0) {
+      return WaitResult::Error;
+    }
+    if (TimeoutExpired(start, xTaskGetTickCount(), transferTimeoutTicks) || ++spins >= eventSpinCap) {
+      return WaitResult::Timeout;
+    }
+  }
+
+  if (stopOnError && module->EVENTS_ERROR != 0) {
+    return WaitResult::Error;
+  }
+  return WaitResult::Complete;
+}
+
+bool TwiMaster::AbortTransfer() {
+  module->SHORTS = 0;
+  module->EVENTS_STOPPED = 0;
+  module->EVENTS_ERROR = 0;
+  const uint32_t errorSource = module->ERRORSRC;
+  module->ERRORSRC = errorSource;
+
+  // STOP is ignored while TWIM is suspended, so RESUME first. Both writes are
+  // harmless if the peripheral was already active.
+  module->TASKS_RESUME = 1;
+  module->TASKS_STOP = 1;
+  const bool stopped = WaitForEvent(module->EVENTS_STOPPED, false) == WaitResult::Complete;
+  module->EVENTS_STOPPED = 0;
+  return stopped;
+}
+
+bool TwiMaster::ClearBusLines() {
+  module->PSEL.SCL = pinDisconnected;
+  module->PSEL.SDA = pinDisconnected;
+
+  nrf_gpio_pin_set(pinScl);
+  nrf_gpio_pin_set(pinSda);
+  ConfigureRecoveryPins();
+  nrf_delay_us(busPulseDelayUs);
+
+  // A slave may be holding SDA because it reset halfway through a byte. Clock
+  // at most one byte plus ACK so it can finish and release the line.
+  for (uint8_t pulse = 0; pulse < busClearClockPulses && nrf_gpio_pin_read(pinSda) == 0; pulse++) {
+    nrf_gpio_pin_clear(pinScl);
+    nrf_delay_us(busPulseDelayUs);
+    nrf_gpio_pin_set(pinScl);
+    nrf_delay_us(busPulseDelayUs);
+  }
+
+  // Generate a STOP condition even if SDA was already released.
+  nrf_gpio_pin_clear(pinSda);
+  nrf_delay_us(busPulseDelayUs);
+  nrf_gpio_pin_set(pinScl);
+  nrf_delay_us(busPulseDelayUs);
+  nrf_gpio_pin_set(pinSda);
+  nrf_delay_us(busPulseDelayUs);
+
+  const bool released = nrf_gpio_pin_read(pinScl) != 0 && nrf_gpio_pin_read(pinSda) != 0;
+  ConfigurePins();
+  return released;
+}
+
+void TwiMaster::RecoverBus() {
+  NRF_LOG_INFO("[TWIM] transaction failed, recovering bus");
+
+  module->SHORTS = 0;
+  module->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);
+
+  // Only drive recovery clocks if a device is actually retaining a line. A
+  // normal address NACK therefore resets TWIM but does not perturb the bus.
+  if (nrf_gpio_pin_read(pinScl) == 0 || nrf_gpio_pin_read(pinSda) == 0) {
+    ClearBusLines();
+  }
+
+  initialized = ApplyConfig();
+}
+
+TwiMaster::ErrorCodes TwiMaster::ReadRegister(uint8_t deviceAddress, uint8_t registerAddress, uint8_t* buffer, size_t size) {
+  internalBuffer[0] = registerAddress;
+  module->ADDRESS = deviceAddress;
+  module->TXD.PTR = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(internalBuffer));
+  module->TXD.MAXCNT = registerSize;
+  module->RXD.PTR = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(buffer));
+  module->RXD.MAXCNT = size;
+  module->TXD.LIST = 0;
+  module->RXD.LIST = 0;
+
+  ClearEventsAndErrors();
+  // The shortcuts perform a repeated START after the register byte and a STOP
+  // after the receive. This removes the former unbounded TXSTARTED, SUSPENDED,
+  // RXSTARTED, LASTTX and LASTRX polling windows.
+  module->SHORTS = TWIM_SHORTS_LASTTX_STARTRX_Msk | TWIM_SHORTS_LASTRX_STOP_Msk;
+  module->TASKS_RESUME = 1;
+  module->TASKS_STARTTX = 1;
+
+  const WaitResult result = WaitForEvent(module->EVENTS_STOPPED, true);
+  const bool complete = result == WaitResult::Complete && module->TXD.AMOUNT == registerSize && module->RXD.AMOUNT == size;
+  module->SHORTS = 0;
+  module->EVENTS_STOPPED = 0;
+
+  if (!complete) {
+    AbortTransfer();
+    RecoverBus();
+    return ErrorCodes::TransactionFailed;
+  }
+
+  return ErrorCodes::NoError;
+}
+
+TwiMaster::ErrorCodes TwiMaster::WriteRegister(uint8_t deviceAddress, const uint8_t* data, size_t size) {
+  module->ADDRESS = deviceAddress;
+  module->TXD.PTR = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(data));
+  module->TXD.MAXCNT = size;
+  module->TXD.LIST = 0;
+
+  ClearEventsAndErrors();
+  module->SHORTS = TWIM_SHORTS_LASTTX_STOP_Msk;
+  module->TASKS_RESUME = 1;
+  module->TASKS_STARTTX = 1;
+
+  const WaitResult result = WaitForEvent(module->EVENTS_STOPPED, true);
+  const bool complete = result == WaitResult::Complete && module->TXD.AMOUNT == size;
+  module->SHORTS = 0;
+  module->EVENTS_STOPPED = 0;
+
+  if (!complete) {
+    AbortTransfer();
+    RecoverBus();
+    return ErrorCodes::TransactionFailed;
+  }
+
+  return ErrorCodes::NoError;
 }
 
 TwiMaster::ErrorCodes TwiMaster::Read(uint8_t deviceAddress, uint8_t registerAddress, uint8_t* data, size_t size) {
-  xSemaphoreTake(mutex, portMAX_DELAY);
-  Wakeup();
-  auto ret = Write(deviceAddress, &registerAddress, 1, false);
-  ret = Read(deviceAddress, data, size, true);
-  Sleep();
+  if (deviceAddress > 0x7f || data == nullptr || size == 0 || size > maxDataSize || mutex == nullptr || !initialized) {
+    return ErrorCodes::TransactionFailed;
+  }
+  if (xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+    return ErrorCodes::TransactionFailed;
+  }
+
+  ErrorCodes result = ErrorCodes::TransactionFailed;
+  if (WakeupLocked()) {
+    result = ReadRegister(deviceAddress, registerAddress, data, size);
+    if (!SleepLocked()) {
+      result = ErrorCodes::TransactionFailed;
+    }
+  }
+
   xSemaphoreGive(mutex);
-  return ret;
+  return result;
 }
 
 TwiMaster::ErrorCodes TwiMaster::Write(uint8_t deviceAddress, uint8_t registerAddress, const uint8_t* data, size_t size) {
-  ASSERT(size <= maxDataSize);
-  xSemaphoreTake(mutex, portMAX_DELAY);
-  Wakeup();
+  if (deviceAddress > 0x7f || size > maxDataSize || (data == nullptr && size != 0) || mutex == nullptr || !initialized) {
+    return ErrorCodes::TransactionFailed;
+  }
+  if (xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+    return ErrorCodes::TransactionFailed;
+  }
+
   internalBuffer[0] = registerAddress;
-  std::memcpy(internalBuffer + 1, data, size);
-  auto ret = Write(deviceAddress, internalBuffer, size + 1, true);
-  Sleep();
+  if (size != 0) {
+    std::memcpy(internalBuffer + registerSize, data, size);
+  }
+
+  ErrorCodes result = ErrorCodes::TransactionFailed;
+  if (WakeupLocked()) {
+    result = WriteRegister(deviceAddress, internalBuffer, size + registerSize);
+    if (!SleepLocked()) {
+      result = ErrorCodes::TransactionFailed;
+    }
+  }
+
   xSemaphoreGive(mutex);
-  return ret;
+  return result;
 }
 
-TwiMaster::ErrorCodes TwiMaster::Read(uint8_t deviceAddress, uint8_t* buffer, size_t size, bool stop) {
-  twiBaseAddress->ADDRESS = deviceAddress;
-  twiBaseAddress->TASKS_RESUME = 0x1UL;
-  twiBaseAddress->RXD.PTR = (uint32_t) buffer;
-  twiBaseAddress->RXD.MAXCNT = size;
-
-  twiBaseAddress->TASKS_STARTRX = 1;
-
-  while (!twiBaseAddress->EVENTS_RXSTARTED && !twiBaseAddress->EVENTS_ERROR)
-    ;
-  twiBaseAddress->EVENTS_RXSTARTED = 0x0UL;
-
-  txStartedCycleCount = DWT->CYCCNT;
-  uint32_t currentCycleCount;
-  while (!twiBaseAddress->EVENTS_LASTRX && !twiBaseAddress->EVENTS_ERROR) {
-    currentCycleCount = DWT->CYCCNT;
-    if ((currentCycleCount - txStartedCycleCount) > HwFreezedDelay) {
-      FixHwFreezed();
-      return ErrorCodes::TransactionFailed;
-    }
+bool TwiMaster::Sleep() {
+  if (mutex == nullptr || !initialized || xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+    return false;
   }
-  twiBaseAddress->EVENTS_LASTRX = 0x0UL;
-
-  if (stop || twiBaseAddress->EVENTS_ERROR) {
-    twiBaseAddress->TASKS_STOP = 0x1UL;
-    while (!twiBaseAddress->EVENTS_STOPPED)
-      ;
-    twiBaseAddress->EVENTS_STOPPED = 0x0UL;
-  } else {
-    twiBaseAddress->TASKS_SUSPEND = 0x1UL;
-    while (!twiBaseAddress->EVENTS_SUSPENDED)
-      ;
-    twiBaseAddress->EVENTS_SUSPENDED = 0x0UL;
-  }
-
-  if (twiBaseAddress->EVENTS_ERROR) {
-    twiBaseAddress->EVENTS_ERROR = 0x0UL;
-  }
-  return ErrorCodes::NoError;
+  const bool slept = SleepLocked();
+  xSemaphoreGive(mutex);
+  return slept;
 }
 
-TwiMaster::ErrorCodes TwiMaster::Write(uint8_t deviceAddress, const uint8_t* data, size_t size, bool stop) {
-  twiBaseAddress->ADDRESS = deviceAddress;
-  twiBaseAddress->TASKS_RESUME = 0x1UL;
-  twiBaseAddress->TXD.PTR = (uint32_t) data;
-  twiBaseAddress->TXD.MAXCNT = size;
-
-  twiBaseAddress->TASKS_STARTTX = 1;
-
-  while (!twiBaseAddress->EVENTS_TXSTARTED && !twiBaseAddress->EVENTS_ERROR)
-    ;
-  twiBaseAddress->EVENTS_TXSTARTED = 0x0UL;
-
-  txStartedCycleCount = DWT->CYCCNT;
-  uint32_t currentCycleCount;
-  while (!twiBaseAddress->EVENTS_LASTTX && !twiBaseAddress->EVENTS_ERROR) {
-    currentCycleCount = DWT->CYCCNT;
-    if ((currentCycleCount - txStartedCycleCount) > HwFreezedDelay) {
-      FixHwFreezed();
-      return ErrorCodes::TransactionFailed;
-    }
+bool TwiMaster::Wakeup() {
+  if (mutex == nullptr || !initialized || xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+    return false;
   }
-  twiBaseAddress->EVENTS_LASTTX = 0x0UL;
-
-  if (stop || twiBaseAddress->EVENTS_ERROR) {
-    twiBaseAddress->TASKS_STOP = 0x1UL;
-    while (!twiBaseAddress->EVENTS_STOPPED)
-      ;
-    twiBaseAddress->EVENTS_STOPPED = 0x0UL;
-  } else {
-    twiBaseAddress->TASKS_SUSPEND = 0x1UL;
-    while (!twiBaseAddress->EVENTS_SUSPENDED)
-      ;
-    twiBaseAddress->EVENTS_SUSPENDED = 0x0UL;
-  }
-
-  if (twiBaseAddress->EVENTS_ERROR) {
-    twiBaseAddress->EVENTS_ERROR = 0x0UL;
-    uint32_t error = twiBaseAddress->ERRORSRC;
-    twiBaseAddress->ERRORSRC = error;
-  }
-
-  return ErrorCodes::NoError;
-}
-
-void TwiMaster::Sleep() {
-  twiBaseAddress->ENABLE = (TWIM_ENABLE_ENABLE_Disabled << TWIM_ENABLE_ENABLE_Pos);
-}
-
-void TwiMaster::Wakeup() {
-  twiBaseAddress->ENABLE = (TWIM_ENABLE_ENABLE_Enabled << TWIM_ENABLE_ENABLE_Pos);
-}
-
-/* Sometimes, the TWIM device just freeze and never set the event EVENTS_LASTTX.
- * This method disable and re-enable the peripheral so that it works again.
- * This is just a workaround, and it would be better if we could find a way to prevent
- * this issue from happening.
- * */
-void TwiMaster::FixHwFreezed() {
-  NRF_LOG_INFO("I2C device frozen, reinitializing it!");
-
-  uint32_t twi_state = NRF_TWI1->ENABLE;
-
-  Sleep();
-
-  twiBaseAddress->ENABLE = twi_state;
+  const bool woke = WakeupLocked();
+  xSemaphoreGive(mutex);
+  return woke;
 }

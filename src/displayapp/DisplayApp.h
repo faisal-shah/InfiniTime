@@ -1,7 +1,9 @@
 #pragma once
 #include <FreeRTOS.h>
 #include <queue.h>
+#include <semphr.h>
 #include <task.h>
+#include <atomic>
 #include <memory>
 #include <systemtask/Messages.h>
 #include "displayapp/apps/Apps.h"
@@ -82,7 +84,14 @@ namespace Pinetime {
                  Pinetime::Controllers::FS& filesystem,
                  Pinetime::System::StorageTask& storageTask,
                  Pinetime::Drivers::SpiNorFlash& spiNorFlash);
-      void Start(System::BootErrors error);
+      [[nodiscard]] bool Start(System::BootErrors error);
+      [[nodiscard]] bool WaitUntilReady(TickType_t timeout);
+      [[nodiscard]] uint32_t ProgressCounter() const {
+        return progressCounter.load(std::memory_order_relaxed);
+      }
+      [[nodiscard]] bool IsDisplayHealthy() const {
+        return lvgl.IsDisplayHealthy();
+      }
       void PushMessage(Display::Messages msg);
 
       void StartApp(Apps app, DisplayApp::FullRefreshDirections direction);
@@ -124,13 +133,23 @@ namespace Pinetime {
       Pinetime::Controllers::Timer timer;
 
       AppControllers controllers;
-      TaskHandle_t taskHandle;
+      TaskHandle_t taskHandle = nullptr;
+      StaticTask_t taskBuffer {};
+      static constexpr uint16_t taskStackWords = 800;
+      StackType_t taskStack[taskStackWords] {};
 
       States state = States::Running;
-      QueueHandle_t msgQueue;
+      QueueHandle_t msgQueue = nullptr;
+      StaticQueue_t msgQueueBuffer {};
 
       static constexpr uint8_t queueSize = 10;
       static constexpr uint8_t itemSize = 1;
+      uint8_t msgQueueStorage[queueSize * itemSize] {};
+
+      SemaphoreHandle_t readySemaphore = nullptr;
+      StaticSemaphore_t readySemaphoreBuffer {};
+      std::atomic<bool> ready {false};
+      std::atomic<uint32_t> progressCounter {0};
 
       std::unique_ptr<Screens::Screen> currentScreen;
 
@@ -141,7 +160,7 @@ namespace Pinetime {
 
       TouchEvents GetGesture();
       static void Process(void* instance);
-      void Init();
+      [[nodiscard]] bool Init();
       void Refresh();
       void LoadNewScreen(Apps app, DisplayApp::FullRefreshDirections direction);
       void LoadScreen(Apps app, DisplayApp::FullRefreshDirections direction);

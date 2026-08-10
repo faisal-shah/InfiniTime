@@ -1,4 +1,5 @@
 #include "systemtask/SystemTask.h"
+#include "systemtask/BootDiagnostics.h"
 #include "storagetask/StorageTask.h"
 #include <hal/nrf_rtc.h>
 #include <libraries/gpiote/app_gpiote.h>
@@ -33,6 +34,14 @@ namespace {
       controller.PersistBondStore();
     }
   }
+
+  void RecordBootStage(BootDiagnostics::Stage stage) {
+    BootDiagnostics::RecordStage(stage,
+                                 xPortGetFreeHeapSize(),
+                                 xPortGetMinimumEverFreeHeapSize());
+  }
+
+  constexpr TickType_t StoragePowerTransitionTimeout = pdMS_TO_TICKS(1500);
 
 }
 
@@ -113,18 +122,29 @@ SystemTask::SystemTask(Drivers::SpiMaster& spi,
   storageTask.SetPowerController(this);
 }
 
-void SystemTask::Start() {
-  systemTasksMsgQueue = xQueueCreate(10, 1);
-  // Measured on hardware: after churning the schedule and task lists this task
-  // peaked at 1308 of its 1400 bytes -- 23 words free, against a monitor that
-  // warns below 20. lfs_rename's compaction path is what eats it, and the
-  // simulator shows lfs_dir_traverse reaching four levels of recursion at 112
-  // bytes each, which is 1420 bytes and over the edge. Upstream sized this task
-  // for a SystemTask that never wrote to the filesystem; this fork commits five
-  // different files from it.
-  if (pdPASS != xTaskCreate(SystemTask::Process, "MAIN", 600, this, 1, &taskHandle)) {
-    APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+bool SystemTask::Start() {
+  if (taskHandle != nullptr) {
+    return true;
   }
+  storagePowerMutex = xSemaphoreCreateMutexStatic(&storagePowerMutexBuffer);
+  if (storagePowerMutex == nullptr) {
+    return false;
+  }
+  systemTasksMsgQueue = xQueueCreateStatic(MessageQueueLength,
+                                            sizeof(Messages),
+                                            messageQueueStorage,
+                                            &messageQueueBuffer);
+  if (systemTasksMsgQueue == nullptr) {
+    return false;
+  }
+  taskHandle = xTaskCreateStatic(SystemTask::Process,
+                                 "MAIN",
+                                 TaskStackWords,
+                                 this,
+                                 1,
+                                 taskStack,
+                                 &taskBuffer);
+  return taskHandle != nullptr;
 }
 
 void SystemTask::Process(void* instance) {
@@ -135,6 +155,8 @@ void SystemTask::Process(void* instance) {
 
 void SystemTask::Work() {
   BootErrors bootError = BootErrors::None;
+
+  RecordBootStage(BootDiagnostics::Stage::SystemTaskStarted);
 
   // MCUBoot starts the hardware watchdog immediately before handing control
   // to the application. Feed it before any initialization work.
@@ -147,25 +169,77 @@ void SystemTask::Work() {
     nrfx_gpiote_init();
   }
 
-  spi.Init();
+  if (!spi.Init()) {
+    NRF_LOG_ERROR("[boot] shared SPI initialization failed");
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::SharedSpi);
+    return;
+  }
+  RecordBootStage(BootDiagnostics::Stage::SharedSpiReady);
+
+  // SystemTask has higher priority and time slicing is disabled. Creating a
+  // display task therefore says nothing about whether LVGL ran or the LCD saw
+  // pixels. Block in short watchdog-fed slices until one synchronous full
+  // frame has reached the panel, before storage, sensors, or BLE can consume
+  // optional memory or stall boot.
+  displayApp.Register(this);
+  displayApp.Register(&nimbleController.weather());
+  displayApp.Register(&nimbleController.music());
+  displayApp.Register(&nimbleController.navigation());
+  if (!displayApp.Start(bootError)) {
+    NRF_LOG_ERROR("[boot] display task creation failed");
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::DisplayStart);
+    return;
+  }
+  constexpr TickType_t displayReadyTimeout = pdMS_TO_TICKS(3000);
+  constexpr TickType_t displayReadySlice = pdMS_TO_TICKS(100);
+  const TickType_t displayWaitStarted = xTaskGetTickCount();
+  bool displayReady = false;
+  while (xTaskGetTickCount() - displayWaitStarted < displayReadyTimeout) {
+    if (displayApp.WaitUntilReady(displayReadySlice)) {
+      displayReady = true;
+      break;
+    }
+    watchdog.Reload();
+  }
+  if (!displayReady) {
+    NRF_LOG_ERROR("[boot] first display frame timed out");
+    BootDiagnostics::RecordFailure(
+      BootDiagnostics::Failure::DisplayFirstFrame);
+    return;
+  }
+  lastDisplayProgress = displayApp.ProgressCounter();
+  lastDisplayProgressTick = xTaskGetTickCount();
+  watchdog.Reload();
+  RecordBootStage(BootDiagnostics::Stage::DisplayReady);
+
   spiNorFlash.Init();
   spiNorFlash.Wakeup();
-  watchdog.Reload();
-
+  filesystemBootStarted = xTaskGetTickCount();
+  filesystemBootInProgress = true;
+  fs.SetProgressListener(this);
   const bool filesystemReady = fs.Init();
-  watchdog.Reload();
   if (!filesystemReady) {
-    NRF_LOG_ERROR("[filesystem] mount failed");
-  }
-  if (filesystemReady) {
+    NRF_LOG_ERROR("[filesystem] mount failed; using defaults");
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::Filesystem);
+  } else {
     storageTask.LoadAtBoot();
-    watchdog.Reload();
+  }
+  fs.SetProgressListener(nullptr);
+  filesystemBootInProgress = false;
+  watchdog.Reload();
+  if (filesystemReady) {
     if (!storageTask.Start()) {
       NRF_LOG_ERROR("[storage] task failed to start");
+      BootDiagnostics::RecordFailure(
+        BootDiagnostics::Failure::StorageTaskStart);
     }
   }
+  RecordBootStage(BootDiagnostics::Stage::StorageReady);
 
-  twiMaster.Init();
+  bool twiReady = twiMaster.Init();
+  if (!twiReady) {
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::Twi);
+  }
   /*
    * TODO We disable this warning message until we ensure it won't be displayed
    * on legitimate PineTime equipped with a compatible touch controller.
@@ -174,10 +248,14 @@ void SystemTask::Work() {
     bootError = BootErrors::TouchController;
   }
    */
-  touchPanel.Init();
+  if (twiReady) {
+    touchPanel.Init();
+  }
   dateTimeController.Register(this);
   batteryController.Register(this);
-  motionSensor.SoftReset();
+  if (twiReady) {
+    motionSensor.SoftReset();
+  }
   multiAlarmController.Init(this);
   scheduleController.Init(this);
   taskController.Init();
@@ -185,20 +263,20 @@ void SystemTask::Work() {
   beaconController.Init();
 
   // Reset the TWI device because the motion sensor chip most probably crashed it...
-  twiMaster.Sleep();
-  twiMaster.Init();
-
-  motionSensor.Init();
+  if (twiReady) {
+    twiReady = twiMaster.Sleep() && twiMaster.Init();
+    if (twiReady) {
+      motionSensor.Init();
+    } else {
+      NRF_LOG_WARNING("[boot] TWI recovery after motion reset failed");
+      BootDiagnostics::RecordFailure(BootDiagnostics::Failure::Twi);
+    }
+  }
   motionController.Init(motionSensor.DeviceType());
   settingsController.Init();
+  displayApp.PushMessage(Pinetime::Applications::Display::Messages::ReloadClock);
   watchdog.Reload();
-
-  displayApp.Register(this);
-  displayApp.Register(&nimbleController.weather());
-  displayApp.Register(&nimbleController.music());
-  displayApp.Register(&nimbleController.navigation());
-  displayApp.Start(bootError);
-  watchdog.Reload();
+  RecordBootStage(BootDiagnostics::Stage::SettingsReady);
 
   // Bring the radio up only once the UI is running. SystemTask is the sole
   // watchdog feeder, so anything it blocks on before this point is invisible:
@@ -206,12 +284,24 @@ void SystemTask::Work() {
   // bootloader logo with no way to tell why. With the UI already started, a
   // radio that fails to initialise costs Bluetooth for this boot and nothing
   // else.
-  nimbleController.Init();
+  if (!nimbleController.Init()) {
+    BootDiagnostics::RecordFailure(
+      BootDiagnostics::Failure::Ble,
+      static_cast<uint8_t>(Pinetime::Controllers::NimblePortGetError()));
+  }
   watchdog.Reload();
+  RecordBootStage(BootDiagnostics::Stage::BleReady);
 
-  heartRateSensor.Init();
-  heartRateSensor.Disable();
-  heartRateApp.Start();
+  if (twiReady) {
+    heartRateTaskReady = heartRateSensor.Init();
+    if (heartRateTaskReady) {
+      heartRateSensor.Disable();
+      heartRateApp.SetSensorAvailable(true);
+    } else {
+      NRF_LOG_WARNING("[boot] heart-rate sensor unavailable this boot");
+      BootDiagnostics::RecordFailure(BootDiagnostics::Failure::HeartRate);
+    }
+  }
 
   buttonHandler.Init(this);
 
@@ -243,8 +333,19 @@ void SystemTask::Work() {
 
   batteryController.MeasureVoltage();
 
-  measureBatteryTimer = xTimerCreate("measureBattery", batteryMeasurementPeriod, pdTRUE, this, MeasureBatteryTimerCallback);
-  xTimerStart(measureBatteryTimer, portMAX_DELAY);
+  measureBatteryTimer = xTimerCreateStatic("measureBattery",
+                                           batteryMeasurementPeriod,
+                                           pdTRUE,
+                                           this,
+                                           MeasureBatteryTimerCallback,
+                                           &measureBatteryTimerBuffer);
+  if (measureBatteryTimer != nullptr) {
+    xTimerStart(measureBatteryTimer, 0);
+  } else {
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::BatteryTimer);
+  }
+
+  RecordBootStage(BootDiagnostics::Stage::Running);
 
   constexpr TickType_t stateUpdatePeriod = pdMS_TO_TICKS(100);
   // Stores when the state (motion, watchdog, time persistence etc) was last updated
@@ -273,11 +374,12 @@ void SystemTask::Work() {
           wakeLocksHeld--;
           break;
         case Messages::DisableSleeping:
-          GoToRunning();
-          wakeLocksHeld++;
+          if (GoToRunning()) {
+            wakeLocksHeld++;
+          }
           break;
         case Messages::GoToRunning:
-          GoToRunning();
+          (void) GoToRunning();
           break;
         case Messages::GoToSleep:
           GoToSleep();
@@ -290,7 +392,9 @@ void SystemTask::Work() {
           // recomputes from RAM math.
           {
             FlashWakeScope flash(*this);
-            scheduleController.Reschedule();
+            if (flash) {
+              scheduleController.Reschedule();
+            }
           }
           multiAlarmController.Reschedule();
           prayerController.Reschedule();
@@ -298,7 +402,9 @@ void SystemTask::Work() {
         case Messages::OnNewNotification:
           if (settingsController.GetNotificationStatus() == Pinetime::Controllers::Settings::Notification::On) {
             if (IsSleeping()) {
-              GoToRunning();
+              if (!GoToRunning()) {
+                break;
+              }
             }
             displayApp.PushMessage(Pinetime::Applications::Display::Messages::NewNotification);
           }
@@ -310,7 +416,9 @@ void SystemTask::Work() {
           alertQueue.Push(Controllers::AlertQueue::Source::MultiAlarm,
                           static_cast<uint32_t>(multiAlarmController.LastFiredDue()),
                           idx);
-          GoToRunning();
+          if (!GoToRunning()) {
+            break;
+          }
           if (multiAlarmController.Get(idx).mode == Controllers::MultiAlarmController::Mode::Once) {
             multiAlarmController.SetEnabled(idx, false); // persists + reschedules
           }
@@ -325,7 +433,9 @@ void SystemTask::Work() {
           alertQueue.Push(Controllers::AlertQueue::Source::Schedule,
                           static_cast<uint32_t>(scheduleController.LastFiredDue()),
                           0);
-          GoToRunning();
+          if (!GoToRunning()) {
+            break;
+          }
           scheduleController.Reschedule();
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
@@ -339,7 +449,9 @@ void SystemTask::Work() {
           alertQueue.Push(Controllers::AlertQueue::Source::Prayer,
                           static_cast<uint32_t>(prayerController.LastFiredDue()),
                           prayerController.LastFiredPrayer());
-          GoToRunning();
+          if (!GoToRunning()) {
+            break;
+          }
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::PendingAlertsTriggered);
           break;
         case Messages::PrayerSettingsReceived: {
@@ -372,7 +484,9 @@ void SystemTask::Work() {
           bleDiscoveryTimer = 5;
           break;
         case Messages::BleFirmwareUpdateStarted:
-          GoToRunning();
+          if (!GoToRunning()) {
+            break;
+          }
           wakeLocksHeld++;
           displayApp.PushMessage(Pinetime::Applications::Display::Messages::BleFirmwareUpdateStarted);
           break;
@@ -384,7 +498,9 @@ void SystemTask::Work() {
           break;
         case Messages::StartFileTransfer:
           NRF_LOG_INFO("[systemtask] FS Started");
-          GoToRunning();
+          if (!GoToRunning()) {
+            break;
+          }
           wakeLocksHeld++;
           // TODO add intent of fs access icon or something
           break;
@@ -398,7 +514,7 @@ void SystemTask::Work() {
           if (!touchHandler.ProcessTouchInfo(touchPanel.GetTouchInfo())) {
             break;
           }
-          if (state == SystemTaskState::Running) {
+          if (state.load(std::memory_order_relaxed) == SystemTaskState::Running) {
             displayApp.PushMessage(Pinetime::Applications::Display::Messages::TouchEvent);
           } else {
             // If asleep, check for touch panel wake triggers
@@ -409,7 +525,7 @@ void SystemTask::Work() {
                   settingsController.isWakeUpModeOn(Pinetime::Controllers::Settings::WakeUpMode::DoubleTap)) ||
                  (gesture == Pinetime::Applications::TouchEvents::Tap &&
                   settingsController.isWakeUpModeOn(Pinetime::Controllers::Settings::WakeUpMode::SingleTap)))) {
-              GoToRunning();
+              (void) GoToRunning();
             }
           }
           break;
@@ -422,7 +538,7 @@ void SystemTask::Work() {
             // This is for faster wakeup, sacrificing special longpress and doubleclick handling while sleeping
             if (IsSleeping()) {
               fastWakeUpDone = true;
-              GoToRunning();
+              (void) GoToRunning();
               break;
             }
           }
@@ -438,13 +554,25 @@ void SystemTask::Work() {
           // If the state is no longer GoingToSleep, we have since transitioned back to Running
           // In this case absorb the OnDisplayTaskSleeping/AOD
           // as DisplayApp is about to receive GoToRunning
-          if (state != SystemTaskState::GoingToSleep) {
+          if (state.load(std::memory_order_relaxed) != SystemTaskState::GoingToSleep) {
             break;
           }
-          taskENTER_CRITICAL();
-          storagePowerTransition = true;
-          const bool storageActive = storagePowerLocks != 0;
-          taskEXIT_CRITICAL();
+          if (xSemaphoreTake(storagePowerMutex,
+                             StoragePowerTransitionTimeout) != pdTRUE) {
+            BootDiagnostics::RecordFailure(
+              BootDiagnostics::Failure::StoragePower);
+            // Abort the sleep request rather than leaving DisplayApp waiting
+            // in Idle/AOD until the watchdog fires. The current power owner
+            // cannot have put the flash to sleep while state is
+            // GoingToSleep, so returning to Running is conservative.
+            state.store(SystemTaskState::Running,
+                        std::memory_order_relaxed);
+            displayApp.PushMessage(
+              Pinetime::Applications::Display::Messages::GoToRunning);
+            break;
+          }
+          const bool storageActive =
+            storagePowerLocks.load(std::memory_order_relaxed) != 0;
 
           // Must keep SPI and flash awake when still updating the display for always on
           if (!storageActive && msg == Messages::OnDisplayTaskSleeping) {
@@ -461,12 +589,11 @@ void SystemTask::Work() {
             touchPanel.Sleep();
           }
 
-          taskENTER_CRITICAL();
-          state = msg == Messages::OnDisplayTaskSleeping
-                    ? SystemTaskState::Sleeping
-                    : SystemTaskState::AODSleeping;
-          storagePowerTransition = false;
-          taskEXIT_CRITICAL();
+          state.store(msg == Messages::OnDisplayTaskSleeping
+                        ? SystemTaskState::Sleeping
+                        : SystemTaskState::AODSleeping,
+                      std::memory_order_relaxed);
+          xSemaphoreGive(storagePowerMutex);
           break;
         }
         case Messages::OnNewDay:
@@ -480,20 +607,22 @@ void SystemTask::Work() {
         case Messages::OnNewHour:
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
               settingsController.GetChimeOption() == Controllers::Settings::ChimesOption::Hours && alertQueue.IsEmpty()) {
-            GoToRunning();
-            displayApp.PushMessage(Pinetime::Applications::Display::Messages::Chime);
+            if (GoToRunning()) {
+              displayApp.PushMessage(Pinetime::Applications::Display::Messages::Chime);
+            }
           }
           break;
         case Messages::OnNewHalfHour:
           if (settingsController.GetNotificationStatus() != Controllers::Settings::Notification::Sleep &&
               settingsController.GetChimeOption() == Controllers::Settings::ChimesOption::HalfHours && alertQueue.IsEmpty()) {
-            GoToRunning();
-            displayApp.PushMessage(Pinetime::Applications::Display::Messages::Chime);
+            if (GoToRunning()) {
+              displayApp.PushMessage(Pinetime::Applications::Display::Messages::Chime);
+            }
           }
           break;
         case Messages::OnChargingEvent:
           batteryController.ReadPowerState();
-          GoToRunning();
+          (void) GoToRunning();
           break;
         case Messages::MeasureBatteryTimerExpired:
           batteryController.MeasureVoltage();
@@ -502,8 +631,9 @@ void SystemTask::Work() {
           nimbleController.NotifyBatteryLevel(batteryController.PercentRemaining());
           break;
         case Messages::OnPairing:
-          GoToRunning();
-          displayApp.PushMessage(Pinetime::Applications::Display::Messages::ShowPairingKey);
+          if (GoToRunning()) {
+            displayApp.PushMessage(Pinetime::Applications::Display::Messages::ShowPairingKey);
+          }
           break;
         case Messages::BleRadioEnableToggle:
           if (settingsController.GetBleRadioEnabled()) {
@@ -514,7 +644,9 @@ void SystemTask::Work() {
           break;
         case Messages::PersistBleStore: {
           FlashWakeScope flash(*this);
-          PersistBondStoreIfSupported(nimbleController);
+          if (flash) {
+            PersistBondStoreIfSupported(nimbleController);
+          }
           break;
         }
         case Messages::BondForgetAllRequested:
@@ -558,12 +690,57 @@ void SystemTask::Work() {
       taskController.Process();
       NoInit_BackUpTime = dateTimeController.CurrentDateTime();
       if (nrf_gpio_pin_read(PinMap::Button) == 0) {
-        watchdog.Reload();
+        if (DisplayIsLive(xTaskGetTickCount())) {
+          watchdog.Reload();
+        } else {
+          BootDiagnostics::RecordFailure(
+            BootDiagnostics::Failure::DisplayLiveness);
+        }
       }
       lastStateUpdate = xTaskGetTickCount();
     }
   }
 #pragma clang diagnostic pop
+}
+
+bool SystemTask::DisplayIsLive(TickType_t now) {
+  // A fully sleeping display is intentionally blocked with its panel and SPI
+  // powered down. GoingToSleep must still deliver its bounded acknowledgement,
+  // and AODSleeping continues rendering every 500 ms; exempting either state
+  // lets a dead display coexist with a perpetually fed watchdog.
+  const auto currentState = state.load(std::memory_order_relaxed);
+  if (currentState == SystemTaskState::Sleeping) {
+    return true;
+  }
+  if (!displayApp.IsDisplayHealthy()) {
+    return false;
+  }
+  constexpr TickType_t displayLivenessDeadline = pdMS_TO_TICKS(3000);
+  if (currentState == SystemTaskState::GoingToSleep &&
+      now - sleepTransitionStarted >= displayLivenessDeadline) {
+    return false;
+  }
+  const uint32_t progress = displayApp.ProgressCounter();
+  if (progress != lastDisplayProgress) {
+    lastDisplayProgress = progress;
+    lastDisplayProgressTick = now;
+    return true;
+  }
+  return now - lastDisplayProgressTick < displayLivenessDeadline;
+}
+
+bool SystemTask::OnFilesystemProgress() {
+  if (!filesystemBootInProgress) {
+    return true;
+  }
+  constexpr TickType_t filesystemBootDeadline = pdMS_TO_TICKS(5000);
+  const TickType_t now = xTaskGetTickCount();
+  if (now - filesystemBootStarted >= filesystemBootDeadline ||
+      !DisplayIsLive(now)) {
+    return false;
+  }
+  watchdog.Reload();
+  return true;
 }
 
 void SystemTask::OnFamilyStatePersisted(StorageTask::Operation operation,
@@ -619,80 +796,88 @@ void SystemTask::ProcessStorageCompletion() {
   storageTask.AcknowledgeFamilyStateCompletion(operation, token);
 }
 
-bool SystemTask::PrepareStorage() {
-  return WakeFlashForWork();
+bool SystemTask::PrepareStorage(bool& wasAsleep) {
+  return WakeFlashForWork(wasAsleep);
 }
 
 void SystemTask::FinishStorage(bool wasAsleep) {
   RestoreFlashAfterWork(wasAsleep);
 }
 
-bool SystemTask::WakeFlashForWork() {
-  while (true) {
-    taskENTER_CRITICAL();
-    if (!storagePowerTransition) {
-      const bool firstLock = storagePowerLocks++ == 0;
-      const auto currentState = state;
-      taskEXIT_CRITICAL();
-      const bool flashWasAsleep =
-        firstLock &&
-        (currentState == SystemTaskState::Sleeping ||
-         currentState == SystemTaskState::AODSleeping);
-      if (flashWasAsleep) {
-        if (currentState == SystemTaskState::Sleeping) {
-          spi.Wakeup();
-        }
-        spiNorFlash.Wakeup();
-      }
-      return flashWasAsleep;
-    }
-    taskEXIT_CRITICAL();
-    vTaskDelay(1);
+bool SystemTask::WakeFlashForWork(bool& wasAsleep) {
+  wasAsleep = false;
+  if (storagePowerMutex == nullptr ||
+      xSemaphoreTake(storagePowerMutex,
+                     StoragePowerTransitionTimeout) != pdTRUE) {
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::StoragePower);
+    return false;
   }
+
+  const bool firstLock =
+    storagePowerLocks.fetch_add(1, std::memory_order_relaxed) == 0;
+  const auto currentState = state.load(std::memory_order_relaxed);
+  // Upstream intentionally keeps both SPI and external flash awake in AOD.
+  // Only a fully sleeping watch needs a physical wake sequence.
+  wasAsleep = firstLock && currentState == SystemTaskState::Sleeping;
+  if (wasAsleep) {
+    spi.Wakeup();
+    spiNorFlash.Wakeup();
+  }
+  xSemaphoreGive(storagePowerMutex);
+  return true;
 }
 
 void SystemTask::RestoreFlashAfterWork(bool wasAsleep) {
   (void) wasAsleep;
-  SystemTaskState currentState;
-  bool shouldSleep;
-  while (true) {
-    taskENTER_CRITICAL();
-    if (!storagePowerTransition) {
-      if (storagePowerLocks != 0) {
-        storagePowerLocks--;
-      }
-      currentState = state;
-      shouldSleep =
-        storagePowerLocks == 0 &&
-        (currentState == SystemTaskState::Sleeping ||
-         currentState == SystemTaskState::AODSleeping);
-      taskEXIT_CRITICAL();
-      break;
-    }
-    taskEXIT_CRITICAL();
-    vTaskDelay(1);
-  }
-  if (!shouldSleep) {
+  if (storagePowerMutex == nullptr ||
+      xSemaphoreTake(storagePowerMutex,
+                     StoragePowerTransitionTimeout) != pdTRUE) {
+    // Release the logical lease even if a wedged transition cannot be joined.
+    // Leaving the hardware awake is the only conservative timeout behavior.
+    storagePowerLocks.fetch_sub(1, std::memory_order_relaxed);
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::StoragePower);
     return;
   }
-  if (BootloaderVersion::IsValid()) {
-    spiNorFlash.Sleep();
+
+  const uint8_t priorLocks =
+    storagePowerLocks.load(std::memory_order_relaxed);
+  if (priorLocks != 0) {
+    storagePowerLocks.fetch_sub(1, std::memory_order_relaxed);
   }
-  if (currentState == SystemTaskState::Sleeping) {
+  const bool shouldSleep =
+    priorLocks == 1 &&
+    state.load(std::memory_order_relaxed) == SystemTaskState::Sleeping;
+  if (shouldSleep) {
+    if (BootloaderVersion::IsValid()) {
+      spiNorFlash.Sleep();
+    }
     spi.Sleep();
   }
+  xSemaphoreGive(storagePowerMutex);
 }
 
-void SystemTask::GoToRunning() {
-  taskENTER_CRITICAL();
-  if (state == SystemTaskState::Running) {
-    taskEXIT_CRITICAL();
-    return;
+bool SystemTask::GoToRunning() {
+  if (state.load(std::memory_order_relaxed) == SystemTaskState::Running) {
+    return true;
   }
-  storagePowerTransition = true;
-  const auto previousState = state;
-  const bool storageActive = storagePowerLocks != 0;
-  taskEXIT_CRITICAL();
+  if (storagePowerMutex == nullptr ||
+      xSemaphoreTake(storagePowerMutex,
+                     StoragePowerTransitionTimeout) != pdTRUE) {
+    BootDiagnostics::RecordFailure(BootDiagnostics::Failure::StoragePower);
+    // A consumed wake event must never leave the watch quietly alive with a
+    // powered-down display. GoingToSleep is deliberately monitored by
+    // DisplayIsLive; backdate its deadline so SystemTask stops feeding the
+    // watchdog and a TEST image reverts instead of becoming a black watch.
+    constexpr TickType_t displayLivenessDeadline = pdMS_TO_TICKS(3000);
+    sleepTransitionStarted =
+      xTaskGetTickCount() - displayLivenessDeadline;
+    state.store(SystemTaskState::GoingToSleep,
+                std::memory_order_relaxed);
+    return false;
+  }
+  const auto previousState = state.load(std::memory_order_relaxed);
+  const bool storageActive =
+    storagePowerLocks.load(std::memory_order_relaxed) != 0;
   if (previousState == SystemTaskState::Sleeping ||
       previousState == SystemTaskState::AODSleeping) {
     // SPI only switched off when entering Sleeping, not AOD or GoingToSleep
@@ -707,20 +892,29 @@ void SystemTask::GoToRunning() {
     }
   }
 
+  state.store(SystemTaskState::Running, std::memory_order_relaxed);
+  xSemaphoreGive(storagePowerMutex);
+
   displayApp.PushMessage(Pinetime::Applications::Display::Messages::GoToRunning);
-  heartRateApp.PushMessage(Pinetime::Applications::HeartRateTask::Messages::WakeUp);
+  if (heartRateTaskReady && heartRateApp.Started()) {
+    heartRateApp.PushMessage(Pinetime::Applications::HeartRateTask::Messages::WakeUp);
+  }
 
   if (bleController.IsRadioEnabled() && !bleController.IsConnected()) {
     nimbleController.RestartFastAdv();
   }
 
-  taskENTER_CRITICAL();
-  state = SystemTaskState::Running;
-  storagePowerTransition = false;
-  taskEXIT_CRITICAL();
+  return true;
 };
 
 void SystemTask::GoToSleep() {
+#ifdef PINETIME_IS_RECOVERY
+  // The recovery display intentionally remains awake so that DFU progress and
+  // failure status stay visible. It has no sleep-state renderer, and powering
+  // down SPI underneath it would turn a persisted LowerWrist setting into a
+  // watchdog reset loop.
+  return;
+#endif
   if (IsSleeping()) {
     return;
   }
@@ -733,9 +927,12 @@ void SystemTask::GoToSleep() {
   } else {
     displayApp.PushMessage(Pinetime::Applications::Display::Messages::GoToSleep);
   }
-  heartRateApp.PushMessage(Pinetime::Applications::HeartRateTask::Messages::GoToSleep);
+  if (heartRateTaskReady && heartRateApp.Started()) {
+    heartRateApp.PushMessage(Pinetime::Applications::HeartRateTask::Messages::GoToSleep);
+  }
 
-  state = SystemTaskState::GoingToSleep;
+  sleepTransitionStarted = xTaskGetTickCount();
+  state.store(SystemTaskState::GoingToSleep, std::memory_order_relaxed);
 };
 
 void SystemTask::ShowBondNotice(const char* title, const char* body) {
@@ -761,7 +958,9 @@ void SystemTask::ShowBondNotice(const char* title, const char* body) {
   // notification-forwarding preference or suppressed while asleep, so wake and
   // show directly instead of going through the OnNewNotification path.
   if (IsSleeping()) {
-    GoToRunning();
+    if (!GoToRunning()) {
+      return;
+    }
   }
   displayApp.PushMessage(Pinetime::Applications::Display::Messages::NewNotification);
 }
@@ -779,9 +978,9 @@ void SystemTask::UpdateMotion() {
          motionController.ShouldRaiseWake()) ||
         (settingsController.isWakeUpModeOn(Pinetime::Controllers::Settings::WakeUpMode::Shake) &&
          motionController.CurrentShakeSpeed() > settingsController.GetShakeThreshold())) {
-      GoToRunning();
+      (void) GoToRunning();
     } else if (settingsController.isWakeUpModeOn(Pinetime::Controllers::Settings::WakeUpMode::LowerWrist) &&
-               state == SystemTaskState::Running && motionController.ShouldLowerSleep()) {
+               state.load(std::memory_order_relaxed) == SystemTaskState::Running && motionController.ShouldLowerSleep()) {
       GoToSleep();
     }
   }
@@ -820,16 +1019,28 @@ void SystemTask::HandleButtonAction(Controllers::ButtonActions action) {
 }
 
 void SystemTask::PushMessage(System::Messages msg) {
+  if (systemTasksMsgQueue == nullptr) {
+    return;
+  }
   if (in_isr()) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xQueueSendFromISR(systemTasksMsgQueue, &msg, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
   } else {
-    xQueueSend(systemTasksMsgQueue, &msg, portMAX_DELAY);
+    // DateTime can post hour/day events while SystemTask itself owns the
+    // current call stack. An indefinitely blocking send to a full queue would
+    // therefore deadlock the queue's only consumer. Cross-task callers can
+    // also form a cycle with DisplayApp. Bound the wait; producers that need
+    // explicit retry semantics use TryPushMessage and retain their own state.
+    constexpr TickType_t queueSendTimeout = pdMS_TO_TICKS(10);
+    (void) xQueueSend(systemTasksMsgQueue, &msg, queueSendTimeout);
   }
 }
 
 bool SystemTask::TryPushMessage(System::Messages msg) {
+  if (systemTasksMsgQueue == nullptr) {
+    return false;
+  }
   if (in_isr()) {
     BaseType_t higherPriorityTaskWoken = pdFALSE;
     const BaseType_t result = xQueueSendFromISR(systemTasksMsgQueue, &msg, &higherPriorityTaskWoken);

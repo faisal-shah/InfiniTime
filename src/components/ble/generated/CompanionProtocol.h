@@ -1,5 +1,5 @@
 // Generated from protocol/companion.json.
-// Manifest SHA-256: 1cdc7fce2dc132ec67cdd7d34c4fd724290d4ab637c10b742b37f13f5a6eacc2
+// Manifest SHA-256: f4881c3833b552227463a5af2f4a07f110ec1c67f7ff44d1f193af15b9d6750c
 // Do not edit by hand.
 #pragma once
 
@@ -16,11 +16,11 @@ namespace Pinetime::Controllers::CompanionProtocol {
   inline constexpr uint8_t ScheduleProtocolVersion = 3;
   inline constexpr uint8_t ScheduleRecordVersion = 3;
   inline constexpr size_t ScheduleRecordSize = 43;
-  inline constexpr uint8_t ScheduleCapacity = 16;
+  inline constexpr uint8_t ScheduleCapacity = 32;
   inline constexpr uint8_t TaskProtocolVersion = 2;
   inline constexpr uint8_t TaskRecordVersion = 2;
   inline constexpr size_t TaskRecordSize = 31;
-  inline constexpr uint8_t TaskCapacity = 12;
+  inline constexpr uint8_t TaskCapacity = 20;
   inline constexpr uint8_t PrayerSettingsProtocolVersion = 2;
   inline constexpr uint8_t MultiAlarmProtocolVersion = 2;
   inline constexpr uint8_t FamilyStateProtocolVersion = 1;

@@ -5,24 +5,44 @@
 using namespace Pinetime::Controllers;
 
 void HeartRateController::Update(HeartRateController::States newState, uint8_t heartRate) {
-  this->state = newState;
-  if (this->heartRate != heartRate) {
-    this->heartRate = heartRate;
-    service->OnNewHeartRateValue(heartRate);
+  if (newState != States::Stopped &&
+      stopRequested.load(std::memory_order_acquire)) {
+    return;
+  }
+  this->state.store(newState, std::memory_order_relaxed);
+  if (this->heartRate.load(std::memory_order_relaxed) != heartRate) {
+    this->heartRate.store(heartRate, std::memory_order_relaxed);
+    if (service != nullptr) {
+      service->OnNewHeartRateValue(heartRate);
+    }
+  }
+  if (newState == States::Stopped) {
+    stopRequested.store(false, std::memory_order_release);
   }
 }
 
-void HeartRateController::Enable() {
-  if (task != nullptr) {
-    state = States::NotEnoughData;
-    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::Enable);
+bool HeartRateController::Enable() {
+  if (task == nullptr) {
+    return false;
   }
+  stopRequested.store(false, std::memory_order_release);
+  state.store(States::NotEnoughData, std::memory_order_relaxed);
+  if (task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::Enable)) {
+    return true;
+  }
+  state.store(States::Stopped, std::memory_order_relaxed);
+  return false;
 }
 
 void HeartRateController::Disable() {
-  if (task != nullptr) {
-    state = States::Stopped;
-    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::Disable);
+  if (task == nullptr) {
+    return;
+  }
+  stopRequested.store(true, std::memory_order_release);
+  if (task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::Disable)) {
+    state.store(States::Stopped, std::memory_order_relaxed);
+  } else {
+    stopRequested.store(false, std::memory_order_release);
   }
 }
 

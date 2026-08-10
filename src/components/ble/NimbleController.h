@@ -53,8 +53,7 @@ namespace Pinetime {
     class DateTime;
     class NotificationManager;
 
-    class NimbleController : public CompanionStatusProvider,
-                             public Pinetime::System::StorageTask::FileListener {
+    class NimbleController : public CompanionStatusProvider, public Pinetime::System::StorageTask::FileListener {
 
     public:
       NimbleController(Pinetime::System::SystemTask& systemTask,
@@ -73,11 +72,12 @@ namespace Pinetime {
                        BeaconController& beaconController);
       bool Init();
 
-      // True when host sync did not arrive before Init() gave up. The radio is
+      // True when any checked radio startup phase failed. The radio is
       // unavailable for this boot; the rest of the watch is unaffected.
       bool HostSyncFailed() const {
-        return hostSyncFailed;
+        return hostSyncFailed.load(std::memory_order_acquire);
       }
+
       int OnGAPEvent(ble_gap_event* event);
       void StartDiscovery();
 
@@ -132,9 +132,11 @@ namespace Pinetime {
       void NotifyBatteryLevel(uint8_t level);
 
       void RequestFastAdvertising();
+
       void RestartFastAdv() {
         RequestFastAdvertising();
       }
+
       void EnableRadio();
       void DisableRadio();
 
@@ -171,7 +173,7 @@ namespace Pinetime {
       void ProcessBondPersistence();
       void ScheduleBondPersistenceTimer();
       void CompleteBondStoreWrite();
-      void RestoreBondStoreOnHost();
+      void RestoreBondStoreBeforeHostStart();
       bool PrepareBondStoreRestore();
       void ProcessForgetAll();
       void QueueForgetAllEvent();
@@ -179,12 +181,13 @@ namespace Pinetime {
       void NotifyEvictionIfChanged();
       void FlushBondNotices();
       void MaybeReleaseBootPersistenceGate();
+      bool CheckRegistration(const char* service, int result);
+      bool FailInitialization(const char* stage, int result);
 
       static void BondStoreDirtyCallback(void* arg);
       static void BondPersistenceEventHandler(struct ble_npl_event* event);
       static void BondPersistenceTimerHandler(struct ble_npl_event* event);
       static void BondWriteCompleteHandler(struct ble_npl_event* event);
-      static void BondRestoreHandler(struct ble_npl_event* event);
       static void ForgetAllHandler(struct ble_npl_event* event);
 
       static constexpr const char* deviceName = "InfiniTime";
@@ -227,7 +230,7 @@ namespace Pinetime {
 
       // The single full-size snapshot lives in the global NimbleController
       // object, never on a task stack. During boot SystemTask fills it and
-      // posts bondRestoreEvent. Radio remains gated until the host consumes it;
+      // installs it before ble_hs_start restores controller privacy state;
       // afterward the host task reuses it only as capture scratch.
       NimbleBondStoreSnapshot bondSnapshotScratch;
 
@@ -237,19 +240,23 @@ namespace Pinetime {
         uint32_t bytes = 0;
         bool success = false;
       } bondWriteCompletion;
+
       TickType_t bondWriteStarted = 0;
       uint32_t bondWriteBytes = 0;
 
       struct ble_npl_event bondPersistenceEvent {};
+
       struct ble_npl_callout bondPersistenceCallout {};
+
       struct ble_npl_event bondWriteCompleteEvent {};
-      struct ble_npl_event bondRestoreEvent {};
+
       struct ble_npl_event forgetAllEvent {};
+
       bool bootBondSnapshotReady = false;
       BondBootPersistenceGate bootPersistenceGate;
       bool bondPersistenceWritesEnabled = true;
       bool bondPersistenceEventsInitialized = false;
-      bool hostSyncFailed = false;
+      std::atomic<bool> hostSyncFailed {false};
 
       // A first 2.x boot restores an empty RAM store immediately, then queues
       // the final-format file through the normal asynchronous writer. Radio

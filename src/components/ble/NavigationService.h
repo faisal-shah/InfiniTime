@@ -33,7 +33,7 @@ namespace Pinetime {
     public:
       NavigationService();
 
-      void Init();
+      int Init();
 
       int OnCommand(struct ble_gatt_access_ctxt* ctxt);
 

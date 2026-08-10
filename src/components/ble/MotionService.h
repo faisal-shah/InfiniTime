@@ -14,7 +14,7 @@ namespace Pinetime {
     class MotionService {
     public:
       MotionService(NimbleController& nimble, Controllers::MotionController& motionController);
-      void Init();
+      int Init();
       int OnStepCountRequested(uint16_t attributeHandle, ble_gatt_access_ctxt* context);
       void OnNewStepCountValue(uint32_t stepCount);
       void OnNewMotionValues(int16_t x, int16_t y, int16_t z);

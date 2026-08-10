@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include <FreeRTOS.h>
@@ -58,7 +59,8 @@ namespace Pinetime {
 
   namespace System {
     class SystemTask : public StorageTask::Listener,
-                       public StorageTask::PowerController {
+                       public StorageTask::PowerController,
+                       public Controllers::FS::ProgressListener {
     public:
       enum class SystemTaskState { Sleeping, Running, GoingToSleep, AODSleeping };
       SystemTask(Drivers::SpiMaster& spi,
@@ -89,17 +91,18 @@ namespace Pinetime {
                  Pinetime::Controllers::TouchHandler& touchHandler,
                  Pinetime::Controllers::ButtonHandler& buttonHandler);
 
-      void Start();
+      [[nodiscard]] bool Start();
       void PushMessage(Messages msg);
       bool TryPushMessage(Messages msg);
       void OnFamilyStatePersisted(StorageTask::Operation operation,
                                   uint32_t token,
                                   bool success) override;
-      bool PrepareStorage() override;
+      bool PrepareStorage(bool& wasAsleep) override;
       void FinishStorage(bool wasAsleep) override;
+      bool OnFilesystemProgress() override;
 
-      bool IsSleepDisabled() {
-        return wakeLocksHeld > 0;
+      bool IsSleepDisabled() const {
+        return wakeLocksHeld.load(std::memory_order_relaxed) > 0;
       }
 
       Pinetime::Controllers::NimbleController& nimble() {
@@ -126,11 +129,14 @@ namespace Pinetime {
       };
 
       bool IsSleeping() const {
-        return state != SystemTaskState::Running;
+        return state.load(std::memory_order_relaxed) != SystemTaskState::Running;
       }
 
     private:
-      TaskHandle_t taskHandle;
+      TaskHandle_t taskHandle = nullptr;
+      StaticTask_t taskBuffer {};
+      static constexpr uint16_t TaskStackWords = 600;
+      StackType_t taskStack[TaskStackWords] {};
 
       Pinetime::Drivers::SpiMaster& spi;
       Pinetime::Drivers::SpiNorFlash& spiNorFlash;
@@ -148,7 +154,10 @@ namespace Pinetime {
       Pinetime::Controllers::PrayerController& prayerController;
       Pinetime::Controllers::BeaconController& beaconController;
       Pinetime::Controllers::AlertQueue& alertQueue;
-      QueueHandle_t systemTasksMsgQueue;
+      static constexpr uint8_t MessageQueueLength = 10;
+      QueueHandle_t systemTasksMsgQueue = nullptr;
+      StaticQueue_t messageQueueBuffer {};
+      uint8_t messageQueueStorage[MessageQueueLength * sizeof(Messages)] {};
       Pinetime::Drivers::Watchdog& watchdog;
       Pinetime::Controllers::NotificationManager& notificationManager;
       Pinetime::Drivers::Hrs3300& heartRateSensor;
@@ -168,25 +177,34 @@ namespace Pinetime {
       void Work();
       bool isBleDiscoveryTimerRunning = false;
       uint8_t bleDiscoveryTimer = 0;
-      TimerHandle_t measureBatteryTimer;
-      uint8_t wakeLocksHeld = 0;
-      uint8_t storagePowerLocks = 0;
-      bool storagePowerTransition = false;
-      SystemTaskState state = SystemTaskState::Running;
+      TimerHandle_t measureBatteryTimer = nullptr;
+      StaticTimer_t measureBatteryTimerBuffer {};
+      std::atomic<uint8_t> wakeLocksHeld {0};
+      std::atomic<uint8_t> storagePowerLocks {0};
+      SemaphoreHandle_t storagePowerMutex = nullptr;
+      StaticSemaphore_t storagePowerMutexBuffer {};
+      std::atomic<SystemTaskState> state {SystemTaskState::Running};
 
       void HandleButtonAction(Controllers::ButtonActions action);
       void ProcessStorageCompletion();
       bool fastWakeUpDone = false;
+      bool heartRateTaskReady = false;
+      uint32_t lastDisplayProgress = 0;
+      TickType_t lastDisplayProgressTick = 0;
+      TickType_t sleepTransitionStarted = 0;
+      bool filesystemBootInProgress = false;
+      TickType_t filesystemBootStarted = 0;
       StorageTask::Operation storageCompletionOperation = StorageTask::Operation::None;
       uint32_t storageCompletionToken = 0;
       bool storageCompletionSuccess = false;
       volatile bool storageCompletionPending = false;
 
-      void GoToRunning();
+      [[nodiscard]] bool GoToRunning();
       void GoToSleep();
       // Wake just the SPI flash (not the screen) for filesystem work while
-      // sleeping; returns whether it was asleep so Restore can re-sleep it.
-      bool WakeFlashForWork();
+      // sleeping. On success, wasAsleep records whether this call performed
+      // the physical wake; false means the serialized transition timed out.
+      bool WakeFlashForWork(bool& wasAsleep);
       void RestoreFlashAfterWork(bool wasAsleep);
 
       // Scoped form of the pair above: powers the flash for the enclosing block
@@ -194,11 +212,17 @@ namespace Pinetime {
       //   { FlashWakeScope flash(*this); controller.CommitStaged(); }
       class FlashWakeScope {
       public:
-        explicit FlashWakeScope(SystemTask& systemTask) : systemTask {systemTask}, wasAsleep {systemTask.WakeFlashForWork()} {
+        explicit FlashWakeScope(SystemTask& systemTask) : systemTask {systemTask}, acquired {systemTask.WakeFlashForWork(wasAsleep)} {
         }
 
         ~FlashWakeScope() {
-          systemTask.RestoreFlashAfterWork(wasAsleep);
+          if (acquired) {
+            systemTask.RestoreFlashAfterWork(wasAsleep);
+          }
+        }
+
+        explicit operator bool() const {
+          return acquired;
         }
 
         FlashWakeScope(const FlashWakeScope&) = delete;
@@ -208,9 +232,11 @@ namespace Pinetime {
 
       private:
         SystemTask& systemTask;
-        const bool wasAsleep;
+        bool wasAsleep = false;
+        const bool acquired;
       };
       void UpdateMotion();
+      bool DisplayIsLive(TickType_t now);
       // Surface a firmware-originated notice (LRU eviction, Forget All done,
       // legacy reset) through the normal notification path without inventing a
       // device name. Title and body share one buffer separated by a null byte.

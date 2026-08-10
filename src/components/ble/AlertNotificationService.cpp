@@ -16,13 +16,9 @@ int AlertNotificationCallback(uint16_t /*conn_handle*/, uint16_t /*attr_handle*/
   return anService->OnAlert(ctxt);
 }
 
-void AlertNotificationService::Init() {
-  int res;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int AlertNotificationService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 AlertNotificationService::AlertNotificationService(System::SystemTask& systemTask, NotificationManager& notificationManager)

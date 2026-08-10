@@ -13,14 +13,14 @@
       "record_version": 3,
       "record_size": 43,
       "digest_size": 7,
-      "capacity": 16
+      "capacity": 32
     },
     "task": {
       "protocol_version": 2,
       "record_version": 2,
       "record_size": 31,
       "digest_size": 9,
-      "capacity": 12
+      "capacity": 20
     },
     "prayer_settings": {
       "protocol_version": 2,

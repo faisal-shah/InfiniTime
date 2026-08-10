@@ -26,7 +26,7 @@ namespace Pinetime {
     public:
       explicit FamilyStateService(const System::StorageTask& storageTask);
 
-      void Init();
+      int Init();
       int OnAccess(struct ble_gatt_access_ctxt* ctxt) const;
 
     private:

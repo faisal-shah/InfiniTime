@@ -181,10 +181,12 @@ __STATIC_INLINE uint32_t ulPortRaiseBASEPRI( void )
 /*-----------------------------------------------------------*/
 
 size_t xPortGetHeapSize(void);
+/* Largest application payload heap_4 can currently allocate, excluding its
+ * per-block metadata. */
+size_t xPortGetLargestFreeBlockSize(void);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* PORTMACRO_CMSIS_H */
-

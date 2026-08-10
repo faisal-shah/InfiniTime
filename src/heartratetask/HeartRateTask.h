@@ -1,5 +1,6 @@
 #pragma once
 #include <FreeRTOS.h>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <task.h>
@@ -24,9 +25,21 @@ namespace Pinetime {
       explicit HeartRateTask(Drivers::Hrs3300& heartRateSensor,
                              Controllers::HeartRateController& controller,
                              Controllers::Settings& settings);
-      void Start();
+      [[nodiscard]] bool Start();
+
+      void SetSensorAvailable(bool available) {
+        sensorAvailable.store(available, std::memory_order_release);
+      }
+
+      [[nodiscard]] bool Started() const {
+        return taskHandle.load(std::memory_order_acquire) != nullptr;
+      }
+
       void Work();
-      void PushMessage(Messages msg);
+      // Task-context API. Returns false when lazy startup or the non-blocking
+      // queue send fails; ISR callers must not allocate/start this optional
+      // task and therefore need a separate explicit path if one is ever added.
+      bool PushMessage(Messages msg);
 
     private:
       enum class States : uint8_t { Disabled, Waiting, BackgroundMeasuring, ForegroundMeasuring };
@@ -39,8 +52,9 @@ namespace Pinetime {
       [[nodiscard]] std::optional<TickType_t> BackgroundMeasurementInterval() const;
       TickType_t CurrentTaskDelay();
 
-      TaskHandle_t taskHandle;
-      QueueHandle_t messageQueue;
+      std::atomic<TaskHandle_t> taskHandle {nullptr};
+      QueueHandle_t messageQueue = nullptr;
+      std::atomic<bool> sensorAvailable {false};
       bool valueCurrentlyShown;
       bool measurementSucceeded;
       States state = States::Disabled;

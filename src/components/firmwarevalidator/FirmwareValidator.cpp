@@ -5,14 +5,27 @@
 
 using namespace Pinetime::Controllers;
 
-bool FirmwareValidator::IsValidated() const {
-  auto* imageOkPtr = reinterpret_cast<uint32_t*>(validBitAdress);
-  return (*imageOkPtr) == validBitValue;
+// Absolute linker symbol: the primary slot ends where the scratch area begins.
+extern "C" uint8_t SCRATCH_OFFSET;
+
+uint32_t FirmwareValidator::ImageOkAddress() {
+  const auto primarySlotEndAddress = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&SCRATCH_OFFSET));
+  return ImageOkAddressForSlotEnd(primarySlotEndAddress);
 }
 
-void FirmwareValidator::Validate() {
-  if (!IsValidated())
-    Pinetime::Drivers::InternalFlash::WriteWord(validBitAdress, validBitValue);
+bool FirmwareValidator::IsValidated() const {
+  return IsValidatedWord(Pinetime::Drivers::InternalFlash::ReadWord(ImageOkAddress()));
+}
+
+bool FirmwareValidator::Validate() {
+  return ValidateAt(
+    ImageOkAddress(),
+    [](uint32_t address) {
+      return Pinetime::Drivers::InternalFlash::ReadWord(address);
+    },
+    [](uint32_t address, uint32_t value) {
+      Pinetime::Drivers::InternalFlash::WriteWord(address, value);
+    });
 }
 
 void FirmwareValidator::Reset() {

@@ -23,7 +23,7 @@ namespace Pinetime {
     class AlertNotificationService {
     public:
       AlertNotificationService(Pinetime::System::SystemTask& systemTask, Pinetime::Controllers::NotificationManager& notificationManager);
-      void Init();
+      int Init();
 
       int OnAlert(struct ble_gatt_access_ctxt* ctxt);
 

@@ -64,16 +64,12 @@ void Counter::SetValue(int newValue) {
 void Counter::HideControls() {
   lv_obj_set_hidden(upBtn, true);
   lv_obj_set_hidden(downBtn, true);
-  lv_obj_set_hidden(upperLine, true);
-  lv_obj_set_hidden(lowerLine, true);
   lv_obj_set_style_local_bg_opa(counterContainer, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_TRANSP);
 }
 
 void Counter::ShowControls() {
   lv_obj_set_hidden(upBtn, false);
   lv_obj_set_hidden(downBtn, false);
-  lv_obj_set_hidden(upperLine, false);
-  lv_obj_set_hidden(lowerLine, false);
   lv_obj_set_style_local_bg_opa(counterContainer, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_COVER);
 }
 
@@ -143,45 +139,34 @@ void Counter::Create() {
 
   UpdateLabel();
 
-  upBtn = lv_btn_create(counterContainer, nullptr);
-  lv_obj_set_style_local_bg_color(upBtn, LV_BTN_PART_MAIN, LV_STATE_DEFAULT, Colors::bgAlt);
-  lv_obj_set_size(upBtn, width, btnHeight);
-  lv_obj_align(upBtn, nullptr, LV_ALIGN_IN_TOP_MID, 0, 0);
-  upBtn->user_data = this;
-  lv_obj_set_event_cb(upBtn, upBtnEventHandler);
-
-  lv_obj_t* upLabel = lv_label_create(upBtn, nullptr);
-  lv_obj_set_style_local_text_font(upLabel, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_42);
-  lv_label_set_text_static(upLabel, "+");
-  lv_obj_align(upLabel, nullptr, LV_ALIGN_CENTER, 0, 0);
-
-  downBtn = lv_btn_create(counterContainer, nullptr);
-  lv_obj_set_style_local_bg_color(downBtn, LV_BTN_PART_MAIN, LV_STATE_DEFAULT, Colors::bgAlt);
-  lv_obj_set_size(downBtn, width, btnHeight);
-  lv_obj_align(downBtn, nullptr, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
-  downBtn->user_data = this;
-  lv_obj_set_event_cb(downBtn, downBtnEventHandler);
-
-  lv_obj_t* downLabel = lv_label_create(downBtn, nullptr);
-  lv_obj_set_style_local_text_font(downLabel, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_42);
-  lv_label_set_text_static(downLabel, "-");
-  lv_obj_align(downLabel, nullptr, LV_ALIGN_CENTER, 0, 0);
-
-  linePoints[0] = {0, 0};
-  linePoints[1] = {width, 0};
-
-  auto LineCreate = [&]() {
-    lv_obj_t* line = lv_line_create(counterContainer, nullptr);
-    lv_line_set_points(line, linePoints, 2);
-    lv_obj_set_style_local_line_width(line, LV_LINE_PART_MAIN, LV_STATE_DEFAULT, 1);
-    lv_obj_set_style_local_line_color(line, LV_LINE_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
-    lv_obj_set_style_local_line_opa(line, LV_LINE_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_20);
-    return line;
+  // A label can own the same full-size click area and long-press events as a
+  // button. Using one styled label for each control avoids four LVGL objects
+  // per Counter (two button containers, their child labels, and two divider
+  // lines). Two Counters are present in both Timer and Dice, where the old
+  // object graph consumed enough heap to make merely opening the app unsafe.
+  auto ControlCreate = [&](const char* text, lv_align_t alignment, lv_border_side_t dividerSide, lv_event_cb_t callback) {
+    lv_obj_t* control = lv_label_create(counterContainer, nullptr);
+    lv_label_set_long_mode(control, LV_LABEL_LONG_CROP);
+    lv_label_set_align(control, LV_LABEL_ALIGN_CENTER);
+    lv_label_set_text_static(control, text);
+    lv_obj_set_style_local_text_font(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_42);
+    lv_obj_set_style_local_bg_color(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::bgAlt);
+    lv_obj_set_style_local_bg_color(control, LV_LABEL_PART_MAIN, LV_STATE_PRESSED, Colors::highlight);
+    lv_obj_set_style_local_bg_opa(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_COVER);
+    lv_obj_set_style_local_radius(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, 4);
+    lv_obj_set_style_local_border_width(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, 1);
+    lv_obj_set_style_local_border_color(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
+    lv_obj_set_style_local_border_opa(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_20);
+    lv_obj_set_style_local_border_side(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, dividerSide);
+    lv_obj_set_style_local_pad_top(control, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, 4);
+    lv_obj_set_size(control, width, btnHeight);
+    lv_obj_align(control, nullptr, alignment, 0, 0);
+    lv_obj_set_click(control, true);
+    control->user_data = this;
+    lv_obj_set_event_cb(control, callback);
+    return control;
   };
 
-  upperLine = LineCreate();
-  lv_obj_align(upperLine, upBtn, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
-
-  lowerLine = LineCreate();
-  lv_obj_align(lowerLine, downBtn, LV_ALIGN_OUT_TOP_MID, 0, -1);
+  upBtn = ControlCreate("+", LV_ALIGN_IN_TOP_MID, LV_BORDER_SIDE_BOTTOM, upBtnEventHandler);
+  downBtn = ControlCreate("-", LV_ALIGN_IN_BOTTOM_MID, LV_BORDER_SIDE_TOP, downBtnEventHandler);
 }

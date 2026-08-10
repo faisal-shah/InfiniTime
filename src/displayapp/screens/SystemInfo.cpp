@@ -16,6 +16,7 @@
 #include "drivers/SpiMaster.h"
 #include "displayapp/InfiniTimeTheme.h"
 #include "systemtask/SystemTask.h"
+#include "systemtask/BootDiagnostics.h"
 
 using namespace Pinetime::Applications::Screens;
 
@@ -53,6 +54,76 @@ namespace {
         return "read failed";
       case BootState::HandshakeFailed:
         return "legacy fail";
+    }
+    return "?";
+  }
+
+  const char* ToString(Pinetime::System::BootDiagnostics::Stage stage) {
+    using Stage = Pinetime::System::BootDiagnostics::Stage;
+    switch (stage) {
+      case Stage::None:
+        return "none";
+      case Stage::MainEntered:
+        return "main";
+      case Stage::ClockReady:
+        return "clock";
+      case Stage::SchedulerStarting:
+        return "scheduler";
+      case Stage::SystemTaskStarted:
+        return "system";
+      case Stage::SharedSpiReady:
+        return "SPI";
+      case Stage::DisplayReady:
+        return "display";
+      case Stage::StorageReady:
+        return "storage";
+      case Stage::SettingsReady:
+        return "settings";
+      case Stage::BleReady:
+        return "BLE";
+      case Stage::Running:
+        return "running";
+    }
+    return "?";
+  }
+
+  const char* ToString(Pinetime::System::BootDiagnostics::Failure failure) {
+    using Failure = Pinetime::System::BootDiagnostics::Failure;
+    switch (failure) {
+      case Failure::None:
+        return "none";
+      case Failure::Malloc:
+        return "malloc";
+      case Failure::StackOverflow:
+        return "stack";
+      case Failure::LowFrequencyClock:
+        return "LF clock";
+      case Failure::DebounceTimer:
+        return "input timer";
+      case Failure::SystemTaskStart:
+        return "system task";
+      case Failure::SharedSpi:
+        return "SPI";
+      case Failure::DisplayStart:
+        return "display task";
+      case Failure::DisplayFirstFrame:
+        return "first frame";
+      case Failure::Filesystem:
+        return "filesystem";
+      case Failure::StorageTaskStart:
+        return "storage task";
+      case Failure::Twi:
+        return "TWI";
+      case Failure::Ble:
+        return "BLE";
+      case Failure::HeartRate:
+        return "heart sensor";
+      case Failure::BatteryTimer:
+        return "battery timer";
+      case Failure::DisplayLiveness:
+        return "display live";
+      case Failure::StoragePower:
+        return "flash power";
     }
     return "?";
   }
@@ -105,6 +176,9 @@ SystemInfo::SystemInfo(Pinetime::Applications::DisplayApp* app,
               },
               [this]() -> std::unique_ptr<Screen> {
                 return CreateScreen9();
+              },
+              [this]() -> std::unique_ptr<Screen> {
+                return CreateScreen10();
               }},
              Screens::ScreenListModes::UpDown} {
 }
@@ -221,6 +295,7 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen2() {
 
 extern int mallocFailedCount;
 extern int stackOverflowCount;
+
 std::unique_ptr<Screen> SystemInfo::CreateScreen3() {
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
@@ -318,25 +393,20 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen5() {
 }
 
 std::unique_ptr<Screen> SystemInfo::CreateScreen6() {
-  lv_mem_monitor_t mon;
-  lv_mem_monitor(&mon);
-
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
   lv_label_set_text_fmt(label,
                         "#FFFF00 Memory#\n\n"
-                        "#808080 Heap free# %d\n"
-                        "#808080 Heap total# %d\n"
-                        "#808080 Heap minimum# %d\n"
-                        "#808080 LVGL free# %lu\n"
-                        "#808080 LVGL largest# %lu\n"
+                        "#808080 Heap free# %lu\n"
+                        "#808080 Heap total# %lu\n"
+                        "#808080 Heap minimum# %lu\n"
+                        "#808080 Heap largest# %lu\n"
                         "#808080 Malloc failures# %d\n"
                         "#808080 Stack overflows# %d",
-                        xPortGetFreeHeapSize(),
-                        xPortGetHeapSize(),
-                        xPortGetMinimumEverFreeHeapSize(),
-                        static_cast<unsigned long>(mon.free_size),
-                        static_cast<unsigned long>(mon.free_biggest_size),
+                        static_cast<unsigned long>(xPortGetFreeHeapSize()),
+                        static_cast<unsigned long>(xPortGetHeapSize()),
+                        static_cast<unsigned long>(xPortGetMinimumEverFreeHeapSize()),
+                        static_cast<unsigned long>(xPortGetLargestFreeBlockSize()),
                         mallocFailedCount,
                         stackOverflowCount);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
@@ -432,22 +502,12 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen8() {
                         static_cast<unsigned>(storage.error),
                         static_cast<unsigned long>(storage.token),
                         static_cast<unsigned long>(storage.activeGeneration),
-                        (storage.flags &
-                         Pinetime::Controllers::CompanionProtocol::
-                           FamilyStateStorageWarningFlag) != 0,
-                        previous.Valid()
-                          ? static_cast<unsigned>(previous.operation)
-                          : 0u,
-                        previous.Valid()
-                          ? static_cast<unsigned>(previous.phase)
-                          : 0,
-                        previous.Valid()
-                          ? static_cast<unsigned>(previous.error)
-                          : 0u,
-                        static_cast<unsigned long>(
-                          previous.Valid() ? previous.token : 0),
-                        static_cast<unsigned long>(
-                          previous.Valid() ? previous.elapsedMs : 0),
+                        (storage.flags & Pinetime::Controllers::CompanionProtocol::FamilyStateStorageWarningFlag) != 0,
+                        previous.Valid() ? static_cast<unsigned>(previous.operation) : 0u,
+                        previous.Valid() ? static_cast<unsigned>(previous.phase) : 0,
+                        previous.Valid() ? static_cast<unsigned>(previous.error) : 0u,
+                        static_cast<unsigned long>(previous.Valid() ? previous.token : 0),
+                        static_cast<unsigned long>(previous.Valid() ? previous.elapsedMs : 0),
                         spi.retries,
                         spi.recoveries,
                         spi.failures,
@@ -460,6 +520,36 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen8() {
 }
 
 std::unique_ptr<Screen> SystemInfo::CreateScreen9() {
+  const auto& current = Pinetime::System::BootDiagnostics::Current();
+  const auto& previous = Pinetime::System::BootDiagnostics::Previous();
+
+  lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_recolor(label, true);
+  lv_label_set_text_fmt(label,
+                        "#FFFF00 Boot Diagnostics#\n\n"
+                        "#808080 Boot count# %u\n"
+                        "#808080 Current stage# %s\n"
+                        "#808080 Prior stage# %s\n"
+                        "#808080 Prior failure# %s/%u\n"
+                        "#808080 Prior reset# %u\n"
+                        "#808080 Prior heap F/M# %u/%u\n"
+                        "#808080 Prior malloc/stack# %u/%u",
+                        current.Valid() ? current.bootCount : 0,
+                        current.Valid() ? ToString(current.stage) : "invalid",
+                        previous.Valid() ? ToString(previous.stage) : "none",
+                        previous.Valid() ? ToString(previous.firstFailure) : "none",
+                        previous.Valid() ? previous.failureDetail : 0,
+                        previous.Valid() ? previous.resetReason : 0,
+                        previous.Valid() ? previous.heapFree : 0,
+                        previous.Valid() ? previous.heapMinimum : 0,
+                        previous.Valid() ? previous.mallocFailures : 0,
+                        previous.Valid() ? previous.stackOverflows : 0);
+  lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
+  lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
+  return std::make_unique<Screens::Label>(8, ScreenCount, label);
+}
+
+std::unique_ptr<Screen> SystemInfo::CreateScreen10() {
   lv_obj_t* label = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_recolor(label, true);
   lv_label_set_text_static(label,
@@ -473,5 +563,5 @@ std::unique_ptr<Screen> SystemInfo::CreateScreen9() {
                            "#FFFF00 InfiniTime#");
   lv_label_set_align(label, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(label, lv_scr_act(), LV_ALIGN_CENTER, 0, 0);
-  return std::make_unique<Screens::Label>(8, ScreenCount, label);
+  return std::make_unique<Screens::Label>(9, ScreenCount, label);
 }

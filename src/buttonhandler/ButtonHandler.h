@@ -1,9 +1,8 @@
 #pragma once
 
 #include "buttonhandler/ButtonActions.h"
+#include "components/timer/StaticTimer.h"
 #include "systemtask/SystemTask.h"
-#include <FreeRTOS.h>
-#include <timers.h>
 
 namespace Pinetime {
   namespace Controllers {
@@ -15,8 +14,10 @@ namespace Pinetime {
 
     private:
       enum class States : uint8_t { Idle, Pressed, Holding, LongHeld };
+      bool ArmTimer(TickType_t period);
       TickType_t releaseTime = 0;
-      TimerHandle_t buttonTimer;
+      StaticTimer buttonTimer;
+      bool gesturesAvailable = false;
       bool buttonPressed = false;
       States state = States::Idle;
     };

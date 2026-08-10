@@ -26,6 +26,20 @@ extern "C" {
 
 struct ble_npl_eventq *npl_freertos_eventq_dflt_get(void);
 
+typedef enum {
+    NPL_FREERTOS_ALLOC_NONE = 0,
+    NPL_FREERTOS_ALLOC_EVENT_QUEUE,
+    NPL_FREERTOS_ALLOC_MUTEX,
+    NPL_FREERTOS_ALLOC_SEMAPHORE,
+    NPL_FREERTOS_ALLOC_CALLOUT,
+} npl_freertos_alloc_failure_t;
+
+void npl_freertos_reset_alloc_failure(void);
+
+npl_freertos_alloc_failure_t npl_freertos_get_alloc_failure(void);
+
+ble_npl_error_t npl_freertos_eventq_init(struct ble_npl_eventq *evq);
+
 struct ble_npl_event *npl_freertos_eventq_get(struct ble_npl_eventq *evq,
                                               ble_npl_time_t tmo);
 
@@ -49,12 +63,15 @@ ble_npl_error_t npl_freertos_sem_pend(struct ble_npl_sem *sem,
 
 ble_npl_error_t npl_freertos_sem_release(struct ble_npl_sem *sem);
 
-void npl_freertos_callout_init(struct ble_npl_callout *co,
-                               struct ble_npl_eventq *evq,
-                               ble_npl_event_fn *ev_cb, void *ev_arg);
+ble_npl_error_t npl_freertos_callout_init(struct ble_npl_callout *co,
+                                          struct ble_npl_eventq *evq,
+                                          ble_npl_event_fn *ev_cb,
+                                          void *ev_arg);
 
 ble_npl_error_t npl_freertos_callout_reset(struct ble_npl_callout *co,
                                            ble_npl_time_t ticks);
+
+ble_npl_error_t npl_freertos_callout_stop(struct ble_npl_callout *co);
 
 ble_npl_time_t npl_freertos_callout_remaining_ticks(struct ble_npl_callout *co,
 						    ble_npl_time_t now);

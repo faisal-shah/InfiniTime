@@ -1,5 +1,7 @@
 #include <cstring>
+
 #include "drivers/St7789.h"
+
 #include <hal/nrf_gpio.h>
 #include <nrfx_log.h>
 #include "drivers/Spi.h"
@@ -7,304 +9,334 @@
 
 using namespace Pinetime::Drivers;
 
-St7789::St7789(Spi& spi, uint8_t pinDataCommand, uint8_t pinReset) : spi {spi}, pinDataCommand {pinDataCommand}, pinReset {pinReset} {
+St7789::St7789(Spi& spi, uint8_t pinDataCommand, uint8_t pinReset)
+  : spi {spi}, pinDataCommand {pinDataCommand}, pinReset {pinReset} {
 }
 
-void St7789::Init() {
+bool St7789::Init() {
   nrf_gpio_cfg_output(pinDataCommand);
   nrf_gpio_cfg_output(pinReset);
   nrf_gpio_pin_set(pinReset);
   HardwareReset();
-  SoftwareReset();
-  Command2Enable();
-  PixelFormat();
-  MemoryDataAccessControl();
-  SetAddrWindow(0, 0, Width, Height);
+  if (!SoftwareReset() || !Command2Enable() || !PixelFormat() ||
+      !MemoryDataAccessControl() ||
+      !SetAddrWindow(0, 0, Width - 1, Height - 1)) {
+    return false;
+  }
 // P8B Mirrored version does not need display inversion.
 #ifndef DRIVER_DISPLAY_MIRROR
-  DisplayInversionOn();
+  if (!DisplayInversionOn()) {
+    return false;
+  }
 #endif
-  PorchSet();
-  FrameRateNormalSet();
-  IdleFrameRateOff();
-  NormalModeOn();
-  SetVdv();
-  PowerControl();
-  GateControl();
-  SleepOut();
-  DisplayOn();
+  return PorchSet() && FrameRateNormalSet() && IdleFrameRateOff() &&
+         NormalModeOn() && SetVdv() && PowerControl() && GateControl() &&
+         SleepOut() && DisplayOn();
 }
 
-void St7789::WriteData(uint8_t data) {
-  WriteData(&data, 1);
+bool St7789::WriteData(uint8_t data) {
+  return WriteData(&data, 1);
 }
 
-void St7789::WriteData(const uint8_t* data, size_t size) {
-  WriteSpi(data, size, [pinDataCommand = pinDataCommand]() {
+bool St7789::WriteData(const uint8_t* data, size_t size) {
+  return WriteSpi(data, size, [pinDataCommand = pinDataCommand]() {
     nrf_gpio_pin_set(pinDataCommand);
   });
 }
 
-void St7789::WriteCommand(uint8_t data) {
-  WriteCommand(&data, 1);
+bool St7789::WriteCommand(uint8_t data) {
+  return WriteCommand(&data, 1);
 }
 
-void St7789::WriteCommand(const uint8_t* data, size_t size) {
-  WriteSpi(data, size, [pinDataCommand = pinDataCommand]() {
+bool St7789::WriteCommand(const uint8_t* data, size_t size) {
+  return WriteSpi(data, size, [pinDataCommand = pinDataCommand]() {
     nrf_gpio_pin_clear(pinDataCommand);
   });
 }
 
-void St7789::WriteSpi(const uint8_t* data, size_t size, const std::function<void()>& preTransactionHook) {
-  spi.Write(data, size, preTransactionHook);
+bool St7789::WriteSpi(const uint8_t* data,
+                      size_t size,
+                      const std::function<void()>& preTransactionHook) {
+  if (data == nullptr || size == 0 ||
+      !spi.Write(data, size, preTransactionHook)) {
+    return false;
+  }
+  // SpiMaster chains transfers larger than 255 bytes from its ISR. Waiting
+  // here proves completion and also keeps command/data arrays alive until DMA
+  // has stopped reading them. It is what makes one LVGL draw buffer safe.
+  return spi.WaitForWriteComplete();
 }
 
-void St7789::SoftwareReset() {
+bool St7789::SoftwareReset() {
   EnsureSleepOutPostDelay();
-  WriteCommand(static_cast<uint8_t>(Commands::SoftwareReset));
-  // If sleep in: must wait 120ms before sleep out can sent (see driver datasheet)
-  // Unconditionally wait as software reset doesn't need to be performant
+  const bool written =
+    WriteCommand(static_cast<uint8_t>(Commands::SoftwareReset));
+  // If sleep in: must wait 120ms before sleep out can be sent (see driver
+  // datasheet). Wait unconditionally because reset is not performance
+  // critical and the failed operation must not turn into a tight retry loop.
   sleepIn = true;
   lastSleepExit = xTaskGetTickCount();
   vTaskDelay(pdMS_TO_TICKS(125));
+  return written;
 }
 
-void St7789::Command2Enable() {
-  WriteCommand(static_cast<uint8_t>(Commands::Command2Enable));
+bool St7789::Command2Enable() {
   constexpr uint8_t args[] = {
     0x5a, // Constant
     0x69, // Constant
     0x02, // Constant
     0x01, // Enable
   };
-  WriteData(args, sizeof(args));
+  return WriteCommand(static_cast<uint8_t>(Commands::Command2Enable)) &&
+         WriteData(args, sizeof(args));
 }
 
-void St7789::SleepOut() {
+bool St7789::SleepOut() {
   if (!sleepIn) {
-    return;
+    return true;
   }
-  WriteCommand(static_cast<uint8_t>(Commands::SleepOut));
-  // Wait 5ms for clocks to stabilise
-  // pdMS rounds down => 6 used here
+  if (!WriteCommand(static_cast<uint8_t>(Commands::SleepOut))) {
+    return false;
+  }
+  // Wait 5ms for clocks to stabilise. pdMS rounds down, hence 6.
   vTaskDelay(pdMS_TO_TICKS(6));
-  // Cannot send sleep in or software reset for 120ms
   lastSleepExit = xTaskGetTickCount();
   sleepIn = false;
+  return true;
 }
 
 void St7789::EnsureSleepOutPostDelay() {
-  TickType_t delta = xTaskGetTickCount() - lastSleepExit;
-  // Due to timer wraparound, there is a chance of delaying when not necessary
-  // It is very low (pdMS_TO_TICKS(125)/2^32) and waiting an extra 125ms isn't too bad
+  const TickType_t delta = xTaskGetTickCount() - lastSleepExit;
+  // Due to timer wraparound, there is a very small chance of an unnecessary
+  // delay. An extra 125 ms is preferable to violating the panel timing.
   if (delta < pdMS_TO_TICKS(125)) {
     vTaskDelay(pdMS_TO_TICKS(125) - delta);
   }
 }
 
-void St7789::SleepIn() {
+bool St7789::SleepIn() {
   if (sleepIn) {
-    return;
+    return true;
   }
   EnsureSleepOutPostDelay();
-  WriteCommand(static_cast<uint8_t>(Commands::SleepIn));
-  // Wait 5ms for clocks to stabilise
-  // pdMS rounds down => 6 used here
+  if (!WriteCommand(static_cast<uint8_t>(Commands::SleepIn))) {
+    return false;
+  }
   vTaskDelay(pdMS_TO_TICKS(6));
   sleepIn = true;
+  return true;
 }
 
-void St7789::PixelFormat() {
-  WriteCommand(static_cast<uint8_t>(Commands::PixelFormat));
-  // 65K colours, 16-bit per pixel
-  WriteData(0x55);
+bool St7789::PixelFormat() {
+  return WriteCommand(static_cast<uint8_t>(Commands::PixelFormat)) &&
+         WriteData(0x55); // 65K colours, 16-bit per pixel
 }
 
-void St7789::MemoryDataAccessControl() {
-  WriteCommand(static_cast<uint8_t>(Commands::MemoryDataAccessControl));
+bool St7789::MemoryDataAccessControl() {
+  if (!WriteCommand(
+        static_cast<uint8_t>(Commands::MemoryDataAccessControl))) {
+    return false;
+  }
 #ifdef DRIVER_DISPLAY_MIRROR
-  // [7] = MY = Page Address Order, 0 = Top to bottom, 1 = Bottom to top
-  // [6] = MX = Column Address Order, 0 = Left to right, 1 = Right to left
-  // [5] = MV = Page/Column Order, 0 = Normal mode, 1 = Reverse mode
-  // [4] = ML = Line Address Order, 0 = LCD refresh from top to bottom, 1 = Bottom to top
-  // [3] = RGB = RGB/BGR Order, 0 = RGB, 1 = BGR
-  // [2] = MH = Display Data Latch Order, 0 = LCD refresh from left to right, 1 = Right to left
-  // [0 .. 1] = Unused
-  WriteData(0b01000000);
+  // [7] MY, [6] MX, [5] MV, [4] ML, [3] RGB/BGR, [2] MH.
+  return WriteData(0b01000000);
 #else
-  WriteData(0x00);
+  return WriteData(0x00);
 #endif
 }
 
-void St7789::DisplayInversionOn() {
-  WriteCommand(static_cast<uint8_t>(Commands::DisplayInversionOn));
+bool St7789::DisplayInversionOn() {
+  return WriteCommand(static_cast<uint8_t>(Commands::DisplayInversionOn));
 }
 
-void St7789::NormalModeOn() {
-  WriteCommand(static_cast<uint8_t>(Commands::NormalModeOn));
+bool St7789::NormalModeOn() {
+  return WriteCommand(static_cast<uint8_t>(Commands::NormalModeOn));
 }
 
-void St7789::IdleModeOn() {
-  WriteCommand(static_cast<uint8_t>(Commands::IdleModeOn));
+bool St7789::IdleModeOn() {
+  return WriteCommand(static_cast<uint8_t>(Commands::IdleModeOn));
 }
 
-void St7789::IdleModeOff() {
-  WriteCommand(static_cast<uint8_t>(Commands::IdleModeOff));
+bool St7789::IdleModeOff() {
+  return WriteCommand(static_cast<uint8_t>(Commands::IdleModeOff));
 }
 
-void St7789::PorchSet() {
-  WriteCommand(static_cast<uint8_t>(Commands::Porch));
+bool St7789::PorchSet() {
   constexpr uint8_t args[] = {
     0x02, // Normal mode front porch
     0x03, // Normal mode back porch
     0x01, // Porch control enable
     0xed, // Idle mode front:back porch
-    0xed, // Partial mode front:back porch (partial mode unused but set anyway)
+    0xed, // Partial mode front:back porch
   };
-  WriteData(args, sizeof(args));
+  return WriteCommand(static_cast<uint8_t>(Commands::Porch)) &&
+         WriteData(args, sizeof(args));
 }
 
-void St7789::FrameRateNormalSet() {
-  WriteCommand(static_cast<uint8_t>(Commands::FrameRateNormal));
-  // Note that the datasheet table is imprecise - see formula below table
-  WriteData(0x0a);
+bool St7789::FrameRateNormalSet() {
+  // The datasheet table is imprecise; this follows the formula below it.
+  return WriteCommand(static_cast<uint8_t>(Commands::FrameRateNormal)) &&
+         WriteData(0x0a);
 }
 
-void St7789::IdleFrameRateOn() {
-  WriteCommand(static_cast<uint8_t>(Commands::FrameRateIdle));
-  // According to the datasheet, these controls should apply only to partial/idle mode
-  // However they appear to apply to normal mode, so we have to enable/disable
-  // every time we enter/exit always on
+bool St7789::IdleFrameRateOn() {
   constexpr uint8_t args[] = {
-    0x12, // Enable frame rate control for partial/idle mode, 4x frame divider
+    0x12, // Enable partial/idle frame control, 4x divider
     0x1e, // Idle mode frame rate
     0x1e, // Partial mode frame rate (unused)
   };
-  WriteData(args, sizeof(args));
+  return WriteCommand(static_cast<uint8_t>(Commands::FrameRateIdle)) &&
+         WriteData(args, sizeof(args));
 }
 
-void St7789::IdleFrameRateOff() {
-  WriteCommand(static_cast<uint8_t>(Commands::FrameRateIdle));
+bool St7789::IdleFrameRateOff() {
   constexpr uint8_t args[] = {
     0x00, // Disable frame rate control and divider
     0x0a, // Idle mode frame rate (normal)
     0x0a, // Partial mode frame rate (normal, unused)
   };
-  WriteData(args, sizeof(args));
+  return WriteCommand(static_cast<uint8_t>(Commands::FrameRateIdle)) &&
+         WriteData(args, sizeof(args));
 }
 
-void St7789::DisplayOn() {
-  WriteCommand(static_cast<uint8_t>(Commands::DisplayOn));
+bool St7789::DisplayOn() {
+  return WriteCommand(static_cast<uint8_t>(Commands::DisplayOn));
 }
 
-void St7789::PowerControl() {
-  WriteCommand(static_cast<uint8_t>(Commands::PowerControl1));
+bool St7789::PowerControl() {
   constexpr uint8_t args[] = {
     0xa4, // Constant
     0x00, // Lowest possible voltages
   };
-  WriteData(args, sizeof(args));
-
-  WriteCommand(static_cast<uint8_t>(Commands::PowerControl2));
-  // Lowest possible boost circuit clocks
-  WriteData(0xb3);
+  return WriteCommand(static_cast<uint8_t>(Commands::PowerControl1)) &&
+         WriteData(args, sizeof(args)) &&
+         WriteCommand(static_cast<uint8_t>(Commands::PowerControl2)) &&
+         WriteData(0xb3); // Lowest possible boost circuit clocks
 }
 
-void St7789::GateControl() {
-  WriteCommand(static_cast<uint8_t>(Commands::GateControl));
-  // Lowest possible VGL/VGH
-  WriteData(0x00);
+bool St7789::GateControl() {
+  return WriteCommand(static_cast<uint8_t>(Commands::GateControl)) &&
+         WriteData(0x00); // Lowest possible VGL/VGH
 }
 
-void St7789::SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-  WriteCommand(static_cast<uint8_t>(Commands::ColumnAddressSet));
-  uint8_t colArgs[] = {
-    static_cast<uint8_t>(x0 >> 8), // x start MSB
-    static_cast<uint8_t>(x0),      // x start LSB
-    static_cast<uint8_t>(x1 >> 8), // x end MSB
-    static_cast<uint8_t>(x1)       // x end LSB
+bool St7789::SetAddrWindow(uint16_t x0,
+                           uint16_t y0,
+                           uint16_t x1,
+                           uint16_t y1) {
+  const uint8_t colArgs[] = {
+    static_cast<uint8_t>(x0 >> 8),
+    static_cast<uint8_t>(x0),
+    static_cast<uint8_t>(x1 >> 8),
+    static_cast<uint8_t>(x1),
   };
-  WriteData(colArgs, sizeof(colArgs));
-
-  WriteCommand(static_cast<uint8_t>(Commands::RowAddressSet));
-  uint8_t rowArgs[] = {
-    static_cast<uint8_t>(y0 >> 8), // y start MSB
-    static_cast<uint8_t>(y0),      // y start LSB
-    static_cast<uint8_t>(y1 >> 8), // y end MSB
-    static_cast<uint8_t>(y1)       // y end LSB
+  const uint8_t rowArgs[] = {
+    static_cast<uint8_t>(y0 >> 8),
+    static_cast<uint8_t>(y0),
+    static_cast<uint8_t>(y1 >> 8),
+    static_cast<uint8_t>(y1),
   };
-  memcpy(addrWindowArgs, rowArgs, sizeof(rowArgs));
-  WriteData(addrWindowArgs, sizeof(addrWindowArgs));
+  std::memcpy(addrWindowArgs, rowArgs, sizeof(rowArgs));
+  return WriteCommand(static_cast<uint8_t>(Commands::ColumnAddressSet)) &&
+         WriteData(colArgs, sizeof(colArgs)) &&
+         WriteCommand(static_cast<uint8_t>(Commands::RowAddressSet)) &&
+         WriteData(addrWindowArgs, sizeof(addrWindowArgs));
 }
 
-void St7789::WriteToRam(const uint8_t* data, size_t size) {
-  WriteCommand(static_cast<uint8_t>(Commands::WriteToRam));
-  WriteData(data, size);
+bool St7789::WriteToRam(const uint8_t* data, size_t size) {
+  return WriteCommand(static_cast<uint8_t>(Commands::WriteToRam)) &&
+         WriteData(data, size);
 }
 
-void St7789::SetVdv() {
-  // By default there is a large step from pixel brightness zero to one.
-  // After experimenting with VCOMS, VRH and VDV, this was found to produce good results.
-  WriteCommand(static_cast<uint8_t>(Commands::VdvSet));
-  WriteData(0x10);
+bool St7789::SetVdv() {
+  // This removes the large step from pixel brightness zero to one.
+  return WriteCommand(static_cast<uint8_t>(Commands::VdvSet)) &&
+         WriteData(0x10);
 }
 
-void St7789::DisplayOff() {
-  WriteCommand(static_cast<uint8_t>(Commands::DisplayOff));
+bool St7789::DisplayOff() {
+  return WriteCommand(static_cast<uint8_t>(Commands::DisplayOff));
 }
 
-void St7789::VerticalScrollStartAddress(uint16_t line) {
+bool St7789::VerticalScrollStartAddress(uint16_t line) {
+  const uint8_t args[] = {
+    static_cast<uint8_t>(line >> 8),
+    static_cast<uint8_t>(line),
+  };
+  std::memcpy(verticalScrollArgs, args, sizeof(args));
+  if (!WriteCommand(
+        static_cast<uint8_t>(Commands::VerticalScrollStartAddress)) ||
+      !WriteData(verticalScrollArgs, sizeof(verticalScrollArgs))) {
+    return false;
+  }
   verticalScrollingStartAddress = line;
-  WriteCommand(static_cast<uint8_t>(Commands::VerticalScrollStartAddress));
-  uint8_t args[] = {
-    static_cast<uint8_t>(line >> 8), // Frame memory line pointer MSB
-    static_cast<uint8_t>(line)       // Frame memory line pointer LSB
-  };
-  memcpy(verticalScrollArgs, args, sizeof(args));
-  WriteData(verticalScrollArgs, sizeof(verticalScrollArgs));
+  return true;
 }
 
 void St7789::Uninit() {
 }
 
-void St7789::DrawBuffer(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint8_t* data, size_t size) {
-  SetAddrWindow(x, y, x + width - 1, y + height - 1);
-  WriteToRam(data, size);
+bool St7789::DrawBuffer(uint16_t x,
+                        uint16_t y,
+                        uint16_t width,
+                        uint16_t height,
+                        const uint8_t* data,
+                        size_t size) {
+  if (width == 0 || height == 0 || data == nullptr ||
+      static_cast<uint32_t>(x) + width > Width ||
+      static_cast<uint32_t>(y) + height > Height ||
+      size != static_cast<size_t>(width) * height * 2) {
+    return false;
+  }
+  return SetAddrWindow(x, y, x + width - 1, y + height - 1) &&
+         WriteToRam(data, size);
 }
 
 void St7789::HardwareReset() {
   nrf_gpio_pin_clear(pinReset);
   vTaskDelay(pdMS_TO_TICKS(1));
   nrf_gpio_pin_set(pinReset);
-  // If hardware reset started while sleep out, reset time may be up to 120ms
-  // Unconditionally wait as hardware reset doesn't need to be performant
+  // If reset starts during sleep-out, reset time may be up to 120 ms.
   sleepIn = true;
   lastSleepExit = xTaskGetTickCount();
   vTaskDelay(pdMS_TO_TICKS(125));
 }
 
-void St7789::LowPowerOn() {
-  IdleModeOn();
-  IdleFrameRateOn();
+bool St7789::LowPowerOn() {
+  if (!IdleModeOn() || !IdleFrameRateOn()) {
+    NRF_LOG_ERROR("[LCD] failed to enter low power mode");
+    return false;
+  }
   NRF_LOG_INFO("[LCD] Low power mode");
+  return true;
 }
 
-void St7789::LowPowerOff() {
-  IdleModeOff();
-  IdleFrameRateOff();
+bool St7789::LowPowerOff() {
+  if (!IdleModeOff() || !IdleFrameRateOff()) {
+    NRF_LOG_ERROR("[LCD] failed to leave low power mode");
+    return false;
+  }
   NRF_LOG_INFO("[LCD] Normal power mode");
+  return true;
 }
 
-void St7789::Sleep() {
-  SleepIn();
+bool St7789::Sleep() {
+  if (!SleepIn()) {
+    NRF_LOG_ERROR("[LCD] failed to enter sleep mode");
+    return false;
+  }
   nrf_gpio_cfg_default(pinDataCommand);
   NRF_LOG_INFO("[LCD] Sleep");
+  return true;
 }
 
-void St7789::Wakeup() {
+bool St7789::Wakeup() {
   nrf_gpio_cfg_output(pinDataCommand);
-  SleepOut();
-  VerticalScrollStartAddress(verticalScrollingStartAddress);
-  DisplayOn();
-  NRF_LOG_INFO("[LCD] Wakeup")
+  if (!SleepOut() ||
+      !VerticalScrollStartAddress(verticalScrollingStartAddress) ||
+      !DisplayOn()) {
+    NRF_LOG_ERROR("[LCD] failed to wake");
+    return false;
+  }
+  NRF_LOG_INFO("[LCD] Wakeup");
+  return true;
 }

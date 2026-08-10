@@ -781,6 +781,14 @@ ble_hs_init(void)
     ble_hs_evq_set(nimble_port_get_dflt_eventq());
 #endif
 
+    /*
+     * Allocate the host timer during initialization, before the application
+     * starts either NimBLE task.  The FreeRTOS port can then reject a failed
+     * timer allocation atomically instead of dereferencing a null timer from
+     * ble_hs_sync() on the host task.
+     */
+    ble_npl_callout_init(&ble_hs_timer, ble_hs_evq, ble_hs_timer_exp, NULL);
+
     /* Configure the HCI transport to communicate with a host. */
     ble_hci_trans_cfg_hs(ble_hs_hci_rx_evt, NULL, ble_hs_rx_data, NULL);
 

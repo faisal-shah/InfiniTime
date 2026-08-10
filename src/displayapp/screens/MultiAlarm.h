@@ -12,6 +12,7 @@ namespace Pinetime {
   namespace Controllers {
     class Settings;
   }
+
   namespace Applications {
     namespace Screens {
       // Multi-alarm app: a list of MaxAlarms rows (enable toggle + time +
@@ -35,7 +36,8 @@ namespace Pinetime {
         void BeginSave(bool accepted);
         void ShowSaving();
         void ShowSaveFailed();
-        void SetRowText(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm);
+        void SetRowTime(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm);
+        void SetRowDetails();
         void UpdateEditorAmPm();
 
         Controllers::MultiAlarmController& multiAlarmController;
@@ -47,7 +49,7 @@ namespace Pinetime {
         lv_obj_t* listContainer = nullptr;
         lv_obj_t* rowTime[Controllers::MultiAlarmController::MaxAlarms] = {};
         lv_obj_t* rowSwitch[Controllers::MultiAlarmController::MaxAlarms] = {};
-        lv_obj_t* rowMode[Controllers::MultiAlarmController::MaxAlarms] = {};
+        lv_obj_t* rowDetails = nullptr;
 
         lv_obj_t* editContainer = nullptr;
         lv_obj_t* btnMode = nullptr;

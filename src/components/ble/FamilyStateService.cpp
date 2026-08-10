@@ -24,11 +24,9 @@ FamilyStateService::FamilyStateService(const System::StorageTask& storageTask)
     storageTask {storageTask} {
 }
 
-void FamilyStateService::Init() {
-  int result = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(result == 0);
-  result = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(result == 0);
+int FamilyStateService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int FamilyStateService::OnAccess(struct ble_gatt_access_ctxt* ctxt) const {

@@ -59,7 +59,8 @@ bool Cst816S::Init() {
 
   // Disable auto-reset after 5s of no gesture
   // The reset kills the current touch point, so paint/pong etc breaks
-  twiMaster.Write(twiAddress, 0xFB, 0, 1);
+  static constexpr uint8_t autoResetDisabled = 0;
+  twiMaster.Write(twiAddress, 0xFB, &autoResetDisabled, 1);
 
   return true;
 }

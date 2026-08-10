@@ -24,7 +24,7 @@ namespace Pinetime {
         static constexpr std::array<uint16_t, 6> options = {5000, 7000, 10000, 15000, 20000, 30000};
 
         Controllers::Settings& settingsController;
-        lv_obj_t* cbOption[options.size()];
+        lv_obj_t* timeoutButtons;
         lv_obj_t* alwaysOnCheckbox;
       };
     }

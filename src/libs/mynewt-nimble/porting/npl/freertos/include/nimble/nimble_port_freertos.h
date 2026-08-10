@@ -26,7 +26,18 @@
 extern "C" {
 #endif
 
-void nimble_port_freertos_init(TaskFunction_t host_task_fn);
+typedef enum {
+    NIMBLE_PORT_FREERTOS_OK = 0,
+    NIMBLE_PORT_FREERTOS_INVALID_ARGUMENT,
+    NIMBLE_PORT_FREERTOS_ALREADY_STARTED,
+    NIMBLE_PORT_FREERTOS_NO_TASK_MEMORY,
+    NIMBLE_PORT_FREERTOS_TASK_CREATE_FAILED,
+} nimble_port_freertos_result_t;
+
+nimble_port_freertos_result_t
+nimble_port_freertos_init(TaskFunction_t host_task_fn);
+
+void nimble_port_freertos_stop(void);
 
 #ifdef __cplusplus
 }

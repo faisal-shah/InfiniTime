@@ -29,7 +29,7 @@ namespace Pinetime {
     public:
       ScheduleService(System::SystemTask& systemTask, ScheduleController& scheduleController);
 
-      void Init();
+      int Init();
       int OnCommand(struct ble_gatt_access_ctxt* ctxt);
       void OnDisconnect();
 

@@ -3,7 +3,7 @@
 #include <lvgl/lvgl.h>
 #include <nrf_log.h>
 #include "displayapp/DisplayApp.h"
-#include "displayapp/screens/Symbols.h"
+#include "displayapp/InfiniTimeTheme.h"
 
 using namespace Pinetime::Applications::Screens;
 
@@ -50,16 +50,12 @@ SettingSetDate::SettingSetDate(Pinetime::Controllers::DateTime& dateTimeControll
   : dateTimeController {dateTimeController}, settingSetDateTime {settingSetDateTime} {
 
   lv_obj_t* title = lv_label_create(lv_scr_act(), nullptr);
-  lv_label_set_text_static(title, "Set current date");
+  lv_label_set_recolor(title, true);
+  // Font Awesome clock (U+F017), kept in one static string so the title does
+  // not retain a formatted-text allocation for the lifetime of the screen.
+  lv_label_set_text_static(title, "#FFA500 \xEF\x80\x97# Set current date");
   lv_label_set_align(title, LV_LABEL_ALIGN_CENTER);
-  lv_obj_align(title, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 15, 15);
-
-  lv_obj_t* icon = lv_label_create(lv_scr_act(), nullptr);
-  lv_obj_set_style_local_text_color(icon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_ORANGE);
-
-  lv_label_set_text_static(icon, Symbols::clock);
-  lv_label_set_align(icon, LV_LABEL_ALIGN_CENTER);
-  lv_obj_align(icon, title, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+  lv_obj_align(title, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 0, 15);
 
   dayCounter.SetValueChangedEventCallback(this, ValueChangedHandler);
   dayCounter.Create();
@@ -77,13 +73,19 @@ SettingSetDate::SettingSetDate(Pinetime::Controllers::DateTime& dateTimeControll
   yearCounter.SetValue(dateTimeController.Year());
   lv_obj_align(yearCounter.GetObject(), nullptr, LV_ALIGN_CENTER, POS_X_YEAR, POS_Y_TEXT);
 
-  btnSetTime = lv_btn_create(lv_scr_act(), nullptr);
+  lv_obj_t* btnSetTime = lv_label_create(lv_scr_act(), nullptr);
+  lv_label_set_long_mode(btnSetTime, LV_LABEL_LONG_CROP);
+  lv_label_set_align(btnSetTime, LV_LABEL_ALIGN_CENTER);
+  lv_label_set_text_static(btnSetTime, "Set");
   btnSetTime->user_data = this;
   lv_obj_set_size(btnSetTime, 120, 48);
   lv_obj_align(btnSetTime, lv_scr_act(), LV_ALIGN_IN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_local_bg_color(btnSetTime, LV_BTN_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_MAKE(0x38, 0x38, 0x38));
-  lblSetTime = lv_label_create(btnSetTime, nullptr);
-  lv_label_set_text_static(lblSetTime, "Set");
+  lv_obj_set_style_local_bg_color(btnSetTime, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_MAKE(0x38, 0x38, 0x38));
+  lv_obj_set_style_local_bg_color(btnSetTime, LV_LABEL_PART_MAIN, LV_STATE_PRESSED, Colors::highlight);
+  lv_obj_set_style_local_bg_opa(btnSetTime, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_COVER);
+  lv_obj_set_style_local_radius(btnSetTime, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, 10);
+  lv_obj_set_style_local_pad_top(btnSetTime, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, 12);
+  lv_obj_set_click(btnSetTime, true);
   lv_obj_set_event_cb(btnSetTime, event_handler);
 }
 

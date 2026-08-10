@@ -53,13 +53,19 @@ namespace Pinetime {
       /// than the timeout period to prevent the watchdog from resetting the MCU.
       void Reload();
 
+      // Capture and clear POWER.RESETREAS exactly once. main() calls this
+      // before retained boot diagnostics are initialized; Setup() calls it as
+      // a fallback for other users without destroying the captured reason.
+      ResetReason CaptureResetReason();
+
       /// Returns the reason of the last reset
       ResetReason GetResetReason() const {
         return resetReason;
       }
 
     private:
-      ResetReason resetReason;
+      ResetReason resetReason = ResetReason::HardReset;
+      bool resetReasonCaptured = false;
     };
 
     /// Converts a reset reason to a human readable string

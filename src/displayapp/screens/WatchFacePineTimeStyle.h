@@ -44,6 +44,8 @@ namespace Pinetime {
         void UpdateSelected(lv_obj_t* object, lv_event_t event);
 
       private:
+        enum class MenuMode : uint8_t { Hidden, Launcher, Colors, Options };
+
         uint8_t displayedHour = -1;
         uint8_t displayedMinute = -1;
         uint8_t displayedSecond = -1;
@@ -66,17 +68,8 @@ namespace Pinetime {
         static Pinetime::Controllers::Settings::Colors GetNext(Controllers::Settings::Colors color);
         static Pinetime::Controllers::Settings::Colors GetPrevious(Controllers::Settings::Colors color);
 
-        lv_obj_t* btnNextTime;
-        lv_obj_t* btnPrevTime;
-        lv_obj_t* btnNextBar;
-        lv_obj_t* btnPrevBar;
-        lv_obj_t* btnNextBG;
-        lv_obj_t* btnPrevBG;
-        lv_obj_t* btnReset;
-        lv_obj_t* btnRandom;
-        lv_obj_t* btnClose;
-        lv_obj_t* btnSteps;
-        lv_obj_t* btnWeather;
+        lv_obj_t* menu;
+        MenuMode menuMode = MenuMode::Hidden;
         lv_obj_t* timebar;
         lv_obj_t* sidebar;
         lv_obj_t* timeDD1;
@@ -98,8 +91,6 @@ namespace Pinetime {
         lv_obj_t* calendarCrossBar2;
         lv_obj_t* notificationIcon;
         lv_obj_t* stepGauge;
-        lv_obj_t* btnSetColor;
-        lv_obj_t* btnSetOpts;
         lv_obj_t* stepIcon;
         lv_obj_t* stepValue;
         lv_color_t needle_colors[1];
@@ -115,6 +106,8 @@ namespace Pinetime {
         Controllers::SimpleWeatherService& weatherService;
 
         void SetBatteryIcon();
+        void ShowMenu(MenuMode mode);
+        void HideMenu();
         void CloseMenu();
 
         lv_task_t* taskRefresh;

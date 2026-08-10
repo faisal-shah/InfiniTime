@@ -24,11 +24,12 @@ if(DEFINED ENABLE_WATCHFACES)
 else()
     set(DEFAULT_WATCHFACE_TYPES "WatchFace::Digital")
     set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::Analog")
-    set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::PineTimeStyle")
+    # PineTimeStyle, Infineat, CasioStyleG7710 and Family remain available to
+    # explicit custom builds, but their LVGL object graphs cannot provide the
+    # 3.0.4 modeled heap floor when BLE and background heart-rate allocations
+    # coexist. A persisted selection safely falls back to the first default
+    # face (Digital).
     set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::Terminal")
-    set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::Infineat")
-    set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::CasioStyleG7710")
-    set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::Family")
     set(WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}" CACHE STRING "List of watch faces to build into the firmware")
 endif()
 

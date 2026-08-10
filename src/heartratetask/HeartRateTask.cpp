@@ -88,15 +88,32 @@ HeartRateTask::HeartRateTask(Drivers::Hrs3300& heartRateSensor,
                              Controllers::HeartRateController& controller,
                              Controllers::Settings& settings)
   : heartRateSensor {heartRateSensor}, controller {controller}, settings {settings} {
+  // Registration itself allocates nothing. The task and queue are created only
+  // when heart-rate measurement is first enabled, so the normal clock/BLE boot
+  // does not permanently reserve this optional feature's ~2 KiB heap demand.
+  controller.SetHeartRateTask(this);
 }
 
-void HeartRateTask::Start() {
-  messageQueue = xQueueCreate(10, 1);
-  controller.SetHeartRateTask(this);
-
-  if (pdPASS != xTaskCreate(HeartRateTask::Process, "Heartrate", 500, this, 1, &taskHandle)) {
-    APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+bool HeartRateTask::Start() {
+  if (!sensorAvailable.load(std::memory_order_acquire)) {
+    return false;
   }
+  if (taskHandle.load(std::memory_order_acquire) != nullptr) {
+    return true;
+  }
+  messageQueue = xQueueCreate(10, sizeof(Messages));
+  if (messageQueue == nullptr) {
+    return false;
+  }
+
+  TaskHandle_t createdTask = nullptr;
+  if (pdPASS != xTaskCreate(HeartRateTask::Process, "Heartrate", 500, this, 1, &createdTask)) {
+    vQueueDelete(messageQueue);
+    messageQueue = nullptr;
+    return false;
+  }
+  taskHandle.store(createdTask, std::memory_order_release);
+  return true;
 }
 
 void HeartRateTask::Process(void* instance) {
@@ -165,6 +182,13 @@ void HeartRateTask::Work() {
     }
     state = newState;
 
+    // Disable is complete only in the sensor task. Publishing Stopped here
+    // closes the race where an in-flight sample could otherwise overwrite the
+    // controller's optimistic UI state before this message was consumed.
+    if (state == States::Disabled) {
+      controller.Update(Controllers::HeartRateController::States::Stopped, 0);
+    }
+
     if (state == States::ForegroundMeasuring || state == States::BackgroundMeasuring) {
       HandleSensorData();
       count++;
@@ -172,10 +196,13 @@ void HeartRateTask::Work() {
   }
 }
 
-void HeartRateTask::PushMessage(HeartRateTask::Messages msg) {
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  xQueueSendFromISR(messageQueue, &msg, &xHigherPriorityTaskWoken);
-  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+bool HeartRateTask::PushMessage(HeartRateTask::Messages msg) {
+  if (messageQueue == nullptr) {
+    if (msg != Messages::Enable || !Start()) {
+      return false;
+    }
+  }
+  return xQueueSend(messageQueue, &msg, 0) == pdTRUE;
 }
 
 void HeartRateTask::StartMeasurement() {
@@ -195,6 +222,11 @@ void HeartRateTask::StopMeasurement() {
 
 void HeartRateTask::HandleSensorData() {
   auto sensorData = heartRateSensor.ReadHrsAls();
+  if (!sensorData.isValid) {
+    controller.Update(Controllers::HeartRateController::States::NotEnoughData, 0);
+    valueCurrentlyShown = false;
+    return;
+  }
   int8_t ambient = ppg.Preprocess(sensorData.hrs, sensorData.als);
   int bpm = ppg.HeartRate();
 

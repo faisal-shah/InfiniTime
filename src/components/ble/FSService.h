@@ -22,7 +22,7 @@ namespace Pinetime {
     public:
       FSService(Pinetime::System::SystemTask& systemTask,
                 Pinetime::System::StorageTask& storageTask);
-      void Init();
+      int Init();
 
       int OnFSServiceRequested(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context);
       void NotifyFSRaw(uint16_t connectionHandle);

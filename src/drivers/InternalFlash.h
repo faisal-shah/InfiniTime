@@ -7,6 +7,7 @@ namespace Pinetime {
     class InternalFlash {
     public:
       static void ErasePage(uint32_t address);
+      static uint32_t ReadWord(uint32_t address);
       static void WriteWord(uint32_t address, uint32_t value);
 
     private:

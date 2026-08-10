@@ -13,6 +13,10 @@ bool Spi::Write(const uint8_t* data, size_t size, const std::function<void()>& p
   return spiMaster.Write(pinCsn, data, size, preTransactionHook);
 }
 
+bool Spi::WaitForWriteComplete() {
+  return spiMaster.WaitForWriteComplete();
+}
+
 bool Spi::Read(uint8_t* cmd, size_t cmdSize, uint8_t* data, size_t dataSize) {
   return spiMaster.Read(pinCsn, cmd, cmdSize, data, dataSize);
 }

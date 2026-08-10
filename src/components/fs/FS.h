@@ -12,6 +12,18 @@ namespace Pinetime {
     public:
       FS(Pinetime::Drivers::SpiNorFlash&);
 
+      class ProgressListener {
+      public:
+        virtual ~ProgressListener() = default;
+        // Return false to abort a filesystem operation that is no longer
+        // making acceptable boot progress.
+        virtual bool OnFilesystemProgress() = 0;
+      };
+
+      void SetProgressListener(ProgressListener* value) {
+        progressListener = value;
+      }
+
       // Serializes littlefs access across tasks (littlefs itself is not
       // thread-safe and the lfs_t state is shared). Every public FS method
       // takes it, so single calls need nothing; hold a Lock across a
@@ -70,6 +82,7 @@ namespace Pinetime {
     private:
       Pinetime::Drivers::SpiNorFlash& flashDriver;
       SemaphoreHandle_t mutex = nullptr;
+      StaticSemaphore_t mutexStorage {};
 
       /*
        * External Flash MAP (4 MBytes)
@@ -98,6 +111,7 @@ namespace Pinetime {
       static constexpr size_t blockSize = 4096;
 
       bool resourcesValid = false;
+      ProgressListener* progressListener = nullptr;
       const struct lfs_config lfsConfig;
 
       lfs_t lfs;
@@ -106,6 +120,7 @@ namespace Pinetime {
       static int SectorErase(const struct lfs_config* c, lfs_block_t block);
       static int SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, const void* buffer, lfs_size_t size);
       static int SectorRead(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, void* buffer, lfs_size_t size);
+      bool ReportProgress();
     };
   }
 }

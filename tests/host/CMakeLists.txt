@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(InfiniTimeHostTests LANGUAGES CXX)
+project(InfiniTimeHostTests LANGUAGES C CXX)
 
 include(CTest)
 
@@ -113,6 +113,15 @@ add_infinitime_host_test(
   "${CMAKE_CURRENT_LIST_DIR}/SpiMasterHardeningTest.cpp"
 )
 add_infinitime_host_test(
+  twi_master_test
+  "${CMAKE_CURRENT_LIST_DIR}/TwiMasterTest.cpp"
+  "${INFINITIME_ROOT}/src/drivers/Hrs3300.cpp"
+  "${INFINITIME_ROOT}/src/drivers/TwiMaster.cpp"
+)
+target_include_directories(twi_master_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/twi_stubs"
+)
+add_infinitime_host_test(
   step_recovery_state_test
   "${CMAKE_CURRENT_LIST_DIR}/StepRecoveryStateTest.cpp"
 )
@@ -121,8 +130,23 @@ add_infinitime_host_test(
   "${CMAKE_CURRENT_LIST_DIR}/StorageCoordinatorTest.cpp"
 )
 add_infinitime_host_test(
+  storage_io_test
+  "${CMAKE_CURRENT_LIST_DIR}/StorageIoTest.cpp"
+)
+add_infinitime_host_test(
   storage_recovery_state_test
   "${CMAKE_CURRENT_LIST_DIR}/StorageRecoveryStateTest.cpp"
+)
+add_infinitime_host_test(
+  xorshift32_test
+  "${CMAKE_CURRENT_LIST_DIR}/XorShift32Test.cpp"
+)
+add_infinitime_host_test(
+  simple_weather_test
+  "${CMAKE_CURRENT_LIST_DIR}/SimpleWeatherTest.cpp"
+)
+target_include_directories(simple_weather_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/weather_stubs"
 )
 add_infinitime_host_test(
   task_rules_test
@@ -131,6 +155,11 @@ add_infinitime_host_test(
 add_infinitime_host_test(
   companion_protocol_test
   "${CMAKE_CURRENT_LIST_DIR}/CompanionProtocolTest.cpp"
+)
+add_infinitime_host_test(
+  boot_diagnostics_test
+  "${CMAKE_CURRENT_LIST_DIR}/BootDiagnosticsTest.cpp"
+  "${INFINITIME_ROOT}/src/systemtask/BootDiagnostics.cpp"
 )
 add_infinitime_host_test(
   companion_management_status_test
@@ -148,6 +177,19 @@ add_infinitime_host_test(
   "${INFINITIME_ROOT}/src/components/fs/FamilyStateCodec.cpp"
 )
 add_infinitime_host_test(
+  firmware_validator_test
+  "${CMAKE_CURRENT_LIST_DIR}/FirmwareValidatorTest.cpp"
+)
+add_infinitime_host_test(
+  dfu_image_test
+  "${CMAKE_CURRENT_LIST_DIR}/DfuImageTest.cpp"
+  "${INFINITIME_ROOT}/src/libs/mynewt-nimble/ext/tinycrypt/src/sha256.c"
+  "${INFINITIME_ROOT}/src/libs/mynewt-nimble/ext/tinycrypt/src/utils.c"
+)
+target_include_directories(dfu_image_test SYSTEM PRIVATE
+  "${INFINITIME_ROOT}/src/libs/mynewt-nimble/ext/tinycrypt/include"
+)
+add_infinitime_host_test(
   bond_notice_queue_test
   "${CMAKE_CURRENT_LIST_DIR}/BondNoticeQueueTest.cpp"
 )
@@ -160,6 +202,72 @@ target_include_directories(nimble_bond_store_adapter_api_test SYSTEM PRIVATE
   "${INFINITIME_ROOT}/src/libs/mynewt-nimble/nimble/host/include"
   "${INFINITIME_ROOT}/src/libs/mynewt-nimble/porting/nimble/include"
   "${INFINITIME_ROOT}/src/libs/mynewt-nimble/porting/npl/dummy/include"
+)
+add_infinitime_host_test(
+  nimble_startup_test
+  "${CMAKE_CURRENT_LIST_DIR}/NimbleStartupTest.cpp"
+)
+
+add_infinitime_host_test(
+  static_timer_test
+  "${CMAKE_CURRENT_LIST_DIR}/StaticTimerTest.cpp"
+)
+target_include_directories(static_timer_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/static_timer_stubs"
+)
+
+add_infinitime_host_test(
+  heart_rate_task_startup_test
+  "${CMAKE_CURRENT_LIST_DIR}/HeartRateTaskStartupTest.cpp"
+  "${INFINITIME_ROOT}/src/heartratetask/HeartRateTask.cpp"
+)
+target_include_directories(heart_rate_task_startup_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/heart_rate_task_stubs"
+)
+
+add_infinitime_host_test(
+  heart_rate_controller_test
+  "${CMAKE_CURRENT_LIST_DIR}/HeartRateControllerTest.cpp"
+  "${INFINITIME_ROOT}/src/components/heartrate/HeartRateController.cpp"
+)
+target_include_directories(heart_rate_controller_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/heart_rate_controller_stubs"
+)
+
+function(add_nimble_port_freertos_test target scenario)
+  add_infinitime_host_test(
+    "${target}"
+    "${CMAKE_CURRENT_LIST_DIR}/NimblePortFreertosTest.c"
+    "${INFINITIME_ROOT}/src/libs/mynewt-nimble/porting/npl/freertos/src/nimble_port_freertos.c"
+  )
+  target_include_directories("${target}" BEFORE PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/nimble_port_stubs"
+    "${INFINITIME_ROOT}/src/libs/mynewt-nimble/porting/npl/freertos/include"
+  )
+  target_compile_definitions("${target}" PRIVATE
+    NIMBLE_CFG_CONTROLLER=1
+    NIMBLE_PORT_TEST_SCENARIO=${scenario}
+  )
+endfunction()
+
+add_nimble_port_freertos_test(nimble_port_alloc_failure_test 1)
+add_nimble_port_freertos_test(nimble_port_ll_failure_test 2)
+add_nimble_port_freertos_test(nimble_port_host_failure_test 3)
+add_nimble_port_freertos_test(nimble_port_success_test 4)
+add_nimble_port_freertos_test(nimble_port_invalid_argument_test 5)
+
+add_infinitime_host_test(
+  npl_freertos_liveness_test
+  "${CMAKE_CURRENT_LIST_DIR}/NplFreertosLivenessTest.c"
+  "${INFINITIME_ROOT}/src/libs/mynewt-nimble/porting/npl/freertos/src/npl_os_freertos.c"
+)
+target_include_directories(npl_freertos_liveness_test BEFORE PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/npl_freertos_stubs"
+  "${INFINITIME_ROOT}/src/libs/mynewt-nimble/porting/npl/freertos/include"
+  "${INFINITIME_ROOT}/src/libs/mynewt-nimble/nimble/include"
+)
+target_compile_definitions(npl_freertos_liveness_test PRIVATE
+  NIMBLE_CFG_CONTROLLER=0
 )
 
 set_tests_properties(

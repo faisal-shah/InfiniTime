@@ -15,8 +15,7 @@ namespace {
   }
 }
 
-MultiAlarmController::MultiAlarmController(Controllers::DateTime& dateTimeController,
-                                           System::StorageTask& storageTask)
+MultiAlarmController::MultiAlarmController(Controllers::DateTime& dateTimeController, System::StorageTask& storageTask)
   : dateTimeController {dateTimeController}, storageTask {storageTask} {
 }
 
@@ -39,15 +38,16 @@ void MultiAlarmController::RefreshCache() {
 
 void MultiAlarmController::Init(System::SystemTask* systemTask) {
   this->systemTask = systemTask;
-  alarmTimer = xTimerCreate("MultiAlarm", 1, pdFALSE, this, AlarmTimerCallback);
+  if (!alarmTimer.Create("MultiAlarm", 1, pdFALSE, this, AlarmTimerCallback)) {
+    NRF_LOG_ERROR("[multi-alarm] timer unavailable; alarms disabled");
+  }
   RefreshCache();
   Reschedule();
 }
 
 time_t MultiAlarmController::Now() const {
   auto now = dateTimeController.CurrentDateTime();
-  return std::chrono::system_clock::to_time_t(
-    std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
+  return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
 }
 
 bool MultiAlarmController::AnyEnabled() const {
@@ -60,28 +60,20 @@ bool MultiAlarmController::AnyEnabled() const {
 }
 
 bool MultiAlarmController::BeginCandidate(uint32_t token) {
-  return pendingToken == 0 &&
-         storageTask.BeginFamilyStateMutation(
-           CompanionProtocol::FamilyStateOperation::MultiAlarm,
-           token);
+  return pendingToken == 0 && storageTask.BeginFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, token);
 }
 
 bool MultiAlarmController::SetAlarm(uint8_t index, const Alarm& alarm) {
   if (index >= MaxAlarms) {
     return false;
   }
-  const uint32_t token =
-    Active().alarmVersion == UINT32_MAX ? 1 : Active().alarmVersion + 1;
+  const uint32_t token = Active().alarmVersion == UINT32_MAX ? 1 : Active().alarmVersion + 1;
   if (!BeginCandidate(token)) {
     return false;
   }
-  auto* candidate = storageTask.MutableCandidate(
-    CompanionProtocol::FamilyStateOperation::MultiAlarm,
-    token);
+  auto* candidate = storageTask.MutableCandidate(CompanionProtocol::FamilyStateOperation::MultiAlarm, token);
   if (candidate == nullptr) {
-    storageTask.CancelFamilyStateMutation(
-      CompanionProtocol::FamilyStateOperation::MultiAlarm,
-      token);
+    storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, token);
     return false;
   }
   candidate->alarms[index] = {
@@ -92,9 +84,7 @@ bool MultiAlarmController::SetAlarm(uint8_t index, const Alarm& alarm) {
   };
   candidate->alarmVersion = token;
   pendingToken = token;
-  if (!storageTask.CommitFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::MultiAlarm,
-        token)) {
+  if (!storageTask.CommitFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, token)) {
     pendingToken = 0;
     return false;
   }
@@ -110,25 +100,19 @@ bool MultiAlarmController::SetEnabled(uint8_t index, bool enabled) {
   return SetAlarm(index, alarm);
 }
 
-MultiAlarmController::StageResult MultiAlarmController::StageWire(
-  const uint8_t (&wire)[WireSize]) {
+MultiAlarmController::StageResult MultiAlarmController::StageWire(const uint8_t (&wire)[WireSize]) {
   uint32_t expectedVersion;
   std::memcpy(&expectedVersion, &wire[0], sizeof(expectedVersion));
   if (expectedVersion != Active().alarmVersion) {
     return StageResult::Invalid;
   }
-  const uint32_t token =
-    expectedVersion == UINT32_MAX ? 1 : expectedVersion + 1;
+  const uint32_t token = expectedVersion == UINT32_MAX ? 1 : expectedVersion + 1;
   if (!BeginCandidate(token)) {
     return StageResult::Busy;
   }
-  auto* candidate = storageTask.MutableCandidate(
-    CompanionProtocol::FamilyStateOperation::MultiAlarm,
-    token);
+  auto* candidate = storageTask.MutableCandidate(CompanionProtocol::FamilyStateOperation::MultiAlarm, token);
   if (candidate == nullptr) {
-    storageTask.CancelFamilyStateMutation(
-      CompanionProtocol::FamilyStateOperation::MultiAlarm,
-      token);
+    storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, token);
     return StageResult::Invalid;
   }
   for (uint8_t index = 0; index < MaxAlarms; index++) {
@@ -137,9 +121,7 @@ MultiAlarmController::StageResult MultiAlarmController::StageWire(
     const uint8_t minute = wire[offset + 1];
     const uint8_t mode = wire[offset + 2];
     if (hour > 23 || minute > 59 || mode > 1) {
-      storageTask.CancelFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::MultiAlarm,
-        token);
+      storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, token);
       return StageResult::Invalid;
     }
     candidate->alarms[index] = {
@@ -159,18 +141,14 @@ MultiAlarmController::StageResult MultiAlarmController::StageWire(
 void MultiAlarmController::CommitStagedFromCompanion() {
   if (!stagedValid || stagedExpectedVersion != Active().alarmVersion) {
     if (pendingToken != 0) {
-      storageTask.CancelFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::MultiAlarm,
-        pendingToken);
+      storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, pendingToken);
     }
     stagedValid = false;
     pendingToken = 0;
     return;
   }
   stagedValid = false;
-  if (!storageTask.CommitFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::MultiAlarm,
-        pendingToken)) {
+  if (!storageTask.CommitFamilyStateMutation(CompanionProtocol::FamilyStateOperation::MultiAlarm, pendingToken)) {
     pendingToken = 0;
   }
 }
@@ -202,8 +180,11 @@ void MultiAlarmController::Serialize(uint8_t (&output)[WireSize]) const {
 }
 
 void MultiAlarmController::Reschedule() {
-  xTimerStop(alarmTimer, 0);
   hasNext = false;
+  if (!alarmTimer.IsCreated()) {
+    return;
+  }
+  (void) alarmTimer.Stop();
   const time_t now = Now();
   std::optional<time_t> best;
   for (uint8_t index = 0; index < MaxAlarms; index++) {
@@ -218,20 +199,23 @@ void MultiAlarmController::Reschedule() {
   }
   hasNext = true;
   nextDueTime = *best;
-  ArmTimer(*best - now);
+  if (!ArmTimer(*best - now)) {
+    hasNext = false;
+  }
 }
 
-void MultiAlarmController::ArmTimer(int64_t seconds) {
+bool MultiAlarmController::ArmTimer(int64_t seconds) {
   if (seconds < 1) {
     seconds = 1;
   }
   if (seconds > maxTimerSeconds) {
     seconds = maxTimerSeconds;
   }
-  xTimerChangePeriod(alarmTimer,
-                     static_cast<TickType_t>(seconds) * configTICK_RATE_HZ,
-                     0);
-  xTimerStart(alarmTimer, 0);
+  if (!alarmTimer.ChangePeriod(static_cast<TickType_t>(seconds) * configTICK_RATE_HZ)) {
+    NRF_LOG_WARNING("[multi-alarm] failed to arm timer");
+    return false;
+  }
+  return true;
 }
 
 void MultiAlarmController::TimerFired() {
@@ -240,12 +224,19 @@ void MultiAlarmController::TimerFired() {
   }
   const time_t now = Now();
   if (nextDueTime - now > 60) {
-    ArmTimer(nextDueTime - now);
+    if (!ArmTimer(nextDueTime - now)) {
+      hasNext = false;
+    }
     return;
   }
   lastFiredDue = nextDueTime;
   lastFiredIndex = nextIndex;
-  systemTask->PushMessage(System::Messages::SetOffMultiAlarm);
+  if (systemTask == nullptr || !systemTask->TryPushMessage(System::Messages::SetOffMultiAlarm)) {
+    if (!ArmTimer(1)) {
+      hasNext = false;
+    }
+    return;
+  }
   if (alarmCache[nextIndex].mode == Mode::Daily) {
     Reschedule();
   } else {

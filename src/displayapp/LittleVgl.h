@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <array>
 #include <lvgl/lvgl.h>
 #include "storagetask/StorageTask.h"
 
@@ -23,6 +25,21 @@ namespace Pinetime {
       void Init();
 
       void FlushDisplay(const lv_area_t* area, lv_color_t* color_p);
+      // Force and synchronously complete one whole display refresh. This is the
+      // boot readiness boundary used before optional subsystems may allocate.
+      [[nodiscard]] bool RenderFirstFrame();
+      [[nodiscard]] bool IsDisplayHealthy() const {
+        return !panelCommandFailed.load(std::memory_order_relaxed) &&
+               consecutiveFlushFailures.load(std::memory_order_relaxed) <
+                 MaxConsecutiveFlushFailures;
+      }
+      void MarkDisplayFailure() {
+        // A later successful pixel flush cannot prove that a failed panel
+        // power/display command took effect. Keep this fault sticky so the
+        // liveness watchdog reboots instead of feeding forever behind a black
+        // panel.
+        panelCommandFailed.store(true, std::memory_order_relaxed);
+      }
       bool GetTouchPadInfo(lv_indev_data_t* ptr);
       void SetFullRefresh(FullRefreshDirections direction);
       void SetNewTouchPoint(int16_t x, int16_t y, bool contact);
@@ -46,16 +63,27 @@ namespace Pinetime {
       Pinetime::Drivers::St7789& lcd;
       Pinetime::System::StorageTask& storageTask;
 
-      lv_disp_buf_t disp_buf_2;
-      lv_color_t buf2_1[LV_HOR_RES_MAX * 4];
-      lv_color_t buf2_2[LV_HOR_RES_MAX * 4];
+      lv_disp_buf_t displayBuffer;
+      // Two full-width rows are sufficient for LVGL's partial renderer. The
+      // synchronous SPI flush makes a larger DMA staging buffer unnecessary.
+      lv_color_t drawBuffer[LV_HOR_RES_MAX * 2];
 
       lv_disp_drv_t disp_drv;
 
       bool fullRefresh = false;
-      static constexpr uint8_t nbWriteLines = 4;
+      bool trackingFrame = false;
+      bool frameFlushFailed = false;
+      uint16_t frameFlushCount = 0;
+      static constexpr size_t FrameRowWordCount =
+        (LV_VER_RES_MAX + 31) / 32;
+      std::array<uint32_t, FrameRowWordCount> frameRows {};
+      static constexpr uint8_t MaxConsecutiveFlushFailures = 3;
+      std::atomic<uint8_t> consecutiveFlushFailures {0};
+      std::atomic<bool> panelCommandFailed {false};
+      static constexpr uint8_t nbWriteLines = 2;
       static constexpr uint16_t totalNbLines = 320;
       static constexpr uint16_t visibleNbLines = 240;
+      static_assert(visibleNbLines % nbWriteLines == 0);
 
       static constexpr uint8_t MaxScrollOffset() {
         return LV_VER_RES_MAX - nbWriteLines;

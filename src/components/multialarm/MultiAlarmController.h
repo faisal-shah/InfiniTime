@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <FreeRTOS.h>
 #include <timers.h>
+#include "components/timer/StaticTimer.h"
 #include "components/multialarm/MultiAlarmRules.h"
 #include "components/fs/FamilyState.h"
 
@@ -19,8 +20,10 @@ namespace Pinetime {
     class SystemTask;
     class StorageTask;
   }
+
   namespace Controllers {
     class DateTime;
+
     class MultiAlarmController {
     public:
       static constexpr uint8_t MaxAlarms = 5;
@@ -63,12 +66,15 @@ namespace Pinetime {
       // re-arm. A stale stage is silently dropped.
       void CommitStagedFromCompanion();
       void OnPersisted(uint32_t token, bool success);
+
       bool IsPending() const {
         return pendingToken != 0;
       }
+
       uint32_t CompletionCount() const {
         return completionCount;
       }
+
       bool LastCommitSucceeded() const {
         return lastCommitSucceeded;
       }
@@ -89,7 +95,7 @@ namespace Pinetime {
       static constexpr uint32_t maxTimerSeconds = 24 * 60 * 60;
 
       time_t Now() const;
-      void ArmTimer(int64_t seconds);
+      bool ArmTimer(int64_t seconds);
       const FamilyState& Active() const;
       bool BeginCandidate(uint32_t token);
       void RefreshCache();
@@ -97,7 +103,7 @@ namespace Pinetime {
       Controllers::DateTime& dateTimeController;
       System::StorageTask& storageTask;
       System::SystemTask* systemTask = nullptr;
-      TimerHandle_t alarmTimer {};
+      StaticTimer alarmTimer;
 
       std::array<Alarm, MaxAlarms> alarmCache {};
 

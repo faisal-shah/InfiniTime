@@ -23,6 +23,58 @@
 #include "nimble/nimble_npl.h"
 
 volatile int ble_npl_in_critical = 0;
+static const TickType_t npl_command_timeout = pdMS_TO_TICKS(10);
+static volatile npl_freertos_alloc_failure_t alloc_failure =
+    NPL_FREERTOS_ALLOC_NONE;
+
+static void
+record_alloc_failure(npl_freertos_alloc_failure_t failure)
+{
+    if (alloc_failure == NPL_FREERTOS_ALLOC_NONE) {
+        alloc_failure = failure;
+    }
+}
+
+static TickType_t
+command_timeout(void)
+{
+    /* A positive block time cannot expire with PRIMASK set, and the timer
+     * daemon must never block while trying to enqueue work for itself. */
+    if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING ||
+        ble_npl_hw_is_in_critical() ||
+        xTaskGetCurrentTaskHandle() == xTimerGetTimerDaemonTaskHandle()) {
+        return 0;
+    }
+    return npl_command_timeout;
+}
+
+void
+npl_freertos_reset_alloc_failure(void)
+{
+    alloc_failure = NPL_FREERTOS_ALLOC_NONE;
+}
+
+npl_freertos_alloc_failure_t
+npl_freertos_get_alloc_failure(void)
+{
+    return alloc_failure;
+}
+
+ble_npl_error_t
+npl_freertos_eventq_init(struct ble_npl_eventq *evq)
+{
+    if (evq == NULL) {
+        return BLE_NPL_INVALID_PARAM;
+    }
+
+    evq->q = xQueueCreate(32, sizeof(struct ble_npl_event *));
+    if (evq->q == NULL) {
+        record_alloc_failure(NPL_FREERTOS_ALLOC_EVENT_QUEUE);
+        return BLE_NPL_ENOMEM;
+    }
+
+    return BLE_NPL_OK;
+}
 
 static inline bool
 in_isr(void)
@@ -35,17 +87,25 @@ struct ble_npl_event *
 npl_freertos_eventq_get(struct ble_npl_eventq *evq, ble_npl_time_t tmo)
 {
     struct ble_npl_event *ev = NULL;
-    BaseType_t woken;
+    BaseType_t woken = pdFALSE;
     BaseType_t ret;
 
+    if (evq == NULL || evq->q == NULL) {
+        return NULL;
+    }
+
     if (in_isr()) {
-        assert(tmo == 0);
+        if (tmo != 0) {
+            return NULL;
+        }
         ret = xQueueReceiveFromISR(evq->q, &ev, &woken);
         portYIELD_FROM_ISR(woken);
     } else {
         ret = xQueueReceive(evq->q, &ev, tmo);
     }
-    assert(ret == pdPASS || ret == errQUEUE_EMPTY);
+    if (ret != pdPASS && ret != errQUEUE_EMPTY) {
+        return NULL;
+    }
 
     if (ev) {
         ev->queued = false;
@@ -54,14 +114,18 @@ npl_freertos_eventq_get(struct ble_npl_eventq *evq, ble_npl_time_t tmo)
     return ev;
 }
 
-void
-npl_freertos_eventq_put(struct ble_npl_eventq *evq, struct ble_npl_event *ev)
+static bool
+eventq_put(struct ble_npl_eventq *evq, struct ble_npl_event *ev)
 {
-    BaseType_t woken;
+    BaseType_t woken = pdFALSE;
     BaseType_t ret;
 
+    if (evq == NULL || evq->q == NULL || ev == NULL) {
+        return false;
+    }
+
     if (ev->queued) {
-        return;
+        return true;
     }
 
     ev->queued = true;
@@ -70,10 +134,27 @@ npl_freertos_eventq_put(struct ble_npl_eventq *evq, struct ble_npl_event *ev)
         ret = xQueueSendToBackFromISR(evq->q, &ev, &woken);
         portYIELD_FROM_ISR(woken);
     } else {
-        ret = xQueueSendToBack(evq->q, &ev, portMAX_DELAY);
+        /*
+         * The timer daemon posts expired callouts to this queue.  Waiting
+         * forever here can deadlock it against a host task that is itself
+         * waiting for room on the timer-command queue.  Failure leaves the
+         * event unqueued so a producer can retry; it must never freeze the
+         * application watchdog feeder.
+         */
+        ret = xQueueSendToBack(evq->q, &ev, command_timeout());
     }
 
-    assert(ret == pdPASS);
+    if (ret != pdPASS) {
+        ev->queued = false;
+        return false;
+    }
+    return true;
+}
+
+void
+npl_freertos_eventq_put(struct ble_npl_eventq *evq, struct ble_npl_event *ev)
+{
+    (void)eventq_put(evq, ev);
 }
 
 void
@@ -86,7 +167,7 @@ npl_freertos_eventq_remove(struct ble_npl_eventq *evq,
     int count;
     BaseType_t woken, woken2;
 
-    if (!ev->queued) {
+    if (evq == NULL || evq->q == NULL || ev == NULL || !ev->queued) {
         return;
     }
 
@@ -102,16 +183,23 @@ npl_freertos_eventq_remove(struct ble_npl_eventq *evq,
 
         count = uxQueueMessagesWaitingFromISR(evq->q);
         for (i = 0; i < count; i++) {
+            woken2 = pdFALSE;
             ret = xQueueReceiveFromISR(evq->q, &tmp_ev, &woken2);
-            assert(ret == pdPASS);
+            if (ret != pdPASS) {
+                break;
+            }
             woken |= woken2;
 
             if (tmp_ev == ev) {
                 continue;
             }
 
+            woken2 = pdFALSE;
             ret = xQueueSendToBackFromISR(evq->q, &tmp_ev, &woken2);
-            assert(ret == pdPASS);
+            if (ret != pdPASS) {
+                tmp_ev->queued = false;
+                break;
+            }
             woken |= woken2;
         }
 
@@ -122,14 +210,19 @@ npl_freertos_eventq_remove(struct ble_npl_eventq *evq,
         count = uxQueueMessagesWaiting(evq->q);
         for (i = 0; i < count; i++) {
             ret = xQueueReceive(evq->q, &tmp_ev, 0);
-            assert(ret == pdPASS);
+            if (ret != pdPASS) {
+                break;
+            }
 
             if (tmp_ev == ev) {
                 continue;
             }
 
             ret = xQueueSendToBack(evq->q, &tmp_ev, 0);
-            assert(ret == pdPASS);
+            if (ret != pdPASS) {
+                tmp_ev->queued = false;
+                break;
+            }
         }
 
         vPortExitCritical();
@@ -146,7 +239,10 @@ npl_freertos_mutex_init(struct ble_npl_mutex *mu)
     }
 
     mu->handle = xSemaphoreCreateRecursiveMutex();
-    assert(mu->handle);
+    if (mu->handle == NULL) {
+        record_alloc_failure(NPL_FREERTOS_ALLOC_MUTEX);
+        return BLE_NPL_ENOMEM;
+    }
 
     return BLE_NPL_OK;
 }
@@ -159,15 +255,14 @@ npl_freertos_mutex_pend(struct ble_npl_mutex *mu, ble_npl_time_t timeout)
     if (!mu) {
         return BLE_NPL_INVALID_PARAM;
     }
-
-    assert(mu->handle);
+    if (mu->handle == NULL) {
+        return BLE_NPL_ENOMEM;
+    }
 
     if (in_isr()) {
-        ret = pdFAIL;
-        assert(0);
-    } else {
-        ret = xSemaphoreTakeRecursive(mu->handle, timeout);
+        return BLE_NPL_ERROR;
     }
+    ret = xSemaphoreTakeRecursive(mu->handle, timeout);
 
     return ret == pdPASS ? BLE_NPL_OK : BLE_NPL_TIMEOUT;
 }
@@ -178,15 +273,15 @@ npl_freertos_mutex_release(struct ble_npl_mutex *mu)
     if (!mu) {
         return BLE_NPL_INVALID_PARAM;
     }
-
-    assert(mu->handle);
+    if (mu->handle == NULL) {
+        return BLE_NPL_ENOMEM;
+    }
 
     if (in_isr()) {
-        assert(0);
-    } else {
-        if (xSemaphoreGiveRecursive(mu->handle) != pdPASS) {
-            return BLE_NPL_BAD_MUTEX;
-        }
+        return BLE_NPL_ERROR;
+    }
+    if (xSemaphoreGiveRecursive(mu->handle) != pdPASS) {
+        return BLE_NPL_BAD_MUTEX;
     }
 
     return BLE_NPL_OK;
@@ -195,12 +290,15 @@ npl_freertos_mutex_release(struct ble_npl_mutex *mu)
 ble_npl_error_t
 npl_freertos_sem_init(struct ble_npl_sem *sem, uint16_t tokens)
 {
-    if (!sem) {
+    if (!sem || tokens > 128) {
         return BLE_NPL_INVALID_PARAM;
     }
 
     sem->handle = xSemaphoreCreateCounting(128, tokens);
-    assert(sem->handle);
+    if (sem->handle == NULL) {
+        record_alloc_failure(NPL_FREERTOS_ALLOC_SEMAPHORE);
+        return BLE_NPL_ENOMEM;
+    }
 
     return BLE_NPL_OK;
 }
@@ -208,17 +306,21 @@ npl_freertos_sem_init(struct ble_npl_sem *sem, uint16_t tokens)
 ble_npl_error_t
 npl_freertos_sem_pend(struct ble_npl_sem *sem, ble_npl_time_t timeout)
 {
-    BaseType_t woken;
+    BaseType_t woken = pdFALSE;
     BaseType_t ret;
 
     if (!sem) {
         return BLE_NPL_INVALID_PARAM;
     }
 
-    assert(sem->handle);
+    if (sem->handle == NULL) {
+        return BLE_NPL_ENOMEM;
+    }
 
     if (in_isr()) {
-        assert(timeout == 0);
+        if (timeout != 0) {
+            return BLE_NPL_INVALID_PARAM;
+        }
         ret = xSemaphoreTakeFromISR(sem->handle, &woken);
         portYIELD_FROM_ISR(woken);
     } else {
@@ -232,13 +334,15 @@ ble_npl_error_t
 npl_freertos_sem_release(struct ble_npl_sem *sem)
 {
     BaseType_t ret;
-    BaseType_t woken;
+    BaseType_t woken = pdFALSE;
 
     if (!sem) {
         return BLE_NPL_INVALID_PARAM;
     }
 
-    assert(sem->handle);
+    if (sem->handle == NULL) {
+        return BLE_NPL_ENOMEM;
+    }
 
     if (in_isr()) {
         ret = xSemaphoreGiveFromISR(sem->handle, &woken);
@@ -247,8 +351,7 @@ npl_freertos_sem_release(struct ble_npl_sem *sem)
         ret = xSemaphoreGive(sem->handle);
     }
 
-    assert(ret == pdPASS);
-    return BLE_NPL_OK;
+    return ret == pdPASS ? BLE_NPL_OK : BLE_NPL_ERROR;
 }
 
 static void
@@ -257,34 +360,51 @@ os_callout_timer_cb(TimerHandle_t timer)
     struct ble_npl_callout *co;
 
     co = pvTimerGetTimerID(timer);
-    assert(co);
+    if (co == NULL || co->ev.fn == NULL) {
+        return;
+    }
 
     if (co->evq) {
-        ble_npl_eventq_put(co->evq, &co->ev);
+        if (!eventq_put(co->evq, &co->ev)) {
+            /* The timer daemon must not block on the host queue. Retry the
+             * one-shot callout one tick later; a saturated timer-command queue
+             * may still reject this best-effort rearm, but cannot deadlock. */
+            (void)xTimerChangePeriod(timer, 1, 0);
+        }
     } else {
         co->ev.fn(&co->ev);
     }
 }
 
-void
+ble_npl_error_t
 npl_freertos_callout_init(struct ble_npl_callout *co, struct ble_npl_eventq *evq,
                      ble_npl_event_fn *ev_cb, void *ev_arg)
 {
-  if(co->handle == NULL) {
-    memset(co, 0, sizeof(*co));
-    co->handle = xTimerCreate("co", 1, pdFALSE, co, os_callout_timer_cb);
-  }
+    if (co == NULL || ev_cb == NULL) {
+        return BLE_NPL_INVALID_PARAM;
+    }
+
+    if (co->handle == NULL) {
+        memset(co, 0, sizeof(*co));
+        co->handle = xTimerCreate("co", 1, pdFALSE, co, os_callout_timer_cb);
+        if (co->handle == NULL) {
+            record_alloc_failure(NPL_FREERTOS_ALLOC_CALLOUT);
+        }
+    }
     co->evq = evq;
     ble_npl_event_init(&co->ev, ev_cb, ev_arg);
+
+    return co->handle == NULL ? BLE_NPL_ENOMEM : BLE_NPL_OK;
 }
 
 ble_npl_error_t
 npl_freertos_callout_reset(struct ble_npl_callout *co, ble_npl_time_t ticks)
 {
-    BaseType_t woken1, woken2, woken3;
+    BaseType_t woken = pdFALSE;
+    BaseType_t result;
 
-    if (ticks < 0) {
-        return BLE_NPL_INVALID_PARAM;
+    if (co == NULL || co->handle == NULL) {
+        return BLE_NPL_ENOMEM;
     }
 
     if (ticks == 0) {
@@ -292,18 +412,37 @@ npl_freertos_callout_reset(struct ble_npl_callout *co, ble_npl_time_t ticks)
     }
 
     if (in_isr()) {
-        xTimerStopFromISR(co->handle, &woken1);
-        xTimerChangePeriodFromISR(co->handle, ticks, &woken2);
-        xTimerResetFromISR(co->handle, &woken3);
-
-        portYIELD_FROM_ISR(woken1 || woken2 || woken3);
+        result = xTimerChangePeriodFromISR(co->handle, ticks, &woken);
+        portYIELD_FROM_ISR(woken);
     } else {
-        xTimerStop(co->handle, portMAX_DELAY);
-        xTimerChangePeriod(co->handle, ticks, portMAX_DELAY);
-        xTimerReset(co->handle, portMAX_DELAY);
+        /* xTimerChangePeriod starts a dormant timer and restarts an active
+         * one. One bounded command is both atomic and sufficient; the old
+         * Stop+ChangePeriod+Reset sequence tripled queue pressure and could
+         * participate in a circular timer/event-queue deadlock. */
+        result = xTimerChangePeriod(co->handle, ticks, command_timeout());
     }
 
-    return BLE_NPL_OK;
+    return result == pdPASS ? BLE_NPL_OK : BLE_NPL_ERROR;
+}
+
+ble_npl_error_t
+npl_freertos_callout_stop(struct ble_npl_callout *co)
+{
+    BaseType_t result;
+    BaseType_t woken = pdFALSE;
+
+    if (co == NULL || co->handle == NULL) {
+        return BLE_NPL_INVALID_PARAM;
+    }
+
+    if (in_isr()) {
+        result = xTimerStopFromISR(co->handle, &woken);
+        portYIELD_FROM_ISR(woken);
+    } else {
+        result = xTimerStop(co->handle, command_timeout());
+    }
+
+    return result == pdPASS ? BLE_NPL_OK : BLE_NPL_ERROR;
 }
 
 ble_npl_time_t
@@ -312,6 +451,10 @@ npl_freertos_callout_remaining_ticks(struct ble_npl_callout *co,
 {
     ble_npl_time_t rt;
     uint32_t exp;
+
+    if (co == NULL || co->handle == NULL) {
+        return 0;
+    }
 
     exp = xTimerGetExpiryTime(co->handle);
 
@@ -329,6 +472,10 @@ npl_freertos_time_ms_to_ticks(uint32_t ms, ble_npl_time_t *out_ticks)
 {
     uint64_t ticks;
 
+    if (out_ticks == NULL) {
+        return BLE_NPL_INVALID_PARAM;
+    }
+
     ticks = ((uint64_t)ms * configTICK_RATE_HZ) / 1000;
     if (ticks > UINT32_MAX) {
         return BLE_NPL_EINVAL;
@@ -336,13 +483,17 @@ npl_freertos_time_ms_to_ticks(uint32_t ms, ble_npl_time_t *out_ticks)
 
     *out_ticks = ticks;
 
-    return 0;
+    return BLE_NPL_OK;
 }
 
 ble_npl_error_t
 npl_freertos_time_ticks_to_ms(ble_npl_time_t ticks, uint32_t *out_ms)
 {
     uint64_t ms;
+
+    if (out_ms == NULL) {
+        return BLE_NPL_INVALID_PARAM;
+    }
 
     ms = ((uint64_t)ticks * 1000) / configTICK_RATE_HZ;
     if (ms > UINT32_MAX) {
@@ -351,5 +502,5 @@ npl_freertos_time_ticks_to_ms(ble_npl_time_t ticks, uint32_t *out_ms)
 
     *out_ms = ms;
 
-    return 0;
+    return BLE_NPL_OK;
 }

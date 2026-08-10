@@ -17,14 +17,9 @@ void StatusIcons::Create() {
   lv_obj_set_style_local_pad_inner(container, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 5);
   lv_obj_set_style_local_bg_opa(container, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_TRANSP);
 
-  bleIcon = lv_label_create(container, nullptr);
-  lv_label_set_text_static(bleIcon, Screens::Symbols::bluetooth);
-
-  batteryPlug = lv_label_create(container, nullptr);
-  lv_label_set_text_static(batteryPlug, Screens::Symbols::plug);
-
-  alarmIcon = lv_label_create(container, nullptr);
-  lv_label_set_text_static(alarmIcon, Screens::Symbols::bell);
+  statusIcon = lv_label_create(container, nullptr);
+  lv_label_set_text_static(statusIcon, "");
+  lv_obj_set_hidden(statusIcon, true);
 
   batteryIcon.Create(container);
 
@@ -33,10 +28,6 @@ void StatusIcons::Create() {
 
 void StatusIcons::Update() {
   powerPresent = batteryController.IsPowerPresent();
-  if (powerPresent.IsUpdated()) {
-    lv_obj_set_hidden(batteryPlug, !powerPresent.Get());
-  }
-
   batteryPercentRemaining = batteryController.PercentRemaining();
   if (batteryPercentRemaining.IsUpdated()) {
     auto batteryPercent = batteryPercentRemaining.Get();
@@ -44,14 +35,25 @@ void StatusIcons::Update() {
   }
 
   alarmEnabled = multiAlarmController.AnyEnabled();
-  if (alarmEnabled.IsUpdated()) {
-    lv_obj_set_hidden(alarmIcon, !alarmEnabled.Get());
-  }
-
   bleState = bleController.IsConnected();
   bleRadioEnabled = bleController.IsRadioEnabled();
-  if (bleState.IsUpdated() || bleRadioEnabled.IsUpdated()) {
-    lv_obj_set_hidden(bleIcon, !bleState.Get());
+
+  const bool powerChanged = powerPresent.IsUpdated();
+  const bool alarmChanged = alarmEnabled.IsUpdated();
+  const bool bleChanged = bleState.IsUpdated();
+  const bool radioChanged = bleRadioEnabled.IsUpdated();
+  if (powerChanged || alarmChanged || bleChanged || radioChanged) {
+    const bool showBle = bleState.Get();
+    const bool showPlug = powerPresent.Get();
+    const bool showAlarm = alarmEnabled.Get();
+    lv_label_set_text_fmt(statusIcon,
+                          "%s%s%s%s%s",
+                          showBle ? Screens::Symbols::bluetooth : "",
+                          showBle && (showPlug || showAlarm) ? " " : "",
+                          showPlug ? Screens::Symbols::plug : "",
+                          showPlug && showAlarm ? " " : "",
+                          showAlarm ? Screens::Symbols::bell : "");
+    lv_obj_set_hidden(statusIcon, !showBle && !showPlug && !showAlarm);
   }
 
   lv_obj_realign(container);

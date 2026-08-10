@@ -28,7 +28,7 @@ namespace Pinetime {
     public:
       explicit CompanionManagementService(const CompanionStatusProvider& statusProvider);
 
-      void Init();
+      int Init();
       int OnAccess(uint16_t attrHandle, struct ble_gatt_access_ctxt* ctxt);
 
     private:

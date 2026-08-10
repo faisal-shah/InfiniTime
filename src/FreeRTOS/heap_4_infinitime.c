@@ -331,6 +331,43 @@ size_t xPortGetHeapSize( void )
 }
 /*-----------------------------------------------------------*/
 
+size_t xPortGetLargestFreeBlockSize( void )
+{
+ BlockLink_t *pxBlock;
+ size_t xLargestBlockSize = 0U;
+
+ vTaskSuspendAll();
+ {
+   if( pxEnd == NULL )
+   {
+     prvHeapInit();
+   }
+
+   for( pxBlock = xStart.pxNextFreeBlock; pxBlock != pxEnd; pxBlock = pxBlock->pxNextFreeBlock )
+   {
+     if( pxBlock->xBlockSize > xLargestBlockSize )
+     {
+       xLargestBlockSize = pxBlock->xBlockSize;
+     }
+   }
+ }
+ ( void ) xTaskResumeAll();
+
+ /* Report the largest request heap_4 can satisfy, excluding its per-block
+ metadata.  All block sizes and xHeapStructSize are byte aligned. */
+ if( xLargestBlockSize > xHeapStructSize )
+ {
+   xLargestBlockSize -= xHeapStructSize;
+ }
+ else
+ {
+   xLargestBlockSize = 0U;
+ }
+
+ return xLargestBlockSize;
+}
+/*-----------------------------------------------------------*/
+
 void vPortInitialiseBlocks( void )
 {
  /* This just exists to keep the linker quiet. */

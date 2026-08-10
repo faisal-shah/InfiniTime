@@ -47,13 +47,9 @@ ImmediateAlertService::ImmediateAlertService(Pinetime::System::SystemTask& syste
     } {
 }
 
-void ImmediateAlertService::Init() {
-  int res = 0;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int ImmediateAlertService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int ImmediateAlertService::OnAlertLevelChanged(uint16_t attributeHandle, ble_gatt_access_ctxt* context) {

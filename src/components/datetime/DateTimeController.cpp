@@ -26,9 +26,7 @@ namespace {
 }
 
 DateTime::DateTime(Controllers::Settings& settingsController) : settingsController {settingsController} {
-  mutex = xSemaphoreCreateMutex();
-  ASSERT(mutex != nullptr);
-  xSemaphoreGive(mutex);
+  mutex = xSemaphoreCreateMutexStatic(&mutexStorage);
 
   // __DATE__ is a string of the format "MMM DD YYYY", so an offset of 7 gives the start of the year
   SetTime(compileTimeAtoi(&__DATE__[7]), 1, 1, 0, 0, 0);

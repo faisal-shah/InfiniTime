@@ -45,7 +45,7 @@ namespace {
   }
 
   /// Returns the reset reason provided by the POWER subsystem
-  Watchdog::ResetReason GetResetReason() {
+  Watchdog::ResetReason ReadAndClearResetReason() {
     /* NRF_POWER->RESETREAS
      * -------------------------------------------------------------------------------------------------------------------- *
      * Bit | Reason (if bit is set to 1)
@@ -111,7 +111,15 @@ void Watchdog::Setup(uint8_t timeoutSeconds, SleepBehaviour sleepBehaviour, Halt
   SetTimeout(timeoutSeconds);
   EnableFirstReloadRegister();
 
-  resetReason = ::GetResetReason();
+  CaptureResetReason();
+}
+
+Watchdog::ResetReason Watchdog::CaptureResetReason() {
+  if (!resetReasonCaptured) {
+    resetReason = ReadAndClearResetReason();
+    resetReasonCaptured = true;
+  }
+  return resetReason;
 }
 
 void Watchdog::Start() {

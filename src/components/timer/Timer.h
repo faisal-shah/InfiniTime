@@ -28,7 +28,8 @@ namespace Pinetime {
       void ResetExpiredTime();
 
     private:
-      TimerHandle_t timer;
+      TimerHandle_t timer {};
+      StaticTimer_t timerBuffer {};
       TickType_t expiry;
       bool triggered = false;
     };

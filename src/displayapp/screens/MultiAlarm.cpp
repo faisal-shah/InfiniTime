@@ -18,9 +18,11 @@ namespace {
   void rowEventHandler(lv_obj_t* obj, lv_event_t event) {
     static_cast<MultiAlarm*>(obj->user_data)->OnRowEvent(obj, event);
   }
+
   void editorEventHandler(lv_obj_t* obj, lv_event_t event) {
     static_cast<MultiAlarm*>(obj->user_data)->OnEditorEvent(obj, event);
   }
+
   void saveRefreshTask(lv_task_t* task) {
     static_cast<MultiAlarm*>(task->user_data)->RefreshSave();
   }
@@ -51,6 +53,14 @@ void MultiAlarm::ShowList() {
   lv_obj_set_style_local_border_width(listContainer, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 0);
   lv_obj_align(listContainer, nullptr, LV_ALIGN_IN_TOP_LEFT, 0, 0);
 
+  // The normal font is 23 pixels high, exactly half the 46-pixel row pitch.
+  // One two-line label can therefore own every row's AM/PM + mode column at
+  // the same coordinates as five independent labels, while returning nearly
+  // a kilobyte of physical heap.
+  rowDetails = lv_label_create(listContainer, nullptr);
+  lv_label_set_align(rowDetails, LV_LABEL_ALIGN_RIGHT);
+  lv_obj_set_style_local_text_color(rowDetails, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_GRAY);
+
   for (uint8_t i = 0; i < MaxAlarms; i++) {
     const auto& alarm = multiAlarmController.Get(i);
     const int16_t y = RowY(i);
@@ -73,29 +83,49 @@ void MultiAlarm::ShowList() {
     lv_obj_set_click(rowTime[i], true);
     lv_obj_set_event_cb(rowTime[i], rowEventHandler);
 
-    // Right-hand column: AM/PM (12h only) stacked over Daily/Once. The big time
-    // font carries no letters, so the suffix has to live in its own label.
-    rowMode[i] = lv_label_create(listContainer, nullptr);
-    lv_label_set_align(rowMode[i], LV_LABEL_ALIGN_RIGHT);
-    lv_obj_set_style_local_text_color(rowMode[i], LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_GRAY);
-
-    SetRowText(i, alarm);
+    SetRowTime(i, alarm);
   }
+  SetRowDetails();
 }
 
-void MultiAlarm::SetRowText(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm) {
+void MultiAlarm::SetRowTime(uint8_t i, const Controllers::MultiAlarmController::Alarm& alarm) {
   const char* suffix;
   const uint8_t shown = SplitHour(alarm.hour, settingsController.GetClockType(), &suffix);
   // 12h drops the leading zero ("9:05"); 24h keeps it ("09:05").
   lv_label_set_text_fmt(rowTime[i], suffix != nullptr ? "%d:%02d" : "%02d:%02d", shown, alarm.minute);
+}
 
-  const char* mode = alarm.mode == Mode::Daily ? "Daily" : "Once";
-  if (suffix != nullptr) {
-    lv_label_set_text_fmt(rowMode[i], "%s\n%s", suffix, mode);
-  } else {
-    lv_label_set_text_fmt(rowMode[i], "%s", mode);
+void MultiAlarm::SetRowDetails() {
+  char details[48];
+  static_assert(MaxAlarms * 9 < sizeof(details));
+  char* output = details;
+  const bool twelveHour = settingsController.GetClockType() == Controllers::Settings::ClockType::H12;
+
+  const auto append = [&output](const char* text) {
+    while (*text != '\0') {
+      *output++ = *text++;
+    }
+  };
+
+  for (uint8_t i = 0; i < MaxAlarms; i++) {
+    const auto& alarm = multiAlarmController.Get(i);
+    const char* suffix;
+    (void) SplitHour(alarm.hour, settingsController.GetClockType(), &suffix);
+    if (twelveHour) {
+      append(suffix);
+    }
+    *output++ = '\n';
+    append(alarm.mode == Mode::Daily ? "Daily" : "Once");
+    if (i + 1 < MaxAlarms) {
+      *output++ = '\n';
+    }
   }
-  lv_obj_align(rowMode[i], nullptr, LV_ALIGN_IN_TOP_RIGHT, -6, RowY(i) + (suffix != nullptr ? 2 : 12));
+  *output = '\0';
+
+  lv_label_set_text(rowDetails, details);
+  constexpr int16_t normalFontHeight = 23;
+  const int16_t y = twelveHour ? RowY(0) + 2 : RowY(0) + 12 - normalFontHeight;
+  lv_obj_align(rowDetails, nullptr, LV_ALIGN_IN_TOP_RIGHT, -6, y);
 }
 
 void MultiAlarm::OnRowEvent(lv_obj_t* obj, lv_event_t event) {
@@ -245,8 +275,7 @@ void MultiAlarm::ShowSaveFailed() {
 }
 
 void MultiAlarm::RefreshSave() {
-  if (multiAlarmController.IsPending() ||
-      multiAlarmController.CompletionCount() == completionAtSave) {
+  if (multiAlarmController.IsPending() || multiAlarmController.CompletionCount() == completionAtSave) {
     return;
   }
   lv_task_del(saveTask);

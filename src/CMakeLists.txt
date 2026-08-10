@@ -92,6 +92,7 @@ set(TINYCRYPT_SRC
         libs/mynewt-nimble/ext/tinycrypt/src/cmac_mode.c
         libs/mynewt-nimble/ext/tinycrypt/src/ecc.c
         libs/mynewt-nimble/ext/tinycrypt/src/ecc_dh.c
+        libs/mynewt-nimble/ext/tinycrypt/src/sha256.c
         )
 
 set(NIMBLE_SRC
@@ -521,6 +522,7 @@ list(APPEND SOURCE_FILES
 
         systemtask/SystemTask.cpp
         systemtask/SystemMonitor.cpp
+        systemtask/BootDiagnostics.cpp
         systemtask/WakeLock.cpp
         storagetask/StorageTask.cpp
         drivers/TwiMaster.cpp
@@ -610,6 +612,7 @@ list(APPEND RECOVERY_SOURCE_FILES
 
         systemtask/SystemTask.cpp
         systemtask/SystemMonitor.cpp
+        systemtask/BootDiagnostics.cpp
         systemtask/WakeLock.cpp
         storagetask/StorageTask.cpp
         drivers/TwiMaster.cpp
@@ -629,6 +632,9 @@ list(APPEND RECOVERY_SOURCE_FILES
 list(APPEND RECOVERYLOADER_SOURCE_FILES
         stdlib.c
         FreeRTOS/heap_4_infinitime.c
+
+        libs/mynewt-nimble/ext/tinycrypt/src/sha256.c
+        libs/mynewt-nimble/ext/tinycrypt/src/utils.c
 
         # FreeRTOS
         FreeRTOS/port.c
@@ -719,8 +725,10 @@ set(INCLUDE_FILES
         components/ble/BleClient.h
         components/ble/HeartRateService.h
         components/ble/MotionService.h
+        components/ble/SimpleWeatherMessage.h
         components/ble/SimpleWeatherService.h
         components/settings/Settings.h
+        components/timer/StaticTimer.h
         components/timer/Timer.h
         components/stopwatch/StopWatchController.h
         components/multialarm/MultiAlarmController.h
@@ -857,6 +865,9 @@ add_definitions(-DFREERTOS)
 add_definitions(-D__STACK_SIZE=1024)
 add_definitions(-D__HEAP_SIZE=0)
 add_definitions(-DMYNEWT_VAL_BLE_LL_RFMGMT_ENABLE_TIME=1500)
+# The application registers its complete GATT database before creating either
+# NimBLE task, then calls ble_hs_start() from the checked host entry point.
+add_definitions(-DMYNEWT_VAL_BLE_HS_AUTO_START=0)
 
 # BLE bond-store capacity is owned by protocol/companion.json and emitted into
 # src/generated/CompanionProtocol.cmake. NimBLE's compile-time sizing and the
@@ -1071,8 +1082,8 @@ add_custom_command(TARGET ${EXECUTABLE_MCUBOOT_NAME}
         COMMAND ${CMAKE_SIZE_UTIL} ${EXECUTABLE_MCUBOOT_FILE_NAME}.out
         COMMAND ${CMAKE_OBJCOPY} -O binary ${EXECUTABLE_MCUBOOT_FILE_NAME}.out "${EXECUTABLE_MCUBOOT_FILE_NAME}.bin"
         COMMAND ${CMAKE_OBJCOPY} -O ihex ${EXECUTABLE_MCUBOOT_FILE_NAME}.out "${EXECUTABLE_MCUBOOT_FILE_NAME}.hex"
-        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version 1.0.0 --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_MCUBOOT_FILE_NAME}.hex ${IMAGE_MCUBOOT_FILE_NAME_HEX}
-        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version 1.0.0 --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_MCUBOOT_FILE_NAME}.bin ${IMAGE_MCUBOOT_FILE_NAME_BIN}
+        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version ${pinetime_VERSION} --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_MCUBOOT_FILE_NAME}.hex ${IMAGE_MCUBOOT_FILE_NAME_HEX}
+        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version ${pinetime_VERSION} --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_MCUBOOT_FILE_NAME}.bin ${IMAGE_MCUBOOT_FILE_NAME_BIN}
         COMMENT "post build steps for ${EXECUTABLE_MCUBOOT_FILE_NAME}"
         )
 
@@ -1138,15 +1149,16 @@ target_compile_options(${EXECUTABLE_RECOVERY_MCUBOOT_NAME} PUBLIC
 
 set_target_properties(${EXECUTABLE_RECOVERY_MCUBOOT_NAME} PROPERTIES
         SUFFIX ".out"
-        LINK_FLAGS "-mthumb -mabi=aapcs -L ${NRF5_SDK_PATH}/modules/nrfx/mdk -T${NRF5_LINKER_SCRIPT_MCUBOOT} --specs=nosys.specs -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -Wl,--gc-sections -Wl,--print-memory-usage --specs=nano.specs -Wl,-Map=${EXECUTABLE_GRAPHICS_FILE_NAME}.map"
+        LINK_FLAGS "-mthumb -mabi=aapcs -L ${NRF5_SDK_PATH}/modules/nrfx/mdk -T${NRF5_LINKER_SCRIPT_MCUBOOT} --specs=nosys.specs -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -Wl,--gc-sections -Wl,--print-memory-usage --specs=nano.specs -Wl,-Map=${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.map"
         )
 
 add_custom_command(TARGET ${EXECUTABLE_RECOVERY_MCUBOOT_NAME}
         POST_BUILD
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/recoveryImage.h
         COMMAND ${CMAKE_SIZE_UTIL} ${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.out
         COMMAND ${CMAKE_OBJCOPY} -O binary ${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.out "${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.bin"
         COMMAND ${CMAKE_OBJCOPY} -O ihex ${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.out "${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.hex"
-        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version 1.0.0 --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.hex ${IMAGE_RECOVERY_MCUBOOT_FILE_NAME_HEX}
+        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version ${pinetime_VERSION} --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}.hex ${IMAGE_RECOVERY_MCUBOOT_FILE_NAME_HEX}
         COMMAND ${CMAKE_OBJCOPY} -I ihex -O binary ${IMAGE_RECOVERY_MCUBOOT_FILE_NAME_HEX} "${IMAGE_RECOVERY_MCUBOOT_FILE_NAME}.bin"
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/bin2c.py ${IMAGE_RECOVERY_MCUBOOT_FILE_NAME}.bin recoveryImage > recoveryImage.h
         COMMENT "post build steps for ${EXECUTABLE_RECOVERY_MCUBOOT_FILE_NAME}"
@@ -1221,10 +1233,11 @@ set_target_properties(${EXECUTABLE_MCUBOOT_RECOVERYLOADER_NAME} PROPERTIES
 
 add_custom_command(TARGET ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_NAME}
         POST_BUILD
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/recoveryLoaderImage.h
         COMMAND ${CMAKE_SIZE_UTIL} ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.out
         COMMAND ${CMAKE_OBJCOPY} -O binary ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.out "${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.bin"
         COMMAND ${CMAKE_OBJCOPY} -O ihex ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.out "${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.hex"
-        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version 1.0.0 --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.hex ${IMAGE_MCUBOOT_RECOVERYLOADER_FILE_NAME_HEX}
+        COMMAND ${CMAKE_SOURCE_DIR}/tools/mcuboot/imgtool.py create --align 1 --version ${pinetime_VERSION} --header-size 32 --slot-size 475136 --pad-header ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.hex ${IMAGE_MCUBOOT_RECOVERYLOADER_FILE_NAME_HEX}
         COMMAND ${CMAKE_OBJCOPY} -I ihex -O binary ${IMAGE_MCUBOOT_RECOVERYLOADER_FILE_NAME_HEX} "${IMAGE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.bin"
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/bin2c.py ${IMAGE_MCUBOOT_RECOVERYLOADER_FILE_NAME}.bin recoveryLoaderImage > recoveryLoaderImage.h
         COMMENT "post build steps for ${EXECUTABLE_MCUBOOT_RECOVERYLOADER_FILE_NAME}"

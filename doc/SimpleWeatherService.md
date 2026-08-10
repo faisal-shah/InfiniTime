@@ -15,21 +15,41 @@ The service UUID is `00050000-78fc-48fe-8e23-433b3a1942d0`.
 
 The host uses this characteristic to update the current weather information and the forecast for the next 5 days.
 
-This characteristics accepts a byte array with the following 2-Bytes header:
+This characteristic accepts a byte array with the following 2-byte header.
+All multi-byte integers are little-endian; temperatures and sun times are
+signed 16-bit values.
 
  - [0] Message Type :
    - `0` : Current weather
    - `1` : Forecast
- - [1] Message Version :
-   - `0` : Currently supported
-   - `1` : Adds support for sunrise and sunset
+ - [1] Message Version:
+   - current weather `0`: 49-byte form without sunrise or sunset
+   - current weather `1`: 53-byte form with sunrise and sunset
+   - forecast `0`: the only supported forecast version
+
+The firmware requires a complete message. It copies the full chained NimBLE
+mbuf before parsing and rejects truncated, overlong, unknown-version, and
+unknown-type writes without changing the current weather state. A 53-byte ATT
+value requires an ATT MTU of at least 56 (`MTU - 3` bytes are available to a
+normal write). Companions must negotiate that MTU, or use an appropriate long
+write, and check the write result. With the default MTU of 23, only 20 value
+bytes fit and the firmware rejects the truncated packet.
+
+Accepted records are displayed only while their timestamp is less than 24
+hours from the watch clock in either direction. The small future allowance
+preserves companions that send UTC epoch seconds while setting the watch clock
+from local calendar fields. The firmware performs this freshness check directly
+in the unsigned seconds domain, so every 64-bit wire value is handled without a
+narrowing conversion or signed-duration overflow. New companions should still
+send the documented local timestamp.
 
 ### Current Weather
 
-The byte array must contain the following data:
+Version 0 is exactly 49 bytes and ends at the icon ID. Version 1 is exactly 53
+bytes and adds the two sun-time fields. The byte array contains:
 
  - [0] : Message type = `0`
- - [1] : Message version = `1`
+ - [1] : Message version = `0` or `1`
  - [2][3][4][5][6][7][8][9] : Timestamp (64 bits UNIX timestamp, number of seconds elapsed since 1 JAN 1970)  in local time (the same timezone as the one used to set the time)
  - [10, 11] : Current temperature (°C * 100)
  - [12, 13] : Minimum temperature (°C * 100)
@@ -45,22 +65,27 @@ The byte array must contain the following data:
    - 6 = Thunderstorm
    - 7 = Snow
    - 8 = Mist, smog
-  - [49, 50] : Sunrise (number of minutes elapsed since midnight)
+  - [49, 50] : Sunrise (version 1 only; number of minutes elapsed since midnight)
     - `0` sun already up when day starts
     - `-1` unknown
     - `-2` no sunrise (e.g. polar night)
-  - [51, 52] : Sunset (number of minutes elapsed since midnight)
+  - [51, 52] : Sunset (version 1 only; number of minutes elapsed since midnight)
     - `-1` unknown
     - `-2` no sunset (e.g. polar day)
 
 ### Forecast
 
-The byte array must contain the following data:
+The number of days `N` must be between 0 and 5. Two encodings are accepted:
+
+- compact: exactly `11 + 5*N` bytes;
+- fixed-width: exactly 36 bytes, with unused day records zero-filled.
+
+Other lengths and counts above five are rejected. The byte array contains:
 
   - [0] : Message type = `1`
   - [1] : Message version = `0`
   - [2][3][4][5][6][7][8][9] : Timestamp (64 bits UNIX timestamp, number of seconds elapsed since 1 JAN 1970) in local time (the same timezone as the one used to set the time)
-  - [10] Number of days (Max 5, fields for unused days should be set to `0`)
+  - [10] Number of days (maximum 5; unused records exist only in the fixed-width form and should be `0`)
   - [11,12] Day 0 Minimum temperature (°C * 100)
   - [13,14] Day 0 Maximum temperature (°C * 100)
   - [15] Day 0 Icon ID

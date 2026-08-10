@@ -40,6 +40,12 @@ namespace Pinetime {
 
       bool WriteCmdAndBuffer(uint8_t pinCsn, const uint8_t* cmd, size_t cmdSize, const uint8_t* data, size_t dataSize);
 
+      // Large writes complete from the SPIM interrupt after Write() returns.
+      // Wait for that completion before a caller reuses its source buffer.
+      // A missing interrupt is bounded and the bus is recovered rather than
+      // leaving every future display and flash transaction deadlocked.
+      bool WaitForWriteComplete();
+
       void OnStartedEvent();
       void OnEndEvent();
 
@@ -52,7 +58,7 @@ namespace Pinetime {
       }
 
     private:
-      void SetupWorkaroundForErratum58();
+      [[nodiscard]] bool SetupWorkaroundForErratum58();
       void DisableWorkaroundForErratum58();
       void PrepareTx(const volatile uint32_t bufferAddress, const volatile size_t size);
       void PrepareRx(const volatile uint32_t bufferAddress, const volatile size_t size);
@@ -70,6 +76,10 @@ namespace Pinetime {
       // SPIM, then reconfigure and re-enable it.
       void RecoverBus();
 
+      // Abort an asynchronous write whose completion interrupt never arrived.
+      // Called only after WaitForWriteComplete's deadline has expired.
+      void AbortPendingWrite();
+
       // The synchronous flash halves of Read/WriteCmdAndBuffer, run once per
       // attempt. Return false on a completion timeout, leaving CS asserted for
       // RecoverBus to release.
@@ -85,6 +95,7 @@ namespace Pinetime {
       volatile uint32_t currentBufferAddr = 0;
       volatile size_t currentBufferSize = 0;
       SemaphoreHandle_t mutex = nullptr;
+      StaticSemaphore_t mutexStorage {};
       SpiTransactionStats stats;
       static constexpr nrf_ppi_channel_t workaroundPpi = NRF_PPI_CHANNEL0;
       bool workaroundActive = false;

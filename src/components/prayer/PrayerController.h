@@ -8,6 +8,7 @@
 #include "components/datetime/DateTimeController.h"
 #include "components/fs/FamilyState.h"
 #include "components/prayer/PrayerRules.h"
+#include "components/timer/StaticTimer.h"
 
 namespace Pinetime {
   namespace System {
@@ -130,12 +131,12 @@ namespace Pinetime {
       // Due instants (local epoch) of the five alerting prayers for the civil
       // day containing `dayAnchor`, honoring the past-midnight wrap.
       uint8_t DueTimesFor(time_t dayAnchor, time_t (&due)[5], uint8_t (&prayer)[5]) const;
-      void ArmTimer(int64_t seconds);
+      bool ArmTimer(int64_t seconds);
 
       Controllers::DateTime& dateTimeController;
       System::StorageTask& storageTask;
       System::SystemTask* systemTask = nullptr;
-      TimerHandle_t alertTimer {};
+      StaticTimer alertTimer;
 
       Settings staged {};
       bool stagedValid = false;

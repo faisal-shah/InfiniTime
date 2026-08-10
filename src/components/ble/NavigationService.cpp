@@ -75,13 +75,9 @@ Pinetime::Controllers::NavigationService::NavigationService() {
   m_progress = 0;
 }
 
-void Pinetime::Controllers::NavigationService::Init() {
-  int res = 0;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int Pinetime::Controllers::NavigationService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int Pinetime::Controllers::NavigationService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {

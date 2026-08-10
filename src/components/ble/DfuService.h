@@ -4,6 +4,8 @@
 #include <array>
 #include <FreeRTOS.h>
 #include <timers.h>
+#include "components/ble/DfuImage.h"
+#include "components/timer/StaticTimer.h"
 
 #define min // workaround: nimble's min/max macros conflict with libstdc++
 #define max
@@ -30,56 +32,31 @@ namespace Pinetime {
       DfuService(Pinetime::System::SystemTask& systemTask,
                  Pinetime::Controllers::Ble& bleController,
                  Pinetime::Drivers::SpiNorFlash& spiNorFlash);
-      void Init();
+      int Init();
       int OnServiceData(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context);
       void OnTimeout();
       void Reset();
 
       class NotificationManager {
       public:
-        NotificationManager();
-        bool AsyncSend(uint16_t connection, uint16_t charactHandle, uint8_t* data, size_t size);
-        void Send(uint16_t connection, uint16_t characteristicHandle, const uint8_t* data, const size_t s);
+        bool Init();
+        bool AsyncSend(uint16_t connection, uint16_t charactHandle, const uint8_t* data, size_t size);
+        bool Send(uint16_t connection, uint16_t characteristicHandle, const uint8_t* data, size_t size);
 
       private:
-        TimerHandle_t timer;
+        static constexpr size_t BufferSize = 10;
+        StaticTimer timer;
         uint16_t connectionHandle = 0;
         uint16_t characteristicHandle = 0;
         size_t size = 0;
-        uint8_t buffer[10];
+        uint8_t buffer[BufferSize] {};
 
       public:
         void OnNotificationTimer();
         void Reset();
       };
 
-      class DfuImage {
-      public:
-        DfuImage(Pinetime::Drivers::SpiNorFlash& spiNorFlash) : spiNorFlash {spiNorFlash} {
-        }
-
-        void Init(size_t chunkSize, size_t totalSize, uint16_t expectedCrc);
-        void Erase();
-        void Append(uint8_t* data, size_t size);
-        bool Validate();
-        bool IsComplete();
-
-      private:
-        Pinetime::Drivers::SpiNorFlash& spiNorFlash;
-        static constexpr size_t bufferSize = 200;
-        bool ready = false;
-        size_t chunkSize = 0;
-        size_t totalSize = 0;
-        size_t maxSize = 475136;
-        size_t bufferWriteIndex = 0;
-        size_t totalWriteIndex = 0;
-        static constexpr size_t writeOffset = 0x40000;
-        uint8_t tempBuffer[bufferSize];
-        uint16_t expectedCrc = 0;
-
-        void WriteMagicNumber();
-        uint16_t ComputeCrc(uint8_t const* p_data, uint32_t size, uint16_t const* p_crc);
-      };
+      using DfuImage = Pinetime::Controllers::Dfu::Image<Pinetime::Drivers::SpiNorFlash>;
 
       static constexpr ble_uuid128_t serviceUuid {
         .u {.type = BLE_UUID_TYPE_128},
@@ -115,9 +92,9 @@ namespace Pinetime {
 
       struct ble_gatt_chr_def characteristicDefinition[4];
       struct ble_gatt_svc_def serviceDefinition[2];
-      uint16_t packetCharacteristicHandle;
-      uint16_t controlPointCharacteristicHandle;
-      uint16_t revisionCharacteristicHandle;
+      uint16_t packetCharacteristicHandle = 0;
+      uint16_t controlPointCharacteristicHandle = 0;
+      uint16_t revisionCharacteristicHandle = 0;
 
       enum class States : uint8_t { Idle, Init, Start, Data, Validate, Validated };
       States state = States::Idle;
@@ -150,20 +127,24 @@ namespace Pinetime {
         OperationFailed = 0x06
       };
 
-      uint8_t nbPacketsToNotify = 0;
+      uint16_t nbPacketsToNotify = 0;
       uint32_t nbPacketReceived = 0;
-      uint32_t bytesReceived = 0;
 
       uint32_t softdeviceSize = 0;
       uint32_t bootloaderSize = 0;
       uint32_t applicationSize = 0;
       uint16_t expectedCrc = 0;
+      bool initParametersReceived = false;
+      bool initParametersComplete = false;
 
       int SendDfuRevision(os_mbuf* om) const;
       int WritePacketHandler(uint16_t connectionHandle, os_mbuf* om);
       int ControlPointHandler(uint16_t connectionHandle, os_mbuf* om);
+      void SendNotification(uint16_t connectionHandle, const uint8_t* data, size_t size);
+      void SendNotificationAsync(uint16_t connectionHandle, const uint8_t* data, size_t size);
 
-      TimerHandle_t timeoutTimer;
+      StaticTimer timeoutTimer;
+      bool available = false;
     };
   }
 }

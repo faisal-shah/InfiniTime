@@ -43,13 +43,9 @@ FSService::FSService(Pinetime::System::SystemTask& systemTask,
     } {
 }
 
-void FSService::Init() {
-  int res = 0;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int FSService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int FSService::OnFSServiceRequested(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context) {

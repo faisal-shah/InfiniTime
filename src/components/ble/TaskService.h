@@ -30,7 +30,7 @@ namespace Pinetime {
     public:
       TaskService(System::SystemTask& systemTask, TaskController& taskController);
 
-      void Init();
+      int Init();
       int OnCommand(struct ble_gatt_access_ctxt* ctxt);
       void OnDisconnect();
 

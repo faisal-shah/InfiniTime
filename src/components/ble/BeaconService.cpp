@@ -33,9 +33,9 @@ BeaconService::BeaconService(Pinetime::System::SystemTask& systemTask, BeaconCon
     beaconController {beaconController} {
 }
 
-void BeaconService::Init() {
-  ble_gatts_count_cfg(serviceDefinition);
-  ble_gatts_add_svcs(serviceDefinition);
+int BeaconService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int BeaconService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {

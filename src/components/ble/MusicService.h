@@ -35,7 +35,7 @@ namespace Pinetime {
     public:
       explicit MusicService(NimbleController& nimble);
 
-      void Init();
+      int Init();
 
       int OnCommand(struct ble_gatt_access_ctxt* ctxt);
 

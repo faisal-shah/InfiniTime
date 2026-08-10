@@ -6,6 +6,8 @@
 using namespace Pinetime::Applications::Screens;
 
 namespace {
+  constexpr const char* buttonMap[] = {"Off", "Cont", "30s", "\n", "1m", "5m", "10m", "30m", ""};
+
   void EventHandler(lv_obj_t* obj, lv_event_t event) {
     auto* screen = static_cast<SettingHeartRate*>(obj->user_data);
     screen->UpdateSelected(obj, event);
@@ -22,12 +24,11 @@ SettingHeartRate::SettingHeartRate(Pinetime::Controllers::Settings& settingsCont
 
   lv_obj_set_pos(container, 10, 60);
   lv_obj_set_width(container, LV_HOR_RES - 20);
-  lv_obj_set_height(container, LV_VER_RES - 50);
-  lv_cont_set_layout(container, LV_LAYOUT_PRETTY_TOP);
+  lv_obj_set_height(container, LV_VER_RES - 60);
+  lv_cont_set_layout(container, LV_LAYOUT_OFF);
 
   lv_obj_t* title = lv_label_create(lv_scr_act(), nullptr);
   lv_label_set_text_static(title, "Backg. Interval");
-  lv_label_set_text(title, "Backg. Interval");
   lv_label_set_align(title, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(title, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 10, 15);
 
@@ -39,15 +40,19 @@ SettingHeartRate::SettingHeartRate(Pinetime::Controllers::Settings& settingsCont
 
   std::optional<uint16_t> currentInterval = settingsController.GetHeartRateBackgroundMeasurementInterval();
 
-  for (std::size_t i = 0; i < options.size(); i++) {
-    cbOption[i] = lv_checkbox_create(container, nullptr);
-    lv_checkbox_set_text(cbOption[i], options[i].name);
-    cbOption[i]->user_data = this;
-    lv_obj_set_event_cb(cbOption[i], EventHandler);
-    SetRadioButtonStyle(cbOption[i]);
+  intervalButtons = lv_btnmatrix_create(container, nullptr);
+  lv_btnmatrix_set_map(intervalButtons, const_cast<const char**>(buttonMap));
+  lv_btnmatrix_set_one_check(intervalButtons, true);
+  lv_btnmatrix_set_btn_ctrl_all(intervalButtons, LV_BTNMATRIX_CTRL_CHECKABLE | LV_BTNMATRIX_CTRL_CLICK_TRIG | LV_BTNMATRIX_CTRL_NO_REPEAT);
+  SetSettingButtonMatrixStyle(intervalButtons);
+  lv_obj_set_size(intervalButtons, LV_HOR_RES - 30, LV_VER_RES - 70);
+  lv_obj_align(intervalButtons, nullptr, LV_ALIGN_CENTER, 0, 0);
+  intervalButtons->user_data = this;
+  lv_obj_set_event_cb(intervalButtons, EventHandler);
 
+  for (std::size_t i = 0; i < options.size(); i++) {
     if (options[i].intervalInSeconds == currentInterval) {
-      lv_checkbox_set_checked(cbOption[i], true);
+      lv_btnmatrix_set_btn_ctrl(intervalButtons, i, LV_BTNMATRIX_CTRL_CHECK_STATE);
     }
   }
 }
@@ -58,14 +63,12 @@ SettingHeartRate::~SettingHeartRate() {
 }
 
 void SettingHeartRate::UpdateSelected(lv_obj_t* object, lv_event_t event) {
-  if (event == LV_EVENT_CLICKED) {
-    for (std::size_t i = 0; i < options.size(); i++) {
-      if (object == cbOption[i]) {
-        lv_checkbox_set_checked(cbOption[i], true);
-        settingsController.SetHeartRateBackgroundMeasurementInterval(options[i].intervalInSeconds);
-      } else {
-        lv_checkbox_set_checked(cbOption[i], false);
-      }
-    }
+  if (object != intervalButtons || event != LV_EVENT_VALUE_CHANGED) {
+    return;
+  }
+
+  const uint16_t selected = lv_btnmatrix_get_active_btn(intervalButtons);
+  if (selected < options.size()) {
+    settingsController.SetHeartRateBackgroundMeasurementInterval(options[selected].intervalInSeconds);
   }
 }

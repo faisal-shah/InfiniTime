@@ -10,6 +10,7 @@
 #include "components/fs/FamilyState.h"
 #include "components/schedule/ScheduleRules.h"
 #include "components/ble/generated/CompanionProtocol.h"
+#include "components/timer/StaticTimer.h"
 
 namespace Pinetime {
   namespace System {
@@ -105,14 +106,14 @@ namespace Pinetime {
       static constexpr uint32_t maxTimerSeconds = 24 * 60 * 60;
       static_assert(MaxEvents <= 64, "schedule staging uses a uint64_t received-bitmask");
 
-      void ArmTimer(int64_t seconds);
+      bool ArmTimer(int64_t seconds);
       const FamilyState& Active() const;
       FamilyState* Candidate();
 
       Controllers::DateTime& dateTimeController;
       System::StorageTask& storageTask;
       System::SystemTask* systemTask = nullptr;
-      TimerHandle_t reminderTimer {};
+      StaticTimer reminderTimer;
 
       // Next-occurrence cache, so TimerFired never reads flash. Refreshed by
       // Reschedule() on every mutation (commit, fire, dismiss, time change).

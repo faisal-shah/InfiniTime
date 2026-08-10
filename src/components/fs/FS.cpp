@@ -62,8 +62,7 @@ FS::FS(Pinetime::Drivers::SpiNorFlash& driver)
                 "lookahead bitmap must cover every block, or allocation needs several passes");
   static_assert(sizeof(lookaheadBuffer) % 8 == 0, "littlefs requires a multiple of 8 bytes");
 
-  mutex = xSemaphoreCreateRecursiveMutex();
-  ASSERT(mutex != nullptr);
+  mutex = xSemaphoreCreateRecursiveMutexStatic(&mutexStorage);
 }
 
 bool FS::Init() {
@@ -176,6 +175,9 @@ int FS::SectorSync(const struct lfs_config* /*c*/) {
 
 int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
+  if (!lfs.ReportProgress()) {
+    return LFS_ERR_IO;
+  }
   const size_t address = startAddress + (block * blockSize);
   lfs.flashDriver.SectorErase(address);
   return lfs.flashDriver.EraseFailed() ? LFS_ERR_IO : 0;
@@ -183,6 +185,9 @@ int FS::SectorErase(const struct lfs_config* c, lfs_block_t block) {
 
 int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, const void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
+  if (!lfs.ReportProgress()) {
+    return LFS_ERR_IO;
+  }
   const size_t address = startAddress + (block * blockSize) + off;
   lfs.flashDriver.Write(address, (uint8_t*) buffer, size);
   return lfs.flashDriver.ProgramFailed() ? LFS_ERR_IO : 0;
@@ -190,9 +195,16 @@ int FS::SectorProg(const struct lfs_config* c, lfs_block_t block, lfs_off_t off,
 
 int FS::SectorRead(const struct lfs_config* c, lfs_block_t block, lfs_off_t off, void* buffer, lfs_size_t size) {
   Pinetime::Controllers::FS& lfs = *(static_cast<Pinetime::Controllers::FS*>(c->context));
+  if (!lfs.ReportProgress()) {
+    return LFS_ERR_IO;
+  }
   const size_t address = startAddress + (block * blockSize) + off;
   // A read that times out no longer reports success: littlefs turns the I/O
   // error into a mount/format failure or a failed file operation instead of
   // consuming 0xFF-filled garbage as if it were data.
   return lfs.flashDriver.Read(address, static_cast<uint8_t*>(buffer), size) ? 0 : LFS_ERR_IO;
+}
+
+bool FS::ReportProgress() {
+  return progressListener == nullptr || progressListener->OnFilesystemProgress();
 }

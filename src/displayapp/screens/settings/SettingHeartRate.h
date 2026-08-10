@@ -37,7 +37,7 @@ namespace Pinetime {
           {.intervalInSeconds = 30 * 60, .name = " 30m"},
         }};
 
-        lv_obj_t* cbOption[options.size()];
+        lv_obj_t* intervalButtons;
       };
     }
   }

@@ -15,13 +15,9 @@ int DeviceInformationCallback(uint16_t /*conn_handle*/, uint16_t /*attr_handle*/
   return deviceInformationService->OnDeviceInfoRequested(ctxt);
 }
 
-void DeviceInformationService::Init() {
-  int res = 0;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int DeviceInformationService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int DeviceInformationService::OnDeviceInfoRequested(struct ble_gatt_access_ctxt* ctxt) {

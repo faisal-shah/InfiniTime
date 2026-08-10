@@ -45,7 +45,7 @@ namespace Pinetime {
     public:
       explicit SimpleWeatherService(DateTime& dateTimeController);
 
-      void Init();
+      int Init();
 
       int OnCommand(struct ble_gatt_access_ctxt* ctxt);
 
@@ -97,9 +97,7 @@ namespace Pinetime {
           return Colors::orange; // normal
         }
 
-        bool operator==(const Temperature& other) const {
-          return raw == other.raw;
-        }
+        bool operator==(const Temperature& other) const = default;
 
       private:
         int16_t raw;
@@ -135,7 +133,7 @@ namespace Pinetime {
         int16_t sunrise;
         int16_t sunset;
 
-        bool operator==(const CurrentWeather& other) const;
+        bool operator==(const CurrentWeather& other) const = default;
       };
 
       struct Forecast {
@@ -147,12 +145,12 @@ namespace Pinetime {
           Temperature maxTemperature;
           Icons iconId;
 
-          bool operator==(const Day& other) const;
+          bool operator==(const Day& other) const = default;
         };
 
         std::array<std::optional<Day>, MaxNbForecastDays> days;
 
-        bool operator==(const Forecast& other) const;
+        bool operator==(const Forecast& other) const = default;
       };
 
       std::optional<CurrentWeather> Current() const;

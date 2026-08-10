@@ -5,6 +5,8 @@
 #include <drivers/SpiMaster.h>
 #include <bits/unique_ptr.h>
 #include <queue.h>
+#include <semphr.h>
+#include <atomic>
 #include "drivers/Cst816s.h"
 #include <drivers/Watchdog.h>
 #include <components/motor/MotorController.h>
@@ -76,11 +78,20 @@ namespace Pinetime {
                  Pinetime::Controllers::FS& filesystem,
                  Pinetime::System::StorageTask& storageTask,
                  Pinetime::Drivers::SpiNorFlash& spiNorFlash);
-      void Start();
+      [[nodiscard]] bool Start();
 
-      void Start(Pinetime::System::BootErrors) {
-        Start();
+      [[nodiscard]] bool Start(Pinetime::System::BootErrors) {
+        return Start();
       };
+
+      [[nodiscard]] bool WaitUntilReady(TickType_t timeout);
+      [[nodiscard]] uint32_t ProgressCounter() const {
+        return progressCounter.load(std::memory_order_relaxed);
+      }
+      [[nodiscard]] bool IsDisplayHealthy() const {
+        return consecutiveFlushFailures.load(std::memory_order_relaxed) <
+               MaxConsecutiveFlushFailures;
+      }
 
       void PushMessage(Pinetime::Applications::Display::Messages msg);
       void Register(Pinetime::System::SystemTask* systemTask);
@@ -89,18 +100,31 @@ namespace Pinetime {
       void Register(Pinetime::Controllers::NavigationService* NavigationService);
 
     private:
-      TaskHandle_t taskHandle;
+      TaskHandle_t taskHandle = nullptr;
+      StaticTask_t taskBuffer {};
+      static constexpr uint16_t taskStackWords = 512;
+      StackType_t taskStack[taskStackWords] {};
       static void Process(void* instance);
-      void DisplayLogo(uint16_t color);
+      [[nodiscard]] bool DisplayLogo(uint16_t color);
       void DisplayOtaProgress(uint8_t percent, uint16_t color);
-      void InitHw();
+      [[nodiscard]] bool InitHw();
       void Refresh();
+      void RecordFlush(bool successful);
       Pinetime::Drivers::St7789& lcd;
       const Controllers::Ble& bleController;
+      Pinetime::Controllers::BrightnessController& brightnessController;
 
       static constexpr uint8_t queueSize = 10;
       static constexpr uint8_t itemSize = 1;
-      QueueHandle_t msgQueue;
+      QueueHandle_t msgQueue = nullptr;
+      StaticQueue_t msgQueueBuffer {};
+      uint8_t msgQueueStorage[queueSize * itemSize] {};
+      SemaphoreHandle_t readySemaphore = nullptr;
+      StaticSemaphore_t readySemaphoreBuffer {};
+      std::atomic<bool> ready {false};
+      std::atomic<uint32_t> progressCounter {0};
+      static constexpr uint8_t MaxConsecutiveFlushFailures = 3;
+      std::atomic<uint8_t> consecutiveFlushFailures {0};
       static constexpr uint8_t displayWidth = 240;
       static constexpr uint8_t displayHeight = 240;
       static constexpr uint8_t bytesPerPixel = 2;

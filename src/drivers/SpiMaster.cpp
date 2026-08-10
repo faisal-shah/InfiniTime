@@ -28,8 +28,10 @@ SpiMaster::SpiMaster(const SpiMaster::SpiModule spi, const SpiMaster::Parameters
 
 bool SpiMaster::Init() {
   if (mutex == nullptr) {
-    mutex = xSemaphoreCreateBinary();
-    ASSERT(mutex != nullptr);
+    mutex = xSemaphoreCreateBinaryStatic(&mutexStorage);
+    if (mutex == nullptr) {
+      return false;
+    }
   }
 
   /* Configure GPIO pins used for pselsck, pselmosi, pselmiso and pselss for SPI0 */
@@ -143,7 +145,7 @@ void SpiMaster::RecoverBus() {
   ApplyConfig();
 }
 
-void SpiMaster::SetupWorkaroundForErratum58() {
+bool SpiMaster::SetupWorkaroundForErratum58() {
   nrfx_gpiote_pin_t pin = spiBaseAddress->PSEL.SCK;
   nrfx_gpiote_in_config_t gpioteCfg = {.sense = NRF_GPIOTE_POLARITY_TOGGLE,
                                        .pull = NRF_GPIO_PIN_NOPULL,
@@ -152,7 +154,9 @@ void SpiMaster::SetupWorkaroundForErratum58() {
                                        .skip_gpio_setup = true};
   if (!workaroundActive) {
     // Create an event when SCK toggles.
-    APP_ERROR_CHECK(nrfx_gpiote_in_init(pin, &gpioteCfg, NULL));
+    if (nrfx_gpiote_in_init(pin, &gpioteCfg, nullptr) != NRFX_SUCCESS) {
+      return false;
+    }
     nrfx_gpiote_in_event_enable(pin, false);
 
     // Stop the spim instance when SCK toggles.
@@ -167,6 +171,7 @@ void SpiMaster::SetupWorkaroundForErratum58() {
   spiBaseAddress->INTENCLR = (1 << 1);
   spiBaseAddress->INTENCLR = (1 << 19);
   workaroundActive = true;
+  return true;
 }
 
 void SpiMaster::DisableWorkaroundForErratum58() {
@@ -232,7 +237,7 @@ void SpiMaster::PrepareRx(const uint32_t bufferAddress, const size_t size) {
 bool SpiMaster::Write(uint8_t pinCsn, const uint8_t* data, size_t size, const std::function<void()>& preTransactionHook) {
   if (data == nullptr)
     return false;
-  if (xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+  if (mutex == nullptr || xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
     stats.OnMutexTimeout();
     return false;
   }
@@ -240,7 +245,10 @@ bool SpiMaster::Write(uint8_t pinCsn, const uint8_t* data, size_t size, const st
   this->pinCsn = pinCsn;
 
   if (size == 1) {
-    SetupWorkaroundForErratum58();
+    if (!SetupWorkaroundForErratum58()) {
+      xSemaphoreGive(mutex);
+      return false;
+    }
   } else {
     DisableWorkaroundForErratum58();
   }
@@ -275,6 +283,42 @@ bool SpiMaster::Write(uint8_t pinCsn, const uint8_t* data, size_t size, const st
   return true;
 }
 
+bool SpiMaster::WaitForWriteComplete() {
+  if (mutex == nullptr) {
+    return false;
+  }
+
+  if (xSemaphoreTake(mutex, mutexTimeoutTicks) == pdTRUE) {
+    xSemaphoreGive(mutex);
+    return true;
+  }
+
+  stats.OnCompletionTimeout();
+  AbortPendingWrite();
+  return false;
+}
+
+void SpiMaster::AbortPendingWrite() {
+  // The timeout means the ISR still logically owns the binary semaphore.
+  // Prevent it from racing the recovery below, discard the pending DMA source,
+  // reset the peripheral, then restore the interrupt-driven display path.
+  taskENTER_CRITICAL();
+  spiBaseAddress->INTENCLR = (1 << 6);
+  spiBaseAddress->INTENCLR = (1 << 1);
+  spiBaseAddress->INTENCLR = (1 << 19);
+  currentBufferAddr = 0;
+  currentBufferSize = 0;
+  RecoverBus();
+  spiBaseAddress->EVENTS_END = 0;
+  spiBaseAddress->EVENTS_STARTED = 0;
+  spiBaseAddress->EVENTS_STOPPED = 0;
+  spiBaseAddress->INTENSET = (1 << 6);
+  spiBaseAddress->INTENSET = (1 << 1);
+  spiBaseAddress->INTENSET = (1 << 19);
+  xSemaphoreGive(mutex);
+  taskEXIT_CRITICAL();
+}
+
 bool SpiMaster::ReadOnce(const uint8_t* cmd, size_t cmdSize, uint8_t* data, size_t dataSize) {
   nrf_gpio_pin_clear(this->pinCsn);
 
@@ -296,7 +340,7 @@ bool SpiMaster::ReadOnce(const uint8_t* cmd, size_t cmdSize, uint8_t* data, size
 }
 
 bool SpiMaster::Read(uint8_t pinCsn, uint8_t* cmd, size_t cmdSize, uint8_t* data, size_t dataSize) {
-  if (xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+  if (mutex == nullptr || xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
     stats.OnMutexTimeout();
     return false;
   }
@@ -328,9 +372,7 @@ bool SpiMaster::Read(uint8_t pinCsn, uint8_t* cmd, size_t cmdSize, uint8_t* data
 }
 
 void SpiMaster::Sleep() {
-  for (uint32_t attempt = 0;
-       attempt < disableSpinCap && spiBaseAddress->ENABLE != 0;
-       attempt++) {
+  for (uint32_t attempt = 0; attempt < disableSpinCap && spiBaseAddress->ENABLE != 0; attempt++) {
     spiBaseAddress->ENABLE = (SPIM_ENABLE_ENABLE_Disabled << SPIM_ENABLE_ENABLE_Pos);
   }
   nrf_gpio_cfg_default(params.pinSCK);
@@ -366,7 +408,7 @@ bool SpiMaster::WriteCmdAndBufferOnce(const uint8_t* cmd, size_t cmdSize, const 
 }
 
 bool SpiMaster::WriteCmdAndBuffer(uint8_t pinCsn, const uint8_t* cmd, size_t cmdSize, const uint8_t* data, size_t dataSize) {
-  if (xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
+  if (mutex == nullptr || xSemaphoreTake(mutex, mutexTimeoutTicks) != pdTRUE) {
     stats.OnMutexTimeout();
     return false;
   }

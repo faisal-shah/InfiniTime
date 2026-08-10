@@ -53,7 +53,7 @@ namespace {
     while (*br < btr && file->offset < file->size) {
       const uint32_t chunk = std::min<uint32_t>(
         btr - *br,
-        Pinetime::Controllers::FamilyStateCodec::EncodedSize);
+        Pinetime::System::StorageTask::FileTransferChunkSize);
       uint32_t totalSize = 0;
       const int read = storage->ReadFile(
         file->path, file->offset, output + *br, chunk, totalSize);
@@ -114,7 +114,12 @@ void LittleVgl::Init() {
 }
 
 void LittleVgl::InitDisplay() {
-  lv_disp_buf_init(&disp_buf_2, buf2_1, buf2_2, LV_HOR_RES_MAX * 4); /*Initialize the display buffer*/
+  // FlushDisplay waits for the SPIM transfer before returning, so LVGL can
+  // safely reuse one draw buffer. The old second buffer consumed 1,920 bytes
+  // while lv_disp_flush_ready() was called before DMA had actually completed.
+  // Two rows preserve full-frame and scrolling semantics while returning a
+  // further 960 bytes to the heap; the only cost is more flush callbacks.
+  lv_disp_buf_init(&displayBuffer, drawBuffer, nullptr, LV_HOR_RES_MAX * 2);
   lv_disp_drv_init(&disp_drv);                                       /*Basic initialization*/
 
   /*Set up the functions to access to your display*/
@@ -126,7 +131,7 @@ void LittleVgl::InitDisplay() {
   /*Used to copy the buffer's content to the display*/
   disp_drv.flush_cb = disp_flush;
   /*Set a display buffer*/
-  disp_drv.buffer = &disp_buf_2;
+  disp_drv.buffer = &displayBuffer;
   disp_drv.user_data = this;
   disp_drv.rounder_cb = rounder;
 
@@ -184,6 +189,7 @@ bool LittleVgl::IsScrolling() {
 
 void LittleVgl::FlushDisplay(const lv_area_t* area, lv_color_t* color_p) {
   uint16_t y1, y2, width, height = 0;
+  bool commandSucceeded = true;
 
   if ((scrollDirection == LittleVgl::FullRefreshDirections::Down) && (area->y2 == visibleNbLines - 1)) {
     writeOffset = ((writeOffset + totalNbLines) - visibleNbLines) % totalNbLines;
@@ -215,7 +221,7 @@ void LittleVgl::FlushDisplay(const lv_area_t* area, lv_color_t* color_p) {
         toScroll -= scrollOffset;
         scrollOffset = (totalNbLines) -toScroll;
       }
-      lcd.VerticalScrollStartAddress(scrollOffset);
+      commandSucceeded = lcd.VerticalScrollStartAddress(scrollOffset);
     }
 
   } else if (scrollDirection == FullRefreshDirections::Up) {
@@ -229,7 +235,7 @@ void LittleVgl::FlushDisplay(const lv_area_t* area, lv_color_t* color_p) {
         scrollOffset += height;
       }
       scrollOffset = scrollOffset % totalNbLines;
-      lcd.VerticalScrollStartAddress(scrollOffset);
+      commandSucceeded = lcd.VerticalScrollStartAddress(scrollOffset);
     }
   } else if (scrollDirection == FullRefreshDirections::Left or scrollDirection == FullRefreshDirections::LeftAnim) {
     if (area->x2 == visibleNbLines - 1) {
@@ -243,24 +249,86 @@ void LittleVgl::FlushDisplay(const lv_area_t* area, lv_color_t* color_p) {
     }
   }
 
+  bool flushed = commandSucceeded;
   if (y2 < y1) {
     height = totalNbLines - y1;
 
     if (height > 0) {
-      lcd.DrawBuffer(area->x1, y1, width, height, reinterpret_cast<const uint8_t*>(color_p), width * height * 2);
+      flushed = lcd.DrawBuffer(
+                  area->x1,
+                  y1,
+                  width,
+                  height,
+                  reinterpret_cast<const uint8_t*>(color_p),
+                  width * height * 2) &&
+                flushed;
     }
 
     uint16_t pixOffset = width * height;
     height = y2 + 1;
-    lcd.DrawBuffer(area->x1, 0, width, height, reinterpret_cast<const uint8_t*>(color_p + pixOffset), width * height * 2);
+    flushed = lcd.DrawBuffer(
+                area->x1,
+                0,
+                width,
+                height,
+                reinterpret_cast<const uint8_t*>(color_p + pixOffset),
+                width * height * 2) &&
+              flushed;
 
   } else {
-    lcd.DrawBuffer(area->x1, y1, width, height, reinterpret_cast<const uint8_t*>(color_p), width * height * 2);
+    flushed = lcd.DrawBuffer(
+                area->x1,
+                y1,
+                width,
+                height,
+                reinterpret_cast<const uint8_t*>(color_p),
+                width * height * 2) &&
+              flushed;
+  }
+
+  if (trackingFrame) {
+    frameFlushCount++;
+    frameFlushFailed = frameFlushFailed || !flushed;
+    if (area->x1 == 0 && area->x2 == LV_HOR_RES - 1 &&
+        area->y1 >= 0 && area->y2 < LV_VER_RES) {
+      for (lv_coord_t row = area->y1; row <= area->y2; row++) {
+        frameRows[static_cast<size_t>(row) / 32] |=
+          uint32_t {1} << (static_cast<size_t>(row) % 32);
+      }
+    }
+  }
+  if (flushed) {
+    consecutiveFlushFailures.store(0, std::memory_order_relaxed);
+  } else {
+    const uint8_t failures =
+      consecutiveFlushFailures.load(std::memory_order_relaxed);
+    if (failures < MaxConsecutiveFlushFailures) {
+      consecutiveFlushFailures.store(failures + 1, std::memory_order_relaxed);
+    }
   }
 
   // IMPORTANT!!!
   // Inform the graphics library that you are ready with the flushing
   lv_disp_flush_ready(&disp_drv);
+}
+
+bool LittleVgl::RenderFirstFrame() {
+  frameFlushFailed = false;
+  frameFlushCount = 0;
+  frameRows.fill(0);
+  trackingFrame = true;
+  lv_obj_invalidate(lv_scr_act());
+  lv_refr_now(lv_disp_get_default());
+  trackingFrame = false;
+  bool everyRowFlushed = true;
+  for (size_t word = 0; word < frameRows.size(); word++) {
+    const size_t rowsRemaining = LV_VER_RES - word * 32;
+    const uint32_t expected = rowsRemaining >= 32
+                                ? UINT32_MAX
+                                : (uint32_t {1} << rowsRemaining) - 1;
+    everyRowFlushed = everyRowFlushed && frameRows[word] == expected;
+  }
+  return frameFlushCount != 0 && everyRowFlushed && !frameFlushFailed;
 }
 
 void LittleVgl::SetNewTouchPoint(int16_t x, int16_t y, bool contact) {

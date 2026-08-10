@@ -23,14 +23,9 @@ int CurrentTimeService::OnCurrentTimeServiceAccessed(struct ble_gatt_access_ctxt
   return -1; // Unknown characteristic
 }
 
-void CurrentTimeService::Init() {
-  int res;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-
-  ASSERT(res == 0);
+int CurrentTimeService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int CurrentTimeService::OnCurrentTimeAccessed(struct ble_gatt_access_ctxt* ctxt) {

@@ -15,14 +15,15 @@ namespace {
   }
 }
 
-ScheduleController::ScheduleController(Controllers::DateTime& dateTimeController,
-                                       System::StorageTask& storageTask)
+ScheduleController::ScheduleController(Controllers::DateTime& dateTimeController, System::StorageTask& storageTask)
   : dateTimeController {dateTimeController}, storageTask {storageTask} {
 }
 
 void ScheduleController::Init(System::SystemTask* systemTask) {
   this->systemTask = systemTask;
-  reminderTimer = xTimerCreate("Schedule", 1, pdFALSE, this, ReminderTimerCallback);
+  if (!reminderTimer.Create("Schedule", 1, pdFALSE, this, ReminderTimerCallback)) {
+    NRF_LOG_ERROR("[schedule] timer unavailable; reminders disabled");
+  }
   Reschedule();
 }
 
@@ -31,20 +32,16 @@ const FamilyState& ScheduleController::Active() const {
 }
 
 FamilyState* ScheduleController::Candidate() {
-  return storageTask.MutableCandidate(CompanionProtocol::FamilyStateOperation::Schedule,
-                                      stagedVersion);
+  return storageTask.MutableCandidate(CompanionProtocol::FamilyStateOperation::Schedule, stagedVersion);
 }
 
 time_t ScheduleController::Now() const {
   auto now = dateTimeController.CurrentDateTime();
-  return std::chrono::system_clock::to_time_t(
-    std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
+  return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(now));
 }
 
 bool ScheduleController::BeginStaging(uint8_t count, uint32_t version) {
-  if (count > MaxEvents ||
-      !storageTask.BeginFamilyStateMutation(CompanionProtocol::FamilyStateOperation::Schedule,
-                                            version)) {
+  if (count > MaxEvents || !storageTask.BeginFamilyStateMutation(CompanionProtocol::FamilyStateOperation::Schedule, version)) {
     return false;
   }
   stagedVersion = version;
@@ -87,9 +84,7 @@ bool ScheduleController::StagingComplete() const {
   if (!staging || awaitingPersistence) {
     return false;
   }
-  const uint64_t expected = stagedCount == 64
-                              ? ~uint64_t {0}
-                              : (uint64_t {1} << stagedCount) - 1;
+  const uint64_t expected = stagedCount == 64 ? ~uint64_t {0} : (uint64_t {1} << stagedCount) - 1;
   return stagedReceived == expected;
 }
 
@@ -98,9 +93,7 @@ void ScheduleController::DiscardStaging() {
     return;
   }
   if (staging && !awaitingPersistence) {
-    storageTask.CancelFamilyStateMutation(
-      CompanionProtocol::FamilyStateOperation::Schedule,
-      stagedVersion);
+    storageTask.CancelFamilyStateMutation(CompanionProtocol::FamilyStateOperation::Schedule, stagedVersion);
   }
   staging = false;
   commitAccepted = false;
@@ -119,10 +112,7 @@ bool ScheduleController::AcceptCommit() {
 }
 
 void ScheduleController::CommitStaged() {
-  if (!commitAccepted ||
-      !storageTask.CommitFamilyStateMutation(
-        CompanionProtocol::FamilyStateOperation::Schedule,
-        stagedVersion)) {
+  if (!commitAccepted || !storageTask.CommitFamilyStateMutation(CompanionProtocol::FamilyStateOperation::Schedule, stagedVersion)) {
     DiscardStaging();
     return;
   }
@@ -141,16 +131,17 @@ void ScheduleController::OnPersisted(uint32_t token, bool success) {
   stagedVersion = 0;
   stagedCount = 0;
   if (success) {
-    NRF_LOG_INFO("[ScheduleController] Committed %u events, version %u",
-                 GetCount(),
-                 GetVersion());
+    NRF_LOG_INFO("[ScheduleController] Committed %u events, version %u", GetCount(), GetVersion());
     Reschedule();
   }
 }
 
 void ScheduleController::Reschedule() {
-  xTimerStop(reminderTimer, 0);
   hasNext = false;
+  if (!reminderTimer.IsCreated()) {
+    return;
+  }
+  (void) reminderTimer.Stop();
 
   const time_t now = Now();
   const time_t from = now - graceSeconds;
@@ -175,20 +166,23 @@ void ScheduleController::Reschedule() {
   }
   hasNext = true;
   nextDueTime = *best;
-  ArmTimer(*best - now);
+  if (!ArmTimer(*best - now)) {
+    hasNext = false;
+  }
 }
 
-void ScheduleController::ArmTimer(int64_t seconds) {
+bool ScheduleController::ArmTimer(int64_t seconds) {
   if (seconds < 1) {
     seconds = 1;
   }
   if (seconds > maxTimerSeconds) {
     seconds = maxTimerSeconds;
   }
-  xTimerChangePeriod(reminderTimer,
-                     static_cast<TickType_t>(seconds) * configTICK_RATE_HZ,
-                     0);
-  xTimerStart(reminderTimer, 0);
+  if (!reminderTimer.ChangePeriod(static_cast<TickType_t>(seconds) * configTICK_RATE_HZ)) {
+    NRF_LOG_WARNING("[schedule] failed to arm reminder timer");
+    return false;
+  }
+  return true;
 }
 
 void ScheduleController::TimerFired() {
@@ -197,11 +191,18 @@ void ScheduleController::TimerFired() {
   }
   const time_t now = Now();
   if (nextDueTime - now > graceSeconds) {
-    ArmTimer(nextDueTime - now);
+    if (!ArmTimer(nextDueTime - now)) {
+      hasNext = false;
+    }
     return;
   }
   lastFiredDue = nextDueTime;
-  systemTask->PushMessage(System::Messages::SetOffScheduleReminder);
+  if (systemTask == nullptr || !systemTask->TryPushMessage(System::Messages::SetOffScheduleReminder)) {
+    if (!ArmTimer(1)) {
+      hasNext = false;
+    }
+    return;
+  }
 }
 
 bool ScheduleController::DescribeFiring(time_t due, char* buffer, size_t bufferSize) {
@@ -212,9 +213,7 @@ bool ScheduleController::DescribeFiring(time_t due, char* buffer, size_t bufferS
   buffer[0] = '\0';
 
   const auto& active = Active();
-  for (uint8_t index = 0;
-       index < active.scheduleCount && used + 1 < bufferSize;
-       index++) {
+  for (uint8_t index = 0; index < active.scheduleCount && used + 1 < bufferSize; index++) {
     const auto& event = active.schedules[index];
     const auto occurrence = ScheduleRules::NextOccurrenceFrom(event, due);
     if (!occurrence || *occurrence != due) {
@@ -223,8 +222,7 @@ bool ScheduleController::DescribeFiring(time_t due, char* buffer, size_t bufferS
     if (used != 0) {
       buffer[used++] = '\n';
     }
-    const size_t maxCopy =
-      std::min(std::strlen(event.title), bufferSize - used - 1);
+    const size_t maxCopy = std::min(std::strlen(event.title), bufferSize - used - 1);
     std::memcpy(&buffer[used], event.title, maxCopy);
     used += maxCopy;
   }
@@ -241,15 +239,12 @@ bool ScheduleController::ReadEvent(uint8_t index, Event& output) const {
   return true;
 }
 
-uint8_t ScheduleController::ComputeUpcoming(Occurrence* output,
-                                            uint8_t maximum,
-                                            uint16_t horizonDays) const {
+uint8_t ScheduleController::ComputeUpcoming(Occurrence* output, uint8_t maximum, uint16_t horizonDays) const {
   if (output == nullptr || maximum == 0) {
     return 0;
   }
   const time_t now = Now();
-  const time_t horizon =
-    now + static_cast<time_t>(horizonDays) * 24 * 60 * 60;
+  const time_t horizon = now + static_cast<time_t>(horizonDays) * 24 * 60 * 60;
   uint8_t count = 0;
 
   const auto& active = Active();

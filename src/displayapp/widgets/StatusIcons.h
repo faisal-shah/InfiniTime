@@ -38,9 +38,7 @@ namespace Pinetime {
         Utility::DirtyValue<bool> bleRadioEnabled {};
         Utility::DirtyValue<bool> alarmEnabled {};
 
-        lv_obj_t* bleIcon;
-        lv_obj_t* alarmIcon;
-        lv_obj_t* batteryPlug;
+        lv_obj_t* statusIcon;
         lv_obj_t* container;
       };
     }

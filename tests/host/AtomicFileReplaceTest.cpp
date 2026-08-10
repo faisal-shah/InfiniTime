@@ -6,6 +6,7 @@
 #include <string>
 
 using Pinetime::Controllers::AtomicFileReplace;
+using Pinetime::Controllers::AtomicFileReplaceStream;
 
 namespace {
   int checks = 0;
@@ -19,8 +20,7 @@ namespace {
     }
   }
 
-  struct PowerCut {
-  };
+  struct PowerCut {};
 
   class FakeFileSystem {
   public:
@@ -50,7 +50,7 @@ namespace {
     }
 
     int FileWrite(lfs_file_t*, const uint8_t* data, uint32_t size) {
-      temporary.assign(reinterpret_cast<const char*>(data), size);
+      temporary.append(reinterpret_cast<const char*>(data), size);
       Step();
       return static_cast<int>(size);
     }
@@ -104,14 +104,52 @@ int main() {
 
   {
     FakeFileSystem fs(0);
-    Check(AtomicFileReplace(fs,
-                            "/.system",
-                            "/.system/ble-store.tmp",
-                            "/.system/ble-store.dat",
-                            replacement,
-                            sizeof(replacement)),
+    Check(AtomicFileReplace(fs, "/.system", "/.system/ble-store.tmp", "/.system/ble-store.dat", replacement, sizeof(replacement)),
           "normal atomic replace succeeds");
     Check(fs.live == "new-complete", "normal atomic replace commits the complete new file");
+  }
+
+  {
+    FakeFileSystem fs(0);
+    Check(AtomicFileReplaceStream(fs,
+                                  "/.system",
+                                  "/.system/family-state.tmp",
+                                  "/.system/family-state.dat",
+                                  sizeof(replacement),
+                                  [](auto& writer) {
+                                    return writer.Write(replacement, 3) && writer.Write(replacement + 3, 4) &&
+                                           writer.Write(replacement + 7, sizeof(replacement) - 7);
+                                  }),
+          "streamed atomic replace succeeds");
+    Check(fs.live == "new-complete", "streamed atomic replace commits every chunk in order");
+  }
+
+  {
+    FakeFileSystem fs(0);
+    Check(!AtomicFileReplaceStream(fs,
+                                   "/.system",
+                                   "/.system/family-state.tmp",
+                                   "/.system/family-state.dat",
+                                   sizeof(replacement),
+                                   [](auto& writer) {
+                                     return writer.Write(replacement, sizeof(replacement) - 1);
+                                   }),
+          "short streamed image is rejected");
+    Check(fs.live == "old-complete", "short streamed image never replaces the live file");
+  }
+
+  {
+    FakeFileSystem fs(0);
+    Check(!AtomicFileReplaceStream(fs,
+                                   "/.system",
+                                   "/.system/family-state.tmp",
+                                   "/.system/family-state.dat",
+                                   sizeof(replacement) - 1,
+                                   [](auto& writer) {
+                                     return writer.Write(replacement, sizeof(replacement));
+                                   }),
+          "oversize streamed image is rejected");
+    Check(fs.live == "old-complete", "oversize streamed image never replaces the live file");
   }
 
   // Cut power after every transaction operation. The temporary file may be
@@ -120,17 +158,29 @@ int main() {
   for (int cut = 1; cut <= 7; cut++) {
     FakeFileSystem fs(cut);
     try {
-      AtomicFileReplace(fs,
-                        "/.system",
-                        "/.system/ble-store.tmp",
-                        "/.system/ble-store.dat",
-                        replacement,
-                        sizeof(replacement));
+      AtomicFileReplace(fs, "/.system", "/.system/ble-store.tmp", "/.system/ble-store.dat", replacement, sizeof(replacement));
     } catch (const PowerCut&) {
     }
     fs.Reboot();
-    Check(fs.live == "old-complete" || fs.live == "new-complete",
-          "power cut leaves only an old or new complete live file");
+    Check(fs.live == "old-complete" || fs.live == "new-complete", "power cut leaves only an old or new complete live file");
+  }
+
+  for (int cut = 1; cut <= 9; cut++) {
+    FakeFileSystem fs(cut);
+    try {
+      AtomicFileReplaceStream(fs,
+                              "/.system",
+                              "/.system/family-state.tmp",
+                              "/.system/family-state.dat",
+                              sizeof(replacement),
+                              [](auto& writer) {
+                                return writer.Write(replacement, 3) && writer.Write(replacement + 3, 4) &&
+                                       writer.Write(replacement + 7, sizeof(replacement) - 7);
+                              });
+    } catch (const PowerCut&) {
+    }
+    fs.Reboot();
+    Check(fs.live == "old-complete" || fs.live == "new-complete", "power cut during streamed write leaves a complete live file");
   }
 
   std::printf("%d checks, %d failures\n", checks, failures);

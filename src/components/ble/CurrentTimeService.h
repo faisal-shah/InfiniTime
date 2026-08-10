@@ -14,7 +14,7 @@ namespace Pinetime {
     class CurrentTimeService {
     public:
       CurrentTimeService(DateTime& dateTimeController);
-      void Init();
+      int Init();
 
       int OnCurrentTimeServiceAccessed(struct ble_gatt_access_ctxt* ctxt);
       int OnCurrentTimeAccessed(struct ble_gatt_access_ctxt* ctxt);

@@ -115,13 +115,9 @@ Pinetime::Controllers::MusicService::MusicService(Pinetime::Controllers::NimbleC
   serviceDefinition[1] = {0};
 }
 
-void Pinetime::Controllers::MusicService::Init() {
-  uint8_t res = 0;
-  res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int Pinetime::Controllers::MusicService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int Pinetime::Controllers::MusicService::OnCommand(struct ble_gatt_access_ctxt* ctxt) {

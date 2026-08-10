@@ -98,15 +98,18 @@ void HeartRate::Refresh() {
 void HeartRate::OnStartStopEvent(lv_event_t event) {
   if (event == LV_EVENT_CLICKED) {
     if (heartRateController.State() == Controllers::HeartRateController::States::Stopped) {
-      heartRateController.Enable();
-      UpdateStartStopButton(heartRateController.State() != Controllers::HeartRateController::States::Stopped);
-      wakeLock.Lock();
-      lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::highlight);
+      if (heartRateController.Enable()) {
+        UpdateStartStopButton(true);
+        wakeLock.Lock();
+        lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::highlight);
+      }
     } else {
       heartRateController.Disable();
       UpdateStartStopButton(heartRateController.State() != Controllers::HeartRateController::States::Stopped);
-      wakeLock.Release();
-      lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
+      if (heartRateController.State() == Controllers::HeartRateController::States::Stopped) {
+        wakeLock.Release();
+        lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
+      }
     }
   }
 }

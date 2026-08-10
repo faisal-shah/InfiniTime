@@ -35,9 +35,6 @@ namespace Pinetime {
         lv_obj_t* upBtn;
         lv_obj_t* downBtn;
         lv_obj_t* number;
-        lv_obj_t* upperLine;
-        lv_obj_t* lowerLine;
-        lv_point_t linePoints[2];
         int min;
         int max;
         int value;

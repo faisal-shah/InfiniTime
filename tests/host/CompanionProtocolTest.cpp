@@ -29,10 +29,11 @@ int main() {
   Check(CompanionProtocol::ScheduleProtocolVersion == 3, "schedule protocol version");
   Check(CompanionProtocol::ScheduleRecordVersion == 3, "schedule record version");
   Check(CompanionProtocol::ScheduleRecordSize == 43, "schedule record size");
-  Check(CompanionProtocol::ScheduleCapacity == 16, "schedule capacity");
+  Check(CompanionProtocol::ScheduleCapacity == 32, "schedule capacity");
   Check(CompanionProtocol::TaskProtocolVersion == 2, "task protocol version");
   Check(CompanionProtocol::TaskRecordVersion == 2, "task record version");
   Check(CompanionProtocol::TaskRecordSize == 31, "task record size");
+  Check(CompanionProtocol::TaskCapacity == 20, "task capacity");
   Check(CompanionProtocol::FamilyStateProtocolVersion == 1, "family-state protocol version");
   Check(CompanionProtocol::FamilyStateSnapshotSchemaVersion == 1, "family-state snapshot schema");
   Check(CompanionProtocol::FamilyStateStatusSize == 16, "family-state status size");

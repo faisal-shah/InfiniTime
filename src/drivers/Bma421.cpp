@@ -9,14 +9,12 @@ using namespace Pinetime::Drivers;
 namespace {
   int8_t user_i2c_read(uint8_t reg_addr, uint8_t* reg_data, uint32_t length, void* intf_ptr) {
     auto bma421 = static_cast<Bma421*>(intf_ptr);
-    bma421->Read(reg_addr, reg_data, length);
-    return 0;
+    return bma421->Read(reg_addr, reg_data, length) ? BMA4_INTF_RET_SUCCESS : BMA4_E_COM_FAIL;
   }
 
   int8_t user_i2c_write(uint8_t reg_addr, const uint8_t* reg_data, uint32_t length, void* intf_ptr) {
     auto bma421 = static_cast<Bma421*>(intf_ptr);
-    bma421->Write(reg_addr, reg_data, length);
-    return 0;
+    return bma421->Write(reg_addr, reg_data, length) ? BMA4_INTF_RET_SUCCESS : BMA4_E_COM_FAIL;
   }
 
   void user_delay(uint32_t period_us, void* /*intf_ptr*/) {
@@ -100,20 +98,25 @@ void Bma421::Reset() {
   twiMaster.Write(deviceAddress, 0x7E, &data, 1);
 }
 
-void Bma421::Read(uint8_t registerAddress, uint8_t* buffer, size_t size) {
-  twiMaster.Read(deviceAddress, registerAddress, buffer, size);
+bool Bma421::Read(uint8_t registerAddress, uint8_t* buffer, size_t size) {
+  return twiMaster.Read(deviceAddress, registerAddress, buffer, size) == TwiMaster::ErrorCodes::NoError;
 }
 
-void Bma421::Write(uint8_t registerAddress, const uint8_t* data, size_t size) {
-  twiMaster.Write(deviceAddress, registerAddress, data, size);
+bool Bma421::Write(uint8_t registerAddress, const uint8_t* data, size_t size) {
+  return twiMaster.Write(deviceAddress, registerAddress, data, size) == TwiMaster::ErrorCodes::NoError;
 }
 
 Bma421::Values Bma421::Process() {
   if (not isOk)
     return {};
-  struct bma4_accel rawData;
-  struct bma4_accel data;
-  bma4_read_accel_xyz(&rawData, &bma);
+
+  struct bma4_accel rawData {};
+
+  struct bma4_accel data {};
+
+  if (bma4_read_accel_xyz(&rawData, &bma) != BMA4_OK) {
+    return {};
+  }
 
   // Scale the measured ADC counts to units of 'binary milli-g'
   // where 1g = 1024 'binary milli-g' units.
@@ -124,7 +127,9 @@ Bma421::Values Bma421::Process() {
   data.z = 1024 * rawData.z / accelScaleFactors[accel_conf.range];
 
   uint32_t steps = 0;
-  bma423_step_counter_output(&steps, &bma);
+  if (bma423_step_counter_output(&steps, &bma) != BMA4_OK) {
+    return {};
+  }
 
   // X and Y axis are swapped because of the way the sensor is mounted in the PineTime
   return {steps, data.y, data.x, data.z};

@@ -30,11 +30,9 @@ CompanionManagementService::CompanionManagementService(const CompanionStatusProv
     statusProvider {statusProvider} {
 }
 
-void CompanionManagementService::Init() {
-  int res = ble_gatts_count_cfg(serviceDefinition);
-  ASSERT(res == 0);
-  res = ble_gatts_add_svcs(serviceDefinition);
-  ASSERT(res == 0);
+int CompanionManagementService::Init() {
+  const int result = ble_gatts_count_cfg(serviceDefinition);
+  return result == 0 ? ble_gatts_add_svcs(serviceDefinition) : result;
 }
 
 int CompanionManagementService::OnAccess(uint16_t /*attrHandle*/, struct ble_gatt_access_ctxt* ctxt) {

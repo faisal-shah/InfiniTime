@@ -79,8 +79,16 @@ FirmwareValidation::~FirmwareValidation() {
 
 void FirmwareValidation::OnButtonEvent(lv_obj_t* object, lv_event_t event) {
   if (object == buttonValidate && event == LV_EVENT_CLICKED) {
-    validator.Validate();
-    running = false;
+    if (validator.Validate()) {
+      running = false;
+    } else {
+      // A failed trailer write must remain visible. Leaving this screen as if
+      // validation succeeded invites a reboot that intentionally rolls back.
+      lv_label_set_text_static(labelIsValidated,
+                               "#ff0000 Validation failed#\n"
+                               "Do not reboot");
+      lv_label_set_text_static(labelButtonValidate, "Retry");
+    }
   } else if (object == buttonReset && event == LV_EVENT_CLICKED) {
     validator.Reset();
   }

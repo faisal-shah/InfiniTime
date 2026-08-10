@@ -2,6 +2,10 @@
 #include <mdk/nrf.h>
 using namespace Pinetime::Drivers;
 
+uint32_t InternalFlash::ReadWord(uint32_t address) {
+  return *reinterpret_cast<volatile const uint32_t*>(address);
+}
+
 void InternalFlash::ErasePage(uint32_t address) {
   // Enable erase.
   NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Een;
@@ -25,7 +29,7 @@ void InternalFlash::WriteWord(uint32_t address, uint32_t value) {
   __DSB();
 
   // Write word
-  *(uint32_t*) address = value;
+  *reinterpret_cast<volatile uint32_t*>(address) = value;
   Wait();
 
   // Disable write

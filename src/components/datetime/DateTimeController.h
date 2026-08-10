@@ -148,6 +148,7 @@ namespace Pinetime {
       int8_t dstOffset = 0;
 
       SemaphoreHandle_t mutex = nullptr;
+      StaticSemaphore_t mutexStorage {};
 
       uint32_t previousSystickCounter = 0;
       std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds> currentDateTime;

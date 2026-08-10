@@ -22,6 +22,7 @@
 #include "components/ble/NotificationManager.h"
 #include "components/beacon/BeaconController.h"
 #include "components/datetime/DateTimeController.h"
+#include "main.h"
 #include "systemtask/SystemTask.h"
 
 using namespace Pinetime::Controllers;
@@ -71,8 +72,11 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
 
 namespace {
   struct ble_npl_event radioReconcileEvent;
+
   struct ble_npl_callout fastAdvertisingCallout {};
+
   struct ble_npl_callout radioRetryCallout {};
+
   struct ble_npl_callout radioHealthCallout {};
 
   void RadioReconcileHandler(struct ble_npl_event* event) {
@@ -102,9 +106,10 @@ namespace {
 
   [[gnu::noinline]] int StatBondFile(Pinetime::System::StorageTask& storageTask,
                                     const char* path,
-                                    BondFileInfo& output) {
+                                    BondFileInfo& output,
+                                    TickType_t timeoutTicks) {
     lfs_info info {};
-    const int result = storageTask.Stat(path, info);
+    const int result = storageTask.Stat(path, info, timeoutTicks);
     if (result == LFS_ERR_OK) {
       output.size = info.size;
       output.type = info.type;
@@ -112,26 +117,28 @@ namespace {
     return result;
   }
 
-  [[gnu::noinline]] bool ReadBondFile(
-    Pinetime::System::StorageTask& storageTask,
-    const char* path,
-    uint8_t* output,
-    size_t size) {
+  [[gnu::noinline]] bool ReadBondFile(Pinetime::System::StorageTask& storageTask,
+                                     const char* path,
+                                     uint8_t* output,
+                                     size_t size,
+                                     TickType_t timeoutTicks) {
     uint32_t totalSize = 0;
-    return storageTask.ReadFile(path, 0, output, size, totalSize) ==
-             static_cast<int>(size) &&
-           totalSize == size;
+    return storageTask.ReadFile(path, 0, output, size, totalSize, timeoutTicks) == static_cast<int>(size) && totalSize == size;
   }
 }
 
 void nimble_on_reset(int reason) {
   NRF_LOG_INFO("Nimble lost sync, resetting state; reason=%d", reason);
-  nptr->OnHostReset();
+  if (nptr != nullptr) {
+    nptr->OnHostReset();
+  }
 }
 
 void nimble_on_sync(void) {
   NRF_LOG_INFO("Nimble is synced");
-  nptr->OnHostSync();
+  if (nptr != nullptr) {
+    nptr->OnHostSync();
+  }
 }
 
 int GAPEventCallback(struct ble_gap_event* event, void* arg) {
@@ -139,25 +146,9 @@ int GAPEventCallback(struct ble_gap_event* event, void* arg) {
 }
 
 bool NimbleController::Init() {
-  // Bounded, because SystemTask is the only thing that feeds the watchdog and
-  // it is blocked here. An unbounded wait meant that any failure to reach host
-  // sync -- including the NimBLE tasks never having been created -- stopped the
-  // feed entirely, and the bootloader's watchdog reset the watch before the
-  // display was ever initialised. The result was an endless reboot into the
-  // bootloader logo with nothing on screen to explain it.
-  //
-  // The deadline is well inside the inherited watchdog period, and the caller
-  // starts the UI before getting here, so giving up leaves a usable watch with
-  // the radio reported as unavailable instead of a watch that looks bricked.
-  constexpr TickType_t syncTimeoutTicks = pdMS_TO_TICKS(3000);
-  const TickType_t syncDeadline = xTaskGetTickCount() + syncTimeoutTicks;
-  while (!ble_hs_synced()) {
-    if (xTaskGetTickCount() >= syncDeadline) {
-      NRF_LOG_ERROR("[ble] host never reached sync; radio unavailable this boot");
-      hostSyncFailed = true;
-      return false;
-    }
-    vTaskDelay(10);
+  hostSyncFailed.store(false, std::memory_order_release);
+  if (!NimblePortInit()) {
+    return FailInitialization("core initialization", static_cast<int>(NimblePortGetError()));
   }
 
   nptr = this;
@@ -165,12 +156,8 @@ bool NimbleController::Init() {
   ble_hs_cfg.sync_cb = nimble_on_sync;
 
   ble_npl_event_init(&bondPersistenceEvent, BondPersistenceEventHandler, this);
-  ble_npl_callout_init(&bondPersistenceCallout,
-                       nimble_port_get_dflt_eventq(),
-                       BondPersistenceTimerHandler,
-                       this);
+  ble_npl_callout_init(&bondPersistenceCallout, nimble_port_get_dflt_eventq(), BondPersistenceTimerHandler, this);
   ble_npl_event_init(&bondWriteCompleteEvent, BondWriteCompleteHandler, this);
-  ble_npl_event_init(&bondRestoreEvent, BondRestoreHandler, this);
   ble_npl_event_init(&forgetAllEvent, ForgetAllHandler, this);
   bondPersistenceEventsInitialized = true;
 
@@ -179,46 +166,86 @@ bool NimbleController::Init() {
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
   }
 
-  ble_svc_gap_init();
-  ble_svc_gatt_init();
-
-  deviceInformationService.Init();
+  if (!CheckRegistration("GAP", ble_svc_gap_init()) || !CheckRegistration("GATT", ble_svc_gatt_init()) ||
+      !CheckRegistration("device information", deviceInformationService.Init())) {
+    return false;
+  }
   currentTimeClient.Init();
-  currentTimeService.Init();
-  musicService.Init();
-  weatherService.Init();
-  scheduleService.Init();
-  taskService.Init();
-  prayerService.Init();
-  multiAlarmService.Init();
-  beaconService.Init();
-  navService.Init();
-  anService.Init();
-  dfuService.Init();
-  batteryInformationService.Init();
-  immediateAlertService.Init();
-  heartRateService.Init();
-  motionService.Init();
-  fsService.Init();
-  companionManagementService.Init();
-  familyStateService.Init();
+  if (!CheckRegistration("current time", currentTimeService.Init()) || !CheckRegistration("music", musicService.Init()) ||
+      !CheckRegistration("weather", weatherService.Init()) || !CheckRegistration("schedule", scheduleService.Init()) ||
+      !CheckRegistration("task", taskService.Init()) || !CheckRegistration("prayer", prayerService.Init()) ||
+      !CheckRegistration("multi-alarm", multiAlarmService.Init()) || !CheckRegistration("beacon", beaconService.Init()) ||
+      !CheckRegistration("navigation", navService.Init()) || !CheckRegistration("alert notification", anService.Init()) ||
+      !CheckRegistration("DFU", dfuService.Init()) || !CheckRegistration("battery", batteryInformationService.Init()) ||
+      !CheckRegistration("immediate alert", immediateAlertService.Init()) || !CheckRegistration("heart rate", heartRateService.Init()) ||
+      !CheckRegistration("motion", motionService.Init()) || !CheckRegistration("filesystem", fsService.Init()) ||
+      !CheckRegistration("companion management", companionManagementService.Init()) ||
+      !CheckRegistration("family state", familyStateService.Init())) {
+    return false;
+  }
 
-  int rc = ble_svc_gap_device_name_set(deviceName);
-  ASSERT(rc == 0);
-  rc = ble_svc_gap_device_appearance_set(0xC2);
-  ASSERT(rc == 0);
-
-  rc = ble_gatts_start();
-  ASSERT(rc == 0);
+  int result = ble_svc_gap_device_name_set(deviceName);
+  if (result != 0) {
+    return FailInitialization("GAP device name", result);
+  }
+  result = ble_svc_gap_device_appearance_set(0xC2);
+  if (result != 0) {
+    return FailInitialization("GAP appearance", result);
+  }
 
   ble_npl_event_init(&radioReconcileEvent, RadioReconcileHandler, this);
   ble_npl_callout_init(&fastAdvertisingCallout, nimble_port_get_dflt_eventq(), FastAdvertisingTimeoutHandler, this);
   ble_npl_callout_init(&radioRetryCallout, nimble_port_get_dflt_eventq(), RadioRetryTimeoutHandler, this);
   ble_npl_callout_init(&radioHealthCallout, nimble_port_get_dflt_eventq(), RadioHealthCheckHandler, this);
   radioEventsInitialized = true;
-  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondRestoreEvent);
-  OnHostSync();
-  return true;
+
+  // Install the persistent store before ble_hs_start performs its initial IRK
+  // restore.  Deferring this to the host event loop is too late: that loop only
+  // runs after ble_hs_start has synchronized with the controller.
+  RestoreBondStoreBeforeHostStart();
+  if (!NimblePortStart()) {
+    return FailInitialization("task startup", static_cast<int>(NimblePortGetError()));
+  }
+
+  // SystemTask is the sole watchdog feeder, so this wait must remain bounded
+  // and wrap-safe. The UI has already drawn its first frame; failure costs BLE
+  // for this boot instead of resetting an apparently bricked watch.
+  constexpr TickType_t syncTimeoutTicks = pdMS_TO_TICKS(3000);
+  const TickType_t syncStarted = xTaskGetTickCount();
+  while (true) {
+    if (NimblePortGetHostState() == NimbleHostState::Failed) {
+      return FailInitialization("host start", NimblePortGetHostError());
+    }
+    if (NimblePortGetHostState() == NimbleHostState::Running && ble_hs_synced()) {
+      return true;
+    }
+    if (NimbleStartupTimedOut(syncStarted, xTaskGetTickCount(), syncTimeoutTicks)) {
+      // Close the race with a sync callback that arrived at the timeout edge.
+      hostSyncFailed.store(true, std::memory_order_release);
+      if (ble_hs_synced()) {
+        hostSyncFailed.store(false, std::memory_order_release);
+        OnHostSync();
+        return true;
+      }
+      return FailInitialization("host sync timeout", 0);
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+bool NimbleController::CheckRegistration(const char* service, int result) {
+  if (result == 0) {
+    return true;
+  }
+  return FailInitialization(service, result);
+}
+
+bool NimbleController::FailInitialization(const char* stage, int result) {
+  hostSyncFailed.store(true, std::memory_order_release);
+  requestedRadioMode.store(BleRadioStateMachine::DesiredMode::Off);
+  bleController.DisableRadio();
+  NRF_LOG_ERROR("[ble] %s failed (%d); radio unavailable this boot", stage, result);
+  return false;
 }
 
 void NimbleController::BondStoreDirtyCallback(void* arg) {
@@ -237,16 +264,12 @@ void NimbleController::BondWriteCompleteHandler(struct ble_npl_event* event) {
   static_cast<NimbleController*>(ble_npl_event_get_arg(event))->CompleteBondStoreWrite();
 }
 
-void NimbleController::BondRestoreHandler(struct ble_npl_event* event) {
-  static_cast<NimbleController*>(ble_npl_event_get_arg(event))->RestoreBondStoreOnHost();
-}
-
 void NimbleController::ForgetAllHandler(struct ble_npl_event* event) {
   static_cast<NimbleController*>(ble_npl_event_get_arg(event))->ProcessForgetAll();
 }
 
 void NimbleController::QueueBondPersistenceEvent() {
-  if (bondPersistenceEventsInitialized) {
+  if (bondPersistenceEventsInitialized && !hostSyncFailed.load(std::memory_order_acquire)) {
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondPersistenceEvent);
   }
 }
@@ -291,8 +314,7 @@ void NimbleController::ProcessBondPersistence() {
 
   switch (bondPersistence.Poll(now)) {
     case BondPersistenceCoordinator::Action::Capture: {
-      if (!bondStore.CaptureSnapshot(bondSnapshotScratch) ||
-          !bondPersistence.Capture(bondSnapshotScratch)) {
+      if (!bondStore.CaptureSnapshot(bondSnapshotScratch) || !bondPersistence.Capture(bondSnapshotScratch)) {
         bondPersistence.CaptureUnstable(now);
         break;
       }
@@ -333,15 +355,12 @@ void NimbleController::PersistBondStore() {
   }
 }
 
-void NimbleController::OnStorageFilePersisted(uint64_t context,
-                                              bool success) {
+void NimbleController::OnStorageFilePersisted(uint64_t context, bool success) {
   bondWriteCompletion.generation = context;
-  bondWriteCompletion.durationMs = static_cast<uint32_t>(
-    (xTaskGetTickCount() - bondWriteStarted) * portTICK_PERIOD_MS);
+  bondWriteCompletion.durationMs = static_cast<uint32_t>((xTaskGetTickCount() - bondWriteStarted) * portTICK_PERIOD_MS);
   bondWriteCompletion.bytes = bondWriteBytes;
   bondWriteCompletion.success = success;
-  ble_npl_eventq_put(nimble_port_get_dflt_eventq(),
-                     &bondWriteCompleteEvent);
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &bondWriteCompleteEvent);
 }
 
 void NimbleController::CompleteBondStoreWrite() {
@@ -366,8 +385,7 @@ void NimbleController::CompleteBondStoreWrite() {
     QueueRadioReconciliation();
     bondNotices.LatchForgetAllComplete();
   }
-  if (bootPersistenceGate.CompleteFormatWrite(bondWriteCompletion.success,
-                                              bondWriteCompletion.generation)) {
+  if (bootPersistenceGate.CompleteFormatWrite(bondWriteCompletion.success, bondWriteCompletion.generation)) {
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializedEmpty,
                                BondStoreCodec::DecodeError::None,
                                bootPersistenceGate.FormatNoticePending());
@@ -394,7 +412,7 @@ void NimbleController::RequestForgetAllBonds() {
 }
 
 void NimbleController::QueueForgetAllEvent() {
-  if (bondPersistenceEventsInitialized) {
+  if (bondPersistenceEventsInitialized && !hostSyncFailed.load(std::memory_order_acquire)) {
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &forgetAllEvent);
   }
 }
@@ -525,27 +543,34 @@ bool NimbleController::PrepareBondStoreRestore() {
   };
   bondSnapshotScratch.Clear();
 
+  // MCUBoot's locked watchdog has a seven-second period. Host synchronization
+  // already owns a bounded three-second window, so all boot-time filesystem
+  // work shares this one short deadline rather than multiplying StorageTask's
+  // normal per-call timeout across two stats and three 512-byte reads. If the
+  // budget expires, the bond gate keeps advertising off for this boot while
+  // the already-rendered clock remains usable.
+  constexpr TickType_t restoreBudget = pdMS_TO_TICKS(750);
+  const TickType_t restoreStarted = xTaskGetTickCount();
+  const auto remainingBudget = [&]() {
+    return Pinetime::System::StorageIoPolicy::RemainingTicks(
+      restoreStarted, xTaskGetTickCount(), restoreBudget);
+  };
+
   BondFileInfo dataInfo;
   BondFileInfo legacyInfo;
-  const bool legacyExists =
-    StatBondFile(storageTask, LegacyPath, legacyInfo) == LFS_ERR_OK;
-  const int statResult = StatBondFile(storageTask, DataPath, dataInfo);
+  const int statResult = StatBondFile(storageTask, DataPath, dataInfo, remainingBudget());
 
   if (statResult == LFS_ERR_OK) {
-    if (dataInfo.type != LFS_TYPE_REG || dataInfo.size > BondStoreCodec::MaxEncodedSize ||
-        dataInfo.size < BondStoreCodec::HeaderSize) {
+    if (dataInfo.type != LFS_TYPE_REG || dataInfo.size > BondStoreCodec::MaxEncodedSize || dataInfo.size < BondStoreCodec::HeaderSize) {
       bondPersistenceWritesEnabled = false;
-      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid,
-                                 BondStoreCodec::DecodeError::Length);
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid, BondStoreCodec::DecodeError::Length);
       return prepareEmptyRestore();
     }
 
     auto& encoded = bondPersistence.BootBuffer();
-    if (!ReadBondFile(
-          storageTask, DataPath, encoded.data(), dataInfo.size)) {
+    if (!ReadBondFile(storageTask, DataPath, encoded.data(), dataInfo.size, remainingBudget())) {
       bondPersistenceWritesEnabled = false;
-      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid,
-                                 BondStoreCodec::DecodeError::Length);
+      bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::Invalid, BondStoreCodec::DecodeError::Length);
       return prepareEmptyRestore();
     }
 
@@ -568,6 +593,16 @@ bool NimbleController::PrepareBondStoreRestore() {
     return false;
   }
 
+  // The legacy path matters only when there is no current-format snapshot (or
+  // when a valid pre-marker snapshot is intentionally reset). Avoid spending
+  // boot budget on this stat for the overwhelmingly common restore path.
+  const int legacyStatResult = StatBondFile(storageTask, LegacyPath, legacyInfo, remainingBudget());
+  if (legacyStatResult != LFS_ERR_OK && legacyStatResult != LFS_ERR_NOENT) {
+    bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
+    return false;
+  }
+  const bool legacyExists = legacyStatResult == LFS_ERR_OK;
+
   // First 2.0 boot, or a valid pre-marker image: intentionally reset rather
   // than importing either previous bond format.
   const uint32_t previousResetEpoch = bondSnapshotScratch.registry.resetEpoch;
@@ -580,18 +615,16 @@ bool NimbleController::PrepareBondStoreRestore() {
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
     return false;
   }
-  bootPersistenceGate.BeginFormatInitialization(
-    bondSnapshotScratch.generation,
-    BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded));
+  bootPersistenceGate.BeginFormatInitialization(bondSnapshotScratch.generation,
+                                                BondPersistenceCoordinator::AnnouncesLegacyReset(legacyExists, preMarkerDiscarded));
   bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::InitializingEmpty);
   bootBondSnapshotReady = true;
   return true;
 }
 
-void NimbleController::RestoreBondStoreOnHost() {
+void NimbleController::RestoreBondStoreBeforeHostStart() {
   bondStore.Init(BondStoreDirtyCallback, this);
-  const bool restored =
-    bootBondSnapshotReady && bondStore.RestoreSnapshot(bondSnapshotScratch);
+  const bool restored = bootBondSnapshotReady && bondStore.RestoreSnapshot(bondSnapshotScratch);
   if (!restored) {
     bootPersistenceGate.CompleteRestore(false);
     bondPersistence.RecordBoot(BondPersistenceCoordinator::BootState::RestoreFailed);
@@ -613,7 +646,7 @@ void NimbleController::RestoreBondStoreOnHost() {
 }
 
 void NimbleController::OnHostReset() {
-  if (!radioEventsInitialized) {
+  if (!radioEventsInitialized || hostSyncFailed.load(std::memory_order_acquire)) {
     return;
   }
 
@@ -635,7 +668,7 @@ void NimbleController::OnHostReset() {
 }
 
 void NimbleController::OnHostSync() {
-  if (!radioEventsInitialized) {
+  if (!radioEventsInitialized || hostSyncFailed.load(std::memory_order_acquire)) {
     return;
   }
   hostSyncRequested.store(true);
@@ -644,7 +677,7 @@ void NimbleController::OnHostSync() {
 }
 
 void NimbleController::QueueRadioReconciliation() {
-  if (radioEventsInitialized) {
+  if (radioEventsInitialized && !hostSyncFailed.load(std::memory_order_acquire)) {
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &radioReconcileEvent);
   }
 }
@@ -699,14 +732,14 @@ bool NimbleController::PrepareIdentityAddress() {
 }
 
 void NimbleController::ReconcileRadio() {
+  if (hostSyncFailed.load(std::memory_order_acquire)) {
+    return;
+  }
   // While a Forget All is in progress the effective desired mode is forced Off
   // so the wipe happens against a quiescent radio. The user's real intent stays
   // in requestedRadioMode and is resumed once the empty snapshot is committed.
-  const bool persistenceGateActive =
-    forgetAllState != ForgetAllState::Idle ||
-    bootPersistenceGate.BlocksRadio();
-  const auto desiredMode =
-    persistenceGateActive ? BleRadioStateMachine::DesiredMode::Off : requestedRadioMode.load();
+  const bool persistenceGateActive = forgetAllState != ForgetAllState::Idle || bootPersistenceGate.BlocksRadio();
+  const auto desiredMode = persistenceGateActive ? BleRadioStateMachine::DesiredMode::Off : requestedRadioMode.load();
   const bool desiredModeChanged = desiredMode != radioState.Desired();
   radioState.SetDesiredMode(desiredMode);
   if (desiredModeChanged) {
@@ -742,7 +775,9 @@ void NimbleController::ReconcileRadio() {
 
 int NimbleController::StartConnectableAdvertising(bool fast) {
   struct ble_gap_adv_params params {};
+
   struct ble_hs_adv_fields fields {};
+
   struct ble_hs_adv_fields responseFields {};
 
   params.conn_mode = BLE_GAP_CONN_MODE_UND;
@@ -783,6 +818,7 @@ int NimbleController::StartBeaconAdvertising() {
   }
 
   struct ble_gap_adv_params params {};
+
   params.conn_mode = BLE_GAP_CONN_MODE_NON;
   params.disc_mode = BLE_GAP_DISC_MODE_NON;
   params.itvl_min = 0x0640;
@@ -850,8 +886,8 @@ void NimbleController::ExecuteRadioCommand(BleRadioStateMachine::Command command
       return;
   }
 
-  const bool startCommand = command == Command::StartFastAdvertising || command == Command::StartSlowAdvertising ||
-                            command == Command::StartBeaconAdvertising;
+  const bool startCommand =
+    command == Command::StartFastAdvertising || command == Command::StartSlowAdvertising || command == Command::StartBeaconAdvertising;
   Result result = rc == 0 ? Result::Success : Result::Failed;
   if (command == Command::StopAdvertising && rc == BLE_HS_EALREADY) {
     result = Result::AlreadyInactive;
@@ -1182,6 +1218,10 @@ void NimbleController::RequestFastAdvertising() {
 }
 
 void NimbleController::EnableRadio() {
+  if (hostSyncFailed.load(std::memory_order_acquire)) {
+    bleController.DisableRadio();
+    return;
+  }
   bleController.EnableRadio();
   requestedRadioMode.store(BleRadioStateMachine::DesiredMode::Connectable);
   fastAdvertisingRequested.store(true);
@@ -1200,9 +1240,9 @@ bool NimbleController::IsBeaconing() const {
 }
 
 void NimbleController::RequestBeaconMode(bool enable) {
-  requestedRadioMode.store(enable ? BleRadioStateMachine::DesiredMode::Beacon
-                                  : (bleController.IsRadioEnabled() ? BleRadioStateMachine::DesiredMode::Connectable
-                                                                    : BleRadioStateMachine::DesiredMode::Off));
+  requestedRadioMode.store(
+    enable ? BleRadioStateMachine::DesiredMode::Beacon
+           : (bleController.IsRadioEnabled() ? BleRadioStateMachine::DesiredMode::Connectable : BleRadioStateMachine::DesiredMode::Off));
   if (!enable && bleController.IsRadioEnabled()) {
     fastAdvertisingRequested.store(true);
   }

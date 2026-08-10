@@ -1,14 +1,28 @@
 #include "buttonhandler/ButtonHandler.h"
 
+#include <libraries/log/nrf_log.h>
+
 using namespace Pinetime::Controllers;
 
 void ButtonTimerCallback(TimerHandle_t xTimer) {
   auto* sysTask = static_cast<Pinetime::System::SystemTask*>(pvTimerGetTimerID(xTimer));
-  sysTask->PushMessage(Pinetime::System::Messages::HandleButtonTimerEvent);
+  (void) sysTask->TryPushMessage(Pinetime::System::Messages::HandleButtonTimerEvent);
 }
 
 void ButtonHandler::Init(Pinetime::System::SystemTask* systemTask) {
-  buttonTimer = xTimerCreate("buttonTimer", pdMS_TO_TICKS(200), pdFALSE, systemTask, ButtonTimerCallback);
+  gesturesAvailable = buttonTimer.Create("buttonTimer", pdMS_TO_TICKS(200), pdFALSE, systemTask, ButtonTimerCallback);
+  if (!gesturesAvailable) {
+    NRF_LOG_ERROR("[button] timer unavailable; using single-click fallback");
+  }
+}
+
+bool ButtonHandler::ArmTimer(TickType_t period) {
+  if (!gesturesAvailable || !buttonTimer.ChangePeriod(period)) {
+    gesturesAvailable = false;
+    NRF_LOG_WARNING("[button] timer command failed");
+    return false;
+  }
+  return true;
 }
 
 ButtonActions ButtonHandler::HandleEvent(Events event) {
@@ -23,29 +37,39 @@ ButtonActions ButtonHandler::HandleEvent(Events event) {
     buttonPressed = false;
   }
 
+  // A missing timer must not disable the physical button.  Double-click and
+  // hold gestures are optional; release still provides a normal click.
+  if (!gesturesAvailable) {
+    return event == Events::Release ? ButtonActions::Click : ButtonActions::None;
+  }
+
   switch (state) {
     case States::Idle:
       if (event == Events::Press) {
-        xTimerChangePeriod(buttonTimer, doubleClickTime, 0);
-        xTimerStart(buttonTimer, 0);
-        state = States::Pressed;
+        if (ArmTimer(doubleClickTime)) {
+          state = States::Pressed;
+        }
       }
       break;
     case States::Pressed:
       if (event == Events::Press) {
         if (xTaskGetTickCount() - releaseTime < doubleClickTime) {
-          xTimerStop(buttonTimer, 0);
+          (void) buttonTimer.Stop();
           state = States::Idle;
           return ButtonActions::DoubleClick;
         }
       } else if (event == Events::Release) {
-        xTimerChangePeriod(buttonTimer, doubleClickTime, 0);
-        xTimerStart(buttonTimer, 0);
+        if (!ArmTimer(doubleClickTime)) {
+          state = States::Idle;
+          return ButtonActions::Click;
+        }
       } else if (event == Events::Timer) {
         if (buttonPressed) {
-          xTimerChangePeriod(buttonTimer, longPressTime - doubleClickTime, 0);
-          xTimerStart(buttonTimer, 0);
-          state = States::Holding;
+          if (ArmTimer(longPressTime - doubleClickTime)) {
+            state = States::Holding;
+          } else {
+            state = States::Idle;
+          }
         } else {
           state = States::Idle;
           return ButtonActions::Click;
@@ -54,19 +78,20 @@ ButtonActions ButtonHandler::HandleEvent(Events event) {
       break;
     case States::Holding:
       if (event == Events::Release) {
-        xTimerStop(buttonTimer, 0);
+        (void) buttonTimer.Stop();
         state = States::Idle;
         return ButtonActions::Click;
       } else if (event == Events::Timer) {
-        xTimerChangePeriod(buttonTimer, longerPressTime - longPressTime - doubleClickTime, 0);
-        xTimerStart(buttonTimer, 0);
-        state = States::LongHeld;
-        return ButtonActions::LongPress;
+        if (ArmTimer(longerPressTime - longPressTime - doubleClickTime)) {
+          state = States::LongHeld;
+          return ButtonActions::LongPress;
+        }
+        state = States::Idle;
       }
       break;
     case States::LongHeld:
       if (event == Events::Release) {
-        xTimerStop(buttonTimer, 0);
+        (void) buttonTimer.Stop();
         state = States::Idle;
       } else if (event == Events::Timer) {
         state = States::Idle;

@@ -156,20 +156,47 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  nullptr} {
 }
 
-void DisplayApp::Start(System::BootErrors error) {
-  msgQueue = xQueueCreate(queueSize, itemSize);
-
-  bootError = error;
-
-  if (pdPASS != xTaskCreate(DisplayApp::Process, "displayapp", 800, this, 0, &taskHandle)) {
-    APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+bool DisplayApp::Start(System::BootErrors error) {
+  if (taskHandle != nullptr) {
+    return true;
   }
+  msgQueue = xQueueCreateStatic(
+    queueSize, itemSize, msgQueueStorage, &msgQueueBuffer);
+  readySemaphore = xSemaphoreCreateBinaryStatic(&readySemaphoreBuffer);
+  bootError = error;
+  if (msgQueue == nullptr || readySemaphore == nullptr) {
+    return false;
+  }
+  taskHandle = xTaskCreateStatic(DisplayApp::Process,
+                                 "displayapp",
+                                 taskStackWords,
+                                 this,
+                                 0,
+                                 taskStack,
+                                 &taskBuffer);
+  return taskHandle != nullptr;
+}
+
+bool DisplayApp::WaitUntilReady(TickType_t timeout) {
+  if (ready.load(std::memory_order_acquire)) {
+    return true;
+  }
+  if (readySemaphore == nullptr ||
+      xSemaphoreTake(readySemaphore, timeout) != pdTRUE) {
+    return false;
+  }
+  return ready.load(std::memory_order_acquire);
 }
 
 void DisplayApp::Process(void* instance) {
   auto* app = static_cast<DisplayApp*>(instance);
   NRF_LOG_INFO("displayapp task started!");
-  app->Init();
+  if (!app->Init()) {
+    NRF_LOG_ERROR("[display] LCD initialization failed");
+    while (true) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+  }
 
   if (app->bootError == System::BootErrors::TouchController) {
     app->LoadNewScreen(Apps::Error, DisplayApp::FullRefreshDirections::None);
@@ -177,17 +204,29 @@ void DisplayApp::Process(void* instance) {
     app->LoadNewScreen(Apps::Clock, DisplayApp::FullRefreshDirections::None);
   }
 
+  if (app->lvgl.RenderFirstFrame()) {
+    app->ready.store(true, std::memory_order_release);
+    app->progressCounter.fetch_add(1, std::memory_order_relaxed);
+    xSemaphoreGive(app->readySemaphore);
+  } else {
+    NRF_LOG_ERROR("[display] first frame did not reach the LCD");
+  }
+
   while (true) {
     app->Refresh();
+    app->progressCounter.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
-void DisplayApp::Init() {
-  lcd.Init();
+bool DisplayApp::Init() {
+  if (!lcd.Init()) {
+    return false;
+  }
   motorController.Init();
   brightnessController.Init();
   ApplyBrightness();
   lvgl.Init();
+  return true;
 }
 
 TickType_t DisplayApp::CalculateSleepTime() {
@@ -289,7 +328,10 @@ void DisplayApp::Refresh() {
         if (!currentScreen->IsRunning()) {
           LoadPreviousScreen();
         }
-        queueTimeout = lv_task_handler();
+        // Bound the wait so SystemTask can distinguish a live renderer from a
+        // display task that stopped making progress before the watchdog's
+        // liveness deadline.
+        queueTimeout = std::min<TickType_t>(lv_task_handler(), pdMS_TO_TICKS(1000));
 
         if (!systemTask->IsSleepDisabled() && IsPastDimTime()) {
           if (!isDimmed) {
@@ -354,23 +396,34 @@ void DisplayApp::Refresh() {
         if (currentApp == Apps::Launcher || currentApp == Apps::Notifications || currentApp == Apps::QuickSettings ||
             currentApp == Apps::Settings) {
           LoadScreen(Apps::Clock, DisplayApp::FullRefreshDirections::None);
-          // Wait for the clock app to load before moving on.
-          while (!lv_task_handler()) {
-          };
+          // Complete the replacement clock frame before powering the panel
+          // down. The old unbounded lv_task_handler() spin could strand
+          // SystemTask in GoingToSleep while it continued feeding the
+          // watchdog, leaving a black watch alive indefinitely.
+          if (!lvgl.RenderFirstFrame()) {
+            NRF_LOG_ERROR("[display] clock frame failed during sleep transition");
+            break;
+          }
         }
         // Clear any ongoing touch pressed events
         // Without this LVGL gets stuck in the pressed state and will keep refreshing the
         // display activity timer causing the screen to never sleep after timeout
         lvgl.ClearTouchState();
         if (msg == Messages::GoToAOD) {
-          lcd.LowPowerOn();
+          if (!lcd.LowPowerOn()) {
+            lvgl.MarkDisplayFailure();
+            break;
+          }
           // Record idle entry time
           alwaysOnFrameCount = 0;
           alwaysOnStartTime = xTaskGetTickCount();
           PushMessageToSystemTask(Pinetime::System::Messages::OnDisplayTaskAOD);
           state = States::AOD;
         } else {
-          lcd.Sleep();
+          if (!lcd.Sleep()) {
+            lvgl.MarkDisplayFailure();
+            break;
+          }
           PushMessageToSystemTask(Pinetime::System::Messages::OnDisplayTaskSleeping);
           state = States::Idle;
         }
@@ -386,9 +439,15 @@ void DisplayApp::Refresh() {
           break;
         }
         if (state == States::AOD) {
-          lcd.LowPowerOff();
+          if (!lcd.LowPowerOff()) {
+            lvgl.MarkDisplayFailure();
+            break;
+          }
         } else {
-          lcd.Wakeup();
+          if (!lcd.Wakeup()) {
+            lvgl.MarkDisplayFailure();
+            break;
+          }
         }
         lv_disp_trig_activity(nullptr);
         ApplyBrightness();
@@ -520,6 +579,18 @@ void DisplayApp::Refresh() {
         break;
       case Messages::BondForgetAllRequested:
         PushMessageToSystemTask(System::Messages::BondForgetAllRequested);
+        break;
+      case Messages::ReloadClock:
+        // The first boot frame intentionally precedes filesystem/settings
+        // loading. Reapply the now-persisted brightness together with the
+        // reloaded face; otherwise every boot stays at the default level until
+        // the user changes brightness manually.
+        if (state == States::Running) {
+          ApplyBrightness();
+        }
+        if (currentApp == Apps::Clock) {
+          LoadScreen(Apps::Clock, DisplayApp::FullRefreshDirections::None);
+        }
         break;
       case Messages::Chime:
         LoadNewScreen(Apps::Clock, DisplayApp::FullRefreshDirections::None);
@@ -731,20 +802,23 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
 }
 
 void DisplayApp::PushMessage(Messages msg) {
+  if (msgQueue == nullptr) {
+    return;
+  }
   if (in_isr()) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xQueueSendFromISR(msgQueue, &msg, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
   } else {
-    TickType_t timeout = portMAX_DELAY;
-    // Make xQueueSend() non-blocking if the message is a Notification message. We do this to avoid
-    // deadlock between SystemTask and DisplayApp when their respective message queues are getting full
-    // when a lot of notifications are received on a very short time span.
-    if (msg == Messages::NewNotification) {
-      timeout = static_cast<TickType_t>(0);
-    }
-
-    xQueueSend(msgQueue, &msg, timeout);
+    // DisplayApp and SystemTask send messages to one another. Waiting forever
+    // on either queue can deadlock both tasks when they fill at the same time,
+    // which also prevents SystemTask from feeding the watchdog. A short bound
+    // gives DisplayApp time to consume ordinary bursts; liveness monitoring
+    // handles a dropped sleep/wake transition instead of leaving a black watch.
+    constexpr TickType_t queueSendTimeout = pdMS_TO_TICKS(10);
+    const TickType_t timeout =
+      msg == Messages::NewNotification ? 0 : queueSendTimeout;
+    (void) xQueueSend(msgQueue, &msg, timeout);
   }
 }
 
