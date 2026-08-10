@@ -39,3 +39,4 @@
 | --- | ---: | --- |
 | 2026-08-10 | 1 | Clean proposal branch and review package prepared; implementation remains blocked pending owner decisions |
 | 2026-08-10 | 0 | Final documentation QA passed after the last diagram correction; no implementation task advanced |
+| 2026-08-10 | 1 | Added embedded-system tradeoffs to every D1--D15 decision and re-ran documentation/repository checks |

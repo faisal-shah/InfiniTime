@@ -8,7 +8,7 @@
 - Next task: P0-T2 resolve owner decisions D1--D15.
 - Next action: discuss `doc/family-rewrite/DECISIONS.md` with the owner and
   revise the proposal/requirements; do not implement firmware.
-- Last checkpoint: 2026-08-10 16:29 UTC.
+- Last checkpoint: 2026-08-10 18:12 UTC.
 
 ## Phase P0 — Proposal and owner review
 
@@ -43,3 +43,5 @@
 - No firmware image or DFU package has been created.
 - Final proposal QA passes Mermaid rendering, Markdownlint, CSpell, link/ID
   checks (125 unique requirements), and the repository format/tidy scripts.
+- D1--D15 now each include explicit embedded-system tradeoffs; owner choices
+  remain unresolved.
