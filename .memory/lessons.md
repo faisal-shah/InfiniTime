@@ -32,6 +32,28 @@
   validated copy of untracked drafts. A full filesystem can truncate an
   untracked target before a write fails; this proposal was recovered from its
   validated `/tmp` rendering after clearing an unrelated 24-GiB scratch build.
+- Compare resource changes against the clean baseline and include transient
+  task-stack frames, shared staging, ledgers, and caches—not only static arrays
+  or definition models. Raising CCCD capacity exposed a 1,280-byte stack-frame
+  increase despite only 256 bytes of additional static CCCD storage.
+- Do not infer notification retry/update/cancel identity from the legacy alert
+  payload: it carries no stable phone notification ID. Identical writes may be
+  legitimate distinct messages and must remain distinct unless a new transport
+  explicitly supplies identity semantics.
+- With one BLE link, rejecting a retained phone after it connects cannot
+  guarantee another phone an opportunity. A known-peer handoff needs a bounded
+  controller filter; admission of an unknown new peer remains best-effort under
+  aggressive reconnects and needs an explicit user pause/recovery journey.
+- Multi-editor record IDs and occurrence revisions solve different problems.
+  Use companion-generated stable IDs for merge identity, watch-owned occurrence
+  revisions only for due-semantic edits, and a current cutoff so title-only or
+  timing edits cannot replay an already handled alert.
+- Convert legacy companion data from one designated migration source. Two
+  independently converted drafts can assign unrelated IDs to the same logical
+  records and silently duplicate them during a later merge.
+- Alternatives in a decision sheet are real contract forks: every selected
+  deviation must condition or replace incompatible MUST requirements rather
+  than being presented as if all checkboxes compose.
 
 ## Checkpoint log
 
@@ -40,3 +62,4 @@
 | 2026-08-10 | 1 | Clean proposal branch and review package prepared; implementation remains blocked pending owner decisions |
 | 2026-08-10 | 0 | Final documentation QA passed after the last diagram correction; no implementation task advanced |
 | 2026-08-10 | 1 | Added embedded-system tradeoffs to every D1--D15 decision and re-ran documentation/repository checks |
+| 2026-08-10 | 0 | Adversarially hardened D1--D15 and recorded required reconciliation; owner review remains the active P0 task |

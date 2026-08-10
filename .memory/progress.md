@@ -8,7 +8,7 @@
 - Next task: P0-T2 resolve owner decisions D1--D15.
 - Next action: discuss `doc/family-rewrite/DECISIONS.md` with the owner and
   revise the proposal/requirements; do not implement firmware.
-- Last checkpoint: 2026-08-10 18:12 UTC.
+- Last checkpoint: 2026-08-10 19:20 UTC.
 
 ## Phase P0 — Proposal and owner review
 
@@ -43,5 +43,11 @@
 - No firmware image or DFU package has been created.
 - Final proposal QA passes Mermaid rendering, Markdownlint, CSpell, link/ID
   checks (125 unique requirements), and the repository format/tidy scripts.
-- D1--D15 now each include explicit embedded-system tradeoffs; owner choices
-  remain unresolved.
+- D1--D15 were adversarially re-reviewed against clean-main source, proposal,
+  requirements, archived family behavior, and PineTimeCompanion. Each now has
+  explicit product/failure/resource tradeoffs and a mandatory P0-T3
+  reconciliation list; owner choices remain unresolved.
+- D14/GATE-P0 still requires the owner's actual watch, A/B/C phone,
+  Gadgetbridge, and notification-app matrix. “Accept all” cannot fill it in.
+- Decision-sheet Markdownlint, CSpell, structural/requirement-ID checks, and the
+  repository format/tidy tests pass on the final reviewed snapshot.
