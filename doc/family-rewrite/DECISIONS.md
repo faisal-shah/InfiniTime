@@ -1,1125 +1,1528 @@
-# Family rewrite decision sheet
-
-**Status:** awaiting owner review; no firmware implementation is authorized
-**Prepared:** 2026-08-10
-**Re-reviewed:** 2026-08-10 against clean-main source, the proposal, formal
-requirements, the archived family implementation, and PineTimeCompanion 0.34.0
-
-This sheet contains product choices whose consequences are visible to the owner.
-It does not ask the owner to choose byte order, task placement, buffer layout, or
-other internal engineering details.
-
-During P0-T2 this sheet is the authoritative review source. `PROPOSAL.md` and
-`REQUIREMENTS.md` still contain earlier draft defaults; they are deliberately
-not authorization to implement. The explicit reconciliation list near the end
-must be completed after owner selection and before GATE-P0 can close.
-
-## How to review this sheet
-
-Reply with `accept all recommendations except ...`, or answer individual
-decision parts such as `D3a = A, D6c = 10 minutes, D14b = <devices>`.
-
-**Short glossary:** AOD is the dim always-on display mode, not full sleep;
-external flash must remain awake there because firmware may still access it.
-CCCDs are per-peer BLE subscription records. CAS is a generation check that
-rejects stale writes. Durable-first means flash commit verifies before new state
-becomes final. PTC means PineTimeCompanion. MCUboot TEST means a trial image that
-reverts after reset unless deliberately confirmed.
-
-The following are non-negotiable regardless of a product choice:
-
-- bounded waits and state-dependent watchdog health;
-- a complete first clock frame before optional BLE/family startup;
-- no automatic filesystem format after one mount failure;
-- Digital available for boot/recovery and safe mode;
-- no publication of durable state before verified commit;
-- the physical RAM, largest-block, stack, image, current, and soak gates in the
-  proposal;
-- no reuse of a 3.0.0--3.0.3 version or artifact.
-
-A product selection can make a phase fail its physical gate. In that case the
-implementation may be redesigned without changing selected behavior; any
-user-visible reduction reopens that decision for owner approval. The gate is
-never relaxed. Byte counts below are evidence-based estimates, not permission
-to spend the remaining RAM. Exact ARM `sizeof`, link-map, heap, largest-block,
-current, and flash-operation measurements remain mandatory.
-
-## Dependency summary
-
-| Decisions | Coupling |
-| --- | --- |
-| D1, D13, D14 | Pairing capacity, bond cutover, and the actual phone/app matrix |
-| D1a, D1d, D14 | Retained-peer count determines whether handoff/two-editor behavior exists |
-| D2, D3, D5 | Inbox capacity, reboot guarantees, and late-event behavior |
-| D3, D6 | Shared presenter versus alarm-specific ringing/snooze behavior |
-| D4, D14 | Companion-owned schedule creation and two-editor conflict handling |
-| D6, D14 | On-watch alarm edits versus companion merge/conflict handling |
-| D7, D13, D14 | Task ownership, durable completion, and companion resynchronization |
-| D8, D5 | Prayer calculation and late/missed-prayer behavior |
-| D8, D14 | Companion-owned coordinates and supported configuration clients |
-| D9, D10, D11, D12 | Family layout, AOD, weather, apps, and compiled watch faces |
-| D10, D11, D12, D14 | Full weather removal changes Digital and compatibility promises |
-| D13, D14, D15 | Resync tooling and matching companion must precede the first alpha |
-
-## Embedded tradeoff summary
-
-| Decision | Dominant embedded tradeoff |
-| --- | --- |
-| D1 | Static NimBLE/CCCD RAM and reconnect/security state versus paired-device convenience |
-| D2 | Always-resident ring RAM versus burst retention; volatile history avoids uncontrolled flash traffic |
-| D3 | Littlefs/NOR latency, current, and wear versus duplicate/loss guarantees across reset |
-| D4 | Active + staging RAM and sync time scale with rule count/title size; recurrence stays timer-free |
-| D5 | Bounded catch-up and ledger work versus useful late alerts; physical presentation must be rate-limited |
-| D6 | Record bytes are small; recurrence, motor, snooze, reboot, and UI state dominate risk |
-| D7 | Durable commits simplify reset semantics; coalescing reduces only clustered writes and can lose taps |
-| D8 | Constants consume little RAM; astronomy validation and stale location/UTC offset dominate correctness |
-| D9 | LVGL heap, allocation count, redraw cadence, and AOD current versus at-a-glance information |
-| D10 | Family live-object/redraw cost only; retaining Weather retains parser/model risk elsewhere |
-| D11 | Linkable flash and selectable peak/churn paths; controllers/services need separate removal proof |
-| D12 | Compiled flash and worst-selectable-screen tests; face heaps do not coexist normally |
-| D13 | Legacy parser/security/boot risk versus manual resync/re-pair effort |
-| D14 | Unchanged services avoid per-app RAM; peers/compatibility branches and physical QA can add cost |
-| D15 | Build/manifest/companion traceability; version text has negligible device resource cost |
-
-## Essential decisions
-
-### D1 — Pairing topology, replacement, and removal
-
-#### D1a — Capacity
-
-**Recommended:** one active BLE connection and two durable paired peers. Pairing
-uses three in-memory security slots total: the two retained peers plus one
-admission-only peer. More than one simultaneous connection is out of scope.
-
-**User-visible consequence:** both phones remain paired, but only one can supply
-time, weather, notifications, or companion operations at a time. A nearby phone
-that already owns the link can delay the other; pairing is not simultaneous use.
-
-**Embedded consequences:** clean main already compiles one connection and three
-bond-security slots, so the third admission slot is not new baseline RAM. Clean
-main has only eight total CCCD records; allowing all A/B/C subscriptions during
-admission is expected to require 24. At the current 16-byte ARM CCCD layout that
-is about **256 bytes of additional static RAM**, subject to an ARM
-`static_assert`/link-map check. More durable peers increase security records,
-CCCD capacity, flash state, reconnect cases, and the physical stress matrix.
-
-That 256-byte delta is not the current code's full hazard. On ARM, `PersistBond`
-also places one 80-byte `ble_store_value` union per configured CCCD on the
-2,880-byte NimBLE task stack. Raising the limit from 8 to 24 without redesign
-would grow that stack frame from 640 to 1,920 bytes. Therefore the limit may
-increase only after this array becomes a bounded streaming/iterative path and
-ARM stack high-water evidence passes; simply changing the define is prohibited.
-
-- [ ] **Accept D1a recommendation**
-- [ ] Retain only one durable peer
-- [ ] Request this many durable peers (reopens architecture/scope/gates):
-- [ ] Request simultaneous connections (reopens architecture/scope/gates):
-
-D1b--d and D14b--c assume the recommended two-peer/one-connection topology.
-With one peer, Pair New becomes an explicit atomic replacement of that sole
-peer; LRU selection, routine A/B handoff, and two-editor behavior are not
-applicable, and D14b becomes an A+C replacement matrix. More than two peers or
-simultaneous links are not drop-in choices: they reopen the deferred scope,
-RAM/radio budgets, requirements, and physical matrix before any other D1/D14
-answer can be accepted.
-
-#### D1b — Pair New Device
-
-**Recommended:** Pair New is an explicit 60-second window starting after the
-user confirms the prompt. If trusted peer A is connected, finish any already-
-persisting mutation, abort only receive-stage work, disconnect and protect A,
-and reject retained reconnects after connection while C pairs. Because C is
-unknown before its first connection, an allow-list cannot reserve the radio for
-it: aggressive A/B clients can repeatedly win the sole link. The watch must
-prompt the user to pause/close retained watch clients or Bluetooth for reliable
-admission; otherwise success is best-effort until timeout. This contention is a
-mandatory physical test.
-
-Persist the new two-peer registry before deleting the selected victim. If A and
-B were retained, protecting connected A means C replaces B. Outside Pair New,
-an unknown or stale-key connection can never evict a peer. Failure before the
-registry commit disconnects/removes C from watch-side state and leaves durable
-A/B intact. If C's OS already saved the new bond, it cannot be rolled back
-atomically and may require **Forget** on C before retry. Power loss at that exact
-boundary is a required recovery test.
-
-With the one-peer D1a alternative, the prompt explicitly says A will be
-replaced. A remains durably authorized until C completes and the sole-peer
-registry commit verifies; then authorization switches to C. Failure/timeout
-keeps A, with the same possible stale C phone-side bond described above.
-
-Only the durable registry transition can be atomic. Immediately after that
-commit, authorization switches to the new registry: the victim is rejected and
-disconnected during the current boot while volatile NimBLE cleanup retries, and
-it remains absent after reboot.
-
-**Tradeoff:** deterministic LRU needs no extra selection screen, but the user may
-prefer choosing the victim. Manual selection adds UI/protocol state while
-avoiding an unexpected LRU choice.
-
-- [ ] **Accept LRU replacement with connected peer protected**
-- [ ] Ask on the watch which disconnected peer to replace
-- [ ] Reject a third peer until the user removes one manually
-- [ ] Change the 60-second Pair New timeout:
-
-#### D1c — Lost/stolen peer removal
-
-**Recommended:** show up to the selected capacity of bounded peer labels or
-short fingerprints with
-last-authenticated order and allow **Forget selected peer** plus **Forget All**.
-Removing one peer is durable-first and disconnects it. A companion cannot
-silently remove another peer. A friendly label is display-only; removal and
-authorization use the authenticated bond identity and its fingerprint.
-
-**Tradeoff:** per-peer removal adds a small bounded label/fingerprint to the
-bond registry and another settings screen, but without it a lost phone remains
-authorized until LRU replacement or Forget All.
-
-- [ ] **Accept selected-peer removal and Forget All**
-- [ ] Keep only Forget All and replacement; accept the lost-peer limitation
-
-#### D1d — Routine handoff between retained phones
-
-**Recommended:** add an explicit **Switch Phone** action. It disconnects active
-peer A, then uses a controller allow-list/filter for a bounded 60-second window
-so only retained peer B can acquire the sole link. If B does not authenticate,
-the filter is cleared and normal unfiltered A/B advertising resumes. Cancel,
-timeout, error, and reboot must also clear it. The action never changes bonds or
-LRU order by itself.
-
-Without a filtered handoff, an aggressive background client can repeatedly win
-the connection before host software can reject it and starve the other retained
-phone. Automatic periodic rotation would add radio churn, power use, and gaps
-in notification delivery. The bounded filter is a deliberate exception to the
-normal unfiltered-advertising rule and requires privacy/resolving-list physical
-tests, but it avoids pretending a reject-after-connect loop guarantees fairness.
-
-- [ ] **Accept the explicit 60-second Switch Phone handoff**
-- [ ] Require another handoff duration/behavior:
-- [ ] Rely only on disconnecting the current phone app
-
-### D2 — Phone notification history
-
-#### D2a — Capacity and record size
-
-**Recommended:** eight volatile records, each with at most 100 bytes of valid
-UTF-8 text plus category, source snapshot, 32-bit watch-local sequence ID,
-received time, and seen state. A 100-byte limit means 25--100 displayed
-characters depending on UTF-8 encoding; truncation must stop at a code-point
-boundary. This is a watch storage ceiling after receipt, not a claim that every
-unchanged legacy client/negotiated MTU delivers 100 bytes. D14 qualification
-must measure actual end-to-end truncation for each supported sender.
-
-The current upstream record is 112 bytes, so its five-to-eight comparison would
-be 560 versus 896 bytes. The redesigned record has different fields and may
-recover existing padding, so **896 bytes is only a current-layout reference,
-not a proven lower bound or budget**. Final record and ring metadata require ARM
-`sizeof` and the combined physical gate.
-
-- [ ] **Accept eight entries and 100 text bytes**
-- [ ] Use five entries to reduce resident RAM
-- [ ] Use another capacity/text limit:
-
-#### D2b — Persistence and overflow
-
-**Recommended:** phone notifications remain RAM-only. Reboot clears the ring and
-its dropped count; no flash write occurs for arrival, seen, or dismissal. A new
-arrival never replaces the item being read. Overflow evicts the oldest seen,
-non-displayed item, otherwise the oldest unseen non-displayed item. The current
-item is pinned, and a saturating visible dropped count remains until the user
-clears the inbox.
-
-Snapshot the source label/identity into the record so later peer eviction does
-not silently relabel an old notification. Local dismissal removes only watch
-history; it does not claim to dismiss the phone-side notification.
-
-**Tradeoff:** volatile history avoids high-frequency flash traffic, latency,
-and corruption surface, but all entries disappear on any reset. Durable phone
-history is deliberately not recommended because notification volume is
-externally controlled and potentially high.
-
-- [ ] **Accept volatile history and visible bounded overflow**
-- [ ] Require durable phone history despite the write/power cost:
-
-#### D2c — Arrival identity and phone-removal behavior
-
-**Recommended first release:** treat every accepted upstream notification write
-as a new record and assign a watch-local sequence ID. The existing PineTime/
-Gadgetbridge payload contains category/count/icon plus text, but no stable phone
-notification ID, update operation, or cancel operation. Therefore two identical
-writes may be two legitimate messages and must not be coalesced. Phone-side
-removal cannot erase or mark the watch snapshot; only local dismissal does.
-
-This is compatible and cannot silently merge repeated real messages, but a
-chatty progress/status source can fill the bounded ring and increment its honest
-dropped count. An ID-capable PTC extension could later support retry
-idempotence, updates, and cancel without changing the legacy path, but it adds a
-second transport semantic and is not recommended for the first stable release.
-
-- [ ] **Treat every upstream write as a new immutable snapshot**
-- [ ] Add a separate ID-capable PTC notification extension initially
-- [ ] Change arrival/removal behavior:
-
-### D3 — Watch-originated alert guarantees and presentation
-
-Watch-originated alerts are schedule, alarm, and prayer occurrences. Their
-record stores the **intended due time** and a frozen title/source; actual
-presentation time is diagnostic metadata, not occurrence identity.
-
-Every alert-producing definition uses a watch-assigned **occurrence revision**.
-It advances to the resulting committed domain generation only when due semantics
-change: schedule anchor/recurrence/time/end/enabled state; alarm time/mode/
-weekdays/enabled state; or prayer calculation/offset/alert settings. Title,
-display order, and other presentation-only edits retain it. The ordinary domain
-generation still advances for every mutation and provides CAS.
-
-An occurrence-affecting commit also establishes a handled cutoff at its commit
-minute for the new occurrence revision—durably under A/B and in RAM under C—so
-editing a definition cannot replay a newly handled old time in the applicable
-guarantee window. Only occurrences strictly after the edit are eligible.
-Companions supply the expected old revision but never choose the new one.
-Together with stable source/slot identity and intended civil occurrence, this
-prevents editor ABA without making a title-only edit fire again.
-
-#### D3a — Reboot delivery guarantee
-
-**Recommended option A — durable intent/history, at-least-once:** commit a
-pending intent plus handled watermark before presentation. Transfer the first
-alert frame and, when vibration is configured, start the motor. After the frame
-and required motor-start acknowledgements, commit `presented`. A reset after an
-effect starts but before that commit may repeat the alert. If the frame succeeds
-but the motor command fails, retain the visual presentation, record a sticky
-motor diagnostic, and commit rather than retry forever. A failed frame remains
-pending for bounded display recovery rather than claiming delivery. If the
-first durable commit fails, present once from RAM with a sticky storage warning
-and make no reboot guarantee. If the post-presentation commit fails, mark the
-occurrence presented in RAM, retry the durable write with a bounded deadline,
-and show a sticky warning; never vibrate it again in that boot. A reboot before
-that retry succeeds may present it again, which is the documented at-least-once
-crash window.
-
-**Option B — durable handled ledger, volatile history, at-most-once:** commit the
-occurrence as handled before presentation. This uses less persistent data and
-normally one commit, but a reset between that commit and presentation can
-**silently lose the alert**. Nothing is re-presented after reboot. Individual
-history is volatile, but the durable ledger may retain only a saturating
-aggregate missed count; it does not retain titles or per-alert browsing.
-
-**Option C — all due-history/ledger state in RAM, best effort:** no alert-history
-or handled-ledger commit, but reboot can lose history, lose an alert, or allow a
-recurrence to appear again because no durable suppression evidence exists.
-Other domain changes, such as disabling a Once alarm, can still require flash;
-if that disable commit fails, a reboot may ring the Once alarm again because C
-has no durable handled evidence.
-
-Options B/C explicitly replace, rather than satisfy, the draft requirements
-that assume A's durable history/ledger. In particular C makes `STO-004`,
-`STO-006A`, `SCH-005`, and `ALM-004` current-boot-only or inapplicable. Selecting
-C authorizes that weakening during P0-T3; it cannot be selected while retaining
-those cross-reset MUST guarantees.
-
-At the maximum synthetic daily load, 32 daily schedules + 5 daily alarms + 5
-prayers could create 42 occurrences and **84 logical intent/presented commits
-per day** under option A, before seen/dismiss writes. Littlefs program/erase
-counts are not identical to logical commits; Phase 4 must measure latency,
-current, garbage collection, and media wear behavior at this ceiling.
-
-- [ ] **A — durable history with at-least-once delivery (recommended)**
-- [ ] B — durable handled ledger with possible silent loss
-- [ ] C — all RAM with no reboot guarantees
-
-#### D3b — History state
-
-**Recommended:** keep eight watch-alert records. Automatic preview does not mark
-seen; opening an entry marks it seen. Explicit dismiss durably removes it under
-option A. Seen-only changes may remain pending until the next due-state commit;
-a reset may make a recently seen item appear unseen, but cannot remove it.
-Overflow removes display history, not the handled watermark when one exists
-under A/B, and increments a visible saturating dropped count. An unpresented
-intent and the entry currently displayed are pinned. If a simultaneous burst
-exceeds eight retainable records,
-the excess occurrences are still handled independently but are represented by
-the dropped count/summary rather than an unbounded ring. Under option A, bounded
-durable batch counts/watermarks are committed before that summary; only retained
-records preserve every title. The at-least-once guarantee is one presentation
-of the batch, not a separate vibration for every simultaneous occurrence.
-
-**Tradeoff:** persisting every seen transition creates avoidable writes;
-persisting explicit dismissal prevents dismissed alerts from reappearing.
-Option B loses individual visible history on reboot but may retain its aggregate
-missed count; C loses both individual history and durable aggregates.
-
-- [ ] **Accept eight entries and the recommended seen/dismiss policy**
-- [ ] Change capacity or seen/dismiss durability:
-
-#### D3c — Shared presentation
-
-**Recommended:** one presenter serializes all sources. The displayed entry is
-pinned. Subject to D3b's fixed capacity, simultaneous schedule/prayer events
-retain separate inbox records but issue one bounded summary presentation/
-vibration; overflow is explicit rather than allocating more records. An alarm
-may preempt a non-alarm preview; the displaced item remains in the inbox.
-Stopping a vibration never deletes history. Incoming calls may preempt visually
-but cannot destroy queued alerts.
-
-Schedule/prayer use one short bounded pattern and preview; alarm duration and
-snooze are selected in D6. This avoids several sources fighting over LVGL,
-motor state, and wake locks.
-
-- [ ] **Accept shared serialized presentation**
-- [ ] Change priority/grouping behavior:
-
-### D4 — Scheduler data model and watch behavior
-
-#### D4a — Capacity and rule schema
-
-**Recommended:** 32 rules with a companion-generated, cryptographically secure,
-random nonzero 64-bit ID,
-watch-assigned occurrence revision, anchor/start civil date, local hour/minute,
-enabled state, optional inclusive end date, and a 24-byte NUL-padded title field
-carrying at most 23 UTF-8 bytes. A semantically new rule receives a new ID; an
-edit retains the ID. Each companion retains issued IDs and tombstones for that
-watch and never deliberately reuses one. The watch rejects duplicate IDs in a
-proposed domain and any collision with retained due evidence. A two-editor
-collision is an explicit D14c conflict and one new record must be regenerated;
-it can never silently overwrite another. An end date cannot precede the anchor.
-Recurrences are:
-
-- OneShot at its exact anchor date/time;
-- Every-N-Days, N = 1--255, beginning at the anchor;
-- Weekly using a non-empty weekday mask, on/after the anchor;
-- Monthly day 1--31, clamped to the month's final day.
-
-A 23-byte title is bytes rather than characters and is a deliberate RAM/UI
-limit, not an ATT-MTU requirement; the new MTU-23 protocol chunks records.
-Longer titles and more rules increase both the active model and the shared
-sync-staging peak approximately linearly. The legacy 43-byte record is about
-1.4 KiB for 32 entries; the redesigned ARM record will differ and must be
-measured.
-
-Client-supplied IDs travel in the normal full-list transaction, so lost-response
-recovery uses generation/checksum/readback without an ID-reservation protocol.
-For every new or occurrence-affecting record edit, the watch applies D3's
-occurrence-revision/cutoff rule. This makes concurrent edits/merges unable to
-create the same due identity (ABA); generation exhaustion rejects mutation
-rather than wrapping. Lost-response readback returns the canonical revision.
-
-Compared with 32-bit IDs, 64-bit IDs add at least 576 known raw field bytes
-across active schedule/task definitions, the shared definition-staging union,
-task-day IDs, eight alert occurrence keys, and 32 schedule handled-ledger IDs.
-ARM padding, the actual largest staging member, and other caches may increase
-that figure; a combined ARM `sizeof` ledger is mandatory. This bounded cost is
-preferred to an ID-reservation protocol. Absolute lifetime non-reuse cannot be
-proven after all devices/tombstones disappear, so P0-T3 must replace absolute
-wording with “never deliberately reuse; fail closed on every detectable
-collision” and record the residual random-collision risk.
-
-- [ ] **Accept 32 rules, these recurrences, and 23 UTF-8 bytes**
-- [ ] Change capacity:
-- [ ] Change recurrence/ranges:
-- [ ] Change title byte limit:
-
-#### D4b — Ownership and visibility
-
-**Recommended:** the companion creates/edits/deletes rules; the watch is
-read-only. The watch shows enabled upcoming occurrences and a small
-`disabled/expired` count rather than rendering all inactive definitions.
-Disabled and expired rules remain available to the companion until deleted.
-
-**Tradeoff:** watch editing adds date/recurrence screens, mutation conflicts,
-and physical UI tests. Read-only watch behavior is smaller and keeps the phone
-as the definition editor without making reminders phone-dependent after sync.
-
-- [ ] **Accept companion-edited, watch-read-only rules**
-- [ ] Require these watch-side edits:
-
-### D5 — Late, missed, simultaneous, and clock-changed due events
-
-This policy applies to schedule, alarm, and prayer occurrences, not BLE
-connectivity. The watch evaluates them offline.
-
-**Recommended:** an occurrence discovered no more than 10 minutes after its
-intended time creates a normal inbox record. If several are in that window,
-keep separate records but issue one bounded presentation; alarm priority wins.
-Older occurrences do not vibrate or replay in a storm. They advance the handled
-watermark and a durable missed summary when D3a option A/B is selected.
-
-A missed old OneShot schedule expires. A missed old Once alarm records the miss
-and disables, rather than unexpectedly ringing the next day. Daily/weekday
-alarms and prayers advance to their next occurrence. Under D3 option A/B,
-backward clock correction cannot repeat an occurrence across reboot and
-explicit time correction resumes from a durable current cutoff. Under option C,
-those guarantees are current-boot only; reset can lose or repeat evidence as D3
-states. A forward jump enumerates at most the bounded active rule set and
-saturates the summary rather than allocating per-missed records. Invalid/unset
-civil time suppresses due processing with a warning. When time becomes valid
-again, establish a cutoff at the current civil minute—durably under D3 A/B and
-in RAM under C—and do **not** apply the 10-minute catch-up rule to the unknown
-interval. Treat occurrences at or before that cutoff as missed, including the
-D5 expiry/disable behavior for OneShot/Once definitions. Only later occurrences
-are eligible for normal presentation.
-
-**Tradeoff:** a longer grace window does not inherently create duplicates when
-occurrence-key deduplication works, but it increases late nuisance, catch-up
-work, and possible motor activity. A shorter window misses more useful alerts.
-
-- [ ] **Accept an inclusive 10-minute grace and summarized older misses**
-- [ ] Use another grace period:
-- [ ] Vibrate for older events (describe bound):
-- [ ] Change Once/OneShot missed behavior:
-
-### D6 — Multi-alarm recurrence, ringing, and snooze
-
-#### D6a — Alarm records
-
-**Recommended:** five fixed alarm slots. Modes are **Once**, **Daily**, and
-**Selected Weekdays**. Once means the next matching civil date/time strictly
-after enable/edit, then it remains configured but disables after it is handled
-or missed per D5. Under D3 A/B, Daily and weekday alarms fire at most once per
-civil date across reboot. Under C that limit is only current-boot; reset may
-repeat an occurrence because the owner selected no durable handled evidence.
-Unlabeled alarms display stable slot number plus time so simultaneous alarms
-remain distinguishable.
-
-A weekday mask costs only a bounded byte-scale field; its real cost is
-recurrence/UI testing. A short label costs roughly its fixed byte limit times
-five in active storage and staging, but also adds truncation and screen cases.
-
-- [ ] **Accept Once, Daily, Selected Weekdays, and no labels**
-- [ ] Keep only Once and Daily
-- [ ] Add labels with this UTF-8 byte limit:
-- [ ] Change modes:
-
-#### D6b — Ringing
-
-**Recommended:** an alarm uses a bounded pulsed vibration for up to 90 seconds
-or until **Stop**. The UI and watchdog remain responsive throughout. Stop only
-silences the motor: it does not mark the entry seen, dismiss it, or alter
-`presented`, which D3 records after the first-frame and configured motor-outcome
-rule. Automatic timeout likewise creates no additional delivery transition.
-Explicit dismiss removes history. Simultaneous alarms share one presentation
-and remain separate records. The first alarm starts a fixed 90-second ring
-deadline. Any other alarm due while that group is actively ringing joins the
-visible group and gets its own inbox record, but does not restart or extend the
-motor window. Stop immediately closes and silences the group; the old deadline
-no longer exists. A distinct alarm due after either Stop or natural timeout
-starts a new bounded window.
-
-**Tradeoff:** a longer motor/wake interval improves wake-up probability but
-costs battery and increases the time other UI alerts wait. Non-extending merge
-prevents staggered alarms from creating an accidental unbounded continuous
-ring, while later genuinely separate alarms still work. A motor pattern must
-not be implemented as a blocking delay or dedicated per-alarm timer.
-
-- [ ] **Accept pulsed vibration for at most 90 seconds**
-- [ ] Use another maximum/pattern:
-
-#### D6c — Snooze
-
-**Recommended first release:** no snooze. This preserves the proven minimal
-state machine while the alert ledger and reboot behavior are established.
-
-Snooze itself needs little RAM, but it creates a new due occurrence, persistent
-parent/attempt state, simultaneous-alarm ordering, reboot behavior, and a bound
-on repeated motor use. If selected, the clean design should support one fixed
-snooze duration and a fixed attempt limit rather than arbitrary timers.
-
-- [ ] **No snooze in the first stable release (recommended)**
-- [ ] Add snooze; duration and maximum attempts:
-
-#### D6d — Alarm editing ownership
-
-**Recommended:** alarms are editable both on-watch and by either authorized
-PineTimeCompanion peer. Watch changes are durable-first. Companion changes use
-the same domain generation/CAS path, and a stale edit to the same slot requires
-explicit review under D14c rather than overwriting a local change.
-
-Watch editing adds time/weekday screens and their physical tests, but preserves
-standalone alarm usefulness. Companion-only editing removes that UI at the cost
-of requiring a phone for an ordinary alarm change. Two editors add no second
-watch model, but do add conflict and synchronization journeys.
-
-- [ ] **Allow on-watch and companion alarm editing**
-- [ ] Make alarms on-watch only
-- [ ] Make alarm definitions companion-only
-
-Clock jumps, nonexistent/repeated local times, and late boot use D5. The watch
-has no timezone database; a DST change is an explicit clock/offset update.
-
-### D7 — Task completion, streaks, and ownership
-
-#### D7a — Tap durability
-
-**Revised recommendation:** support at most 20 tasks. Titles use the same
-24-byte NUL-padded representation as schedules: at most 23 valid UTF-8 bytes.
-Tasks use the same companion-generated ID and fail-closed collision policy as
-schedules; task-definition CAS uses its watch-owned domain generation. Use
-durable-first for every accepted completion toggle.
-Give touch feedback and show `pending` immediately, but do not publish the final
-checkmark until the small task-day A/B commit verifies. On failure, remove the
-pending state and show a storage warning. This is asynchronous durable-first;
-it does **not** require blocking DisplayTask or SystemTask.
-
-A two-second coalescing window saves writes only when taps cluster and can lose
-recent changes on reset. With at most 20 defined tasks, reliability and simpler
-failure semantics are preferred unless physical profiling proves the write
-latency/current unacceptable.
-
-- [ ] **Accept 20 tasks, 23 UTF-8 title bytes, and durable-first toggles**
-- [ ] Coalesce for at most two seconds and accept possible loss
-- [ ] Change task capacity/title byte limit:
-
-#### D7b — Daily/streak semantics
-
-**Recommended:** one global streak is finalized at local-day rollover using the
-tasks active at rollover. Adding a task during the day makes it required that
-day; deleting one removes it from that day's requirement. Rename/reorder keeps
-completion by stable ID. Unchecking before rollover can make the day incomplete.
-
-- a day with active tasks but incomplete work resets the streak;
-- a day with zero active tasks pauses the streak: no increment and no reset;
-- skipped forward dates with active tasks are incomplete and reset the streak;
-- a backward clock correction never reopens a finalized day and raises a
-  visible time-correction warning;
-- companions never deliberately reuse stable IDs for semantically new tasks;
-  detectable collisions fail closed as specified in D4a.
-
-For a zero-task rollover, advance the last-processed civil date while preserving
-the streak value. That date is finalized and cannot later reopen. The next
-completed day that has active tasks increments from the preserved streak.
-Resetting on zero-task days would need slightly less product explanation, but it
-creates surprising loss when no work existed.
-
-The watch does not retain historical task-definition snapshots. On a forward
-date correction, the active set at correction is therefore used for the skipped
-interval: any active task makes that interval incomplete and resets once; an
-empty set pauses it. Freezing a separate set per date avoids that approximation
-but consumes additional persistent history and migration/test surface.
-
-- [ ] **Accept these streak and definition-change rules**
-- [ ] Zero-task days reset instead of pause
-- [ ] Freeze each day's task set at midnight (more snapshot state)
-- [ ] Change other semantics:
-
-#### D7c — Companion ownership
-
-**Recommended:** companions own task definitions; the watch owns completion and
-streak evidence. A companion may read them for display, export, and diagnostics
-but cannot silently overwrite them. The first release does not restore task-day
-or streak evidence from a companion. An explicit user-confirmed reset is a
-separate command; any future restore would require its own user-confirmed,
-conflict-audited operation.
-
-**Tradeoff:** readback adds protocol/test work but prevents two phones from
-inventing conflicting completion states. Phone-owned completion would simplify
-phone UI at the cost of offline authority and conflict handling.
-
-- [ ] **Accept watch-authoritative completion/streak readback**
-- [ ] Do not expose completion/streak to companions
-- [ ] Allow companion writes with this conflict policy:
-
-### D8 — Prayer calculation, defaults, and exceptional geography
-
-#### D8a — Methods and alerts
-
-**Recommended:** calculate on-watch and cache by civil day. Support MWL, ISNA,
-Egyptian, Umm al-Qura, and Karachi; Standard and Hanafi Asr; and individual
-alert toggles for Fajr, Dhuhr, Asr, Maghrib, and Isha. Sunrise displays but
-never alerts. After Isha, next prayer is tomorrow's Fajr.
-
-These choices are tiny constants/bit fields; their material cost is
-astronomical correctness and test coverage, not RAM. Phone-supplied daily times
-would reduce firmware math but break the offline requirement.
-
-**Embedded tradeoff:** method count and alert toggles are cheap; validated
-astronomy, exceptional geography, calendar rules, and stale offset handling
-are the dominant code and correctness burden.
-
-For Umm al-Qura, the old implementation always used Isha = Maghrib + 90 minutes.
-The first stable rewrite should retain fixed +90 minutes for every date. This is
-deterministic and offline, but it deliberately does **not** claim the commonly
-requested +120-minute Ramadan variation. That variation requires choosing and
-testing an exact Islamic-calendar source and supported Gregorian range; a
-tabular/on-watch boundary can differ by a day from local observation, while a
-finite reviewed table consumes flash and eventually expires.
-
-- [ ] **Accept these methods/toggles and fixed +90-minute Umm al-Qura**
-- [ ] Require Ramadan +120 minutes; specify calendar source and date range:
-- [ ] Remove Umm al-Qura until a Ramadan calendar rule is approved
-- [ ] Change methods/rules/toggles:
-
-#### D8b — High latitude, polar state, and defaults
-
-**Recommended:** use the tested Middle-of-the-Night fallback when the Fajr/Isha
-solar angle is unreachable and mark the result estimated. If sunrise/sunset are
-both unavailable in polar day/night, only Dhuhr remains valid; other rows show
-`--:--` and never alert.
-
-Middle-of-the-Night is the only first-release high-latitude rule and is shown as
-read-only status, not a meaningless one-choice editor. Selecting another rule
-below requires its exact semantics/test vectors and then reopens D8c's editor.
-
-Fresh/not-yet-configured state is MWL + Standard, no location, and all prayer
-alerts off. A location and explicit UTC offset must be set before valid
-times/alerts.
-Coordinates use bounded fixed-point storage. There is no timezone database;
-travel and DST require an explicit companion or local offset update. Late
-prayers follow D5.
-
-- [ ] **Accept Middle-of-the-Night, polar suppression, and these defaults**
-- [ ] Use another high-latitude rule:
-- [ ] Change defaults:
-
-#### D8c — Settings ownership
-
-**Recommended:** PineTimeCompanion sets latitude/longitude; the watch can edit
-method, madhab, individual alert toggles, and UTC offset. The fixed
-Middle-of-the-Night rule is display-only. Prayer calculation remains fully
-offline after synchronization. Coordinate entry on the watch is omitted from
-the first stable release.
-
-This intentionally narrows the earlier unconditional `PRAY-002` draft, which
-said latitude/longitude were locally editable. P0-T3 must make that requirement
-D8-dependent; accepting D8c does not silently promise both incompatible UIs.
-
-Companion-only coordinates avoid a multi-screen signed fixed-point editor and
-its validation/UX matrix. The tradeoff is that relocation to a new latitude or
-longitude requires a phone, while ordinary DST/travel offset changes remain
-possible on-watch. Full on-watch coordinates add little model RAM but add code,
-flash, text-entry state, and substantial physical UI testing.
-
-- [ ] **Use companion coordinates plus the recommended on-watch settings**
-- [ ] Make latitude/longitude editable on-watch too
-- [ ] Make all prayer settings companion-only
-- [ ] Change prayer-setting ownership:
-
-### D9 — Family face contract, boot/default policy, and AOD
-
-D9 approves constraints, not a nonexistent final layout. A normal/AOD
-wireframe, longest-text screenshots, tap/swipe map, and empty/stale/error states
-remain a separate blocking UX artifact before Phase 7 implementation.
-
-#### D9a — Information and visual continuity
-
-**Recommended:** permit a new layout while preserving the Family face's purpose
-and recognizable visual language. Priority is time/date; next schedule/alarm;
-next prayer; task progress; phone/watch unseen counts; battery/charging/BLE,
-alarm, and storage-warning status; then steps. Prayer is shown separately, so
-`next family event` means schedule or alarm rather than duplicating prayer.
-
-**Embedded tradeoff:** the old graph modeled about 5.5 KiB and 172 live
-allocations. The proposed hard early target is at most 2.8 KiB and 100
-allocations, with event/minute-driven updates and stable labels left untouched.
-Visual equivalence may be achieved by a new object graph; copying the old graph
-is not an option.
-
-- [ ] **Accept redesign freedom and this field priority**
-- [ ] Preserve the old visual layout, but still reimplement it within hard gates
-- [ ] Change mandatory fields/order:
-
-#### D9b — Boot and fresh-install default
-
-**Recommended:** every boot first renders a complete basic Digital clock before
-optional storage/BLE/family startup. After required state is healthy, switch to
-the persisted face. A 1.16.1-to-rewrite upgrade preserves a valid official face
-selection only if D12 still compiles that face; excluded official faces follow
-D12's persisted Digital fallback. A retained Digital selection is not silently
-overridden with Family. Family is the default only when no valid prior selection
-exists (factory/fresh settings) and only after its physical gate passes. Safe
-mode remains Digital.
-
-Digital is mature fallback behavior, not assumed to be the smallest face: its
-current model is about 3.24 KiB/111 allocations and its weather path also needs
-Phase 1 hardening. Exactly one face is constructed at a time, but the visible
-Digital-to-Family transition and construction/destruction churn on boot must be
-measured. Waiting to draw Family directly would couple first-frame liveness to
-optional state and is not an acceptable optimization.
-
-- [ ] **Accept Digital first frame, preserve upgrades, Family for no setting**
-- [ ] Keep Digital as the normal fresh-install default
-
-#### D9c — AOD and privacy
-
-**Recommended:** AOD shows time/date, next-prayer time, aggregate unseen count,
-and one generic critical-warning icon. It omits next schedule/alarm, event/task
-titles, weather, steps, and peer/source names. Normal Family mode keeps separate
-phone/watch unseen counts; only AOD aggregates them. The generic icon exposes no
-private text but preserves visibility of storage/time/recovery faults. AOD
-refreshes on minute/event changes, never at 50 Hz.
-
-This intentionally replaces the earlier draft AOD wording of “next due event +
-critical status” with an exact private field list; P0-T3 must scope `INB-008` to
-normal mode and update `FACE-006`/the proposal to match the selected D9c answer.
-
-More AOD fields primarily add live LVGL objects, layout cases, and display/SPI
-work. The upstream external-flash-awake fix remains required regardless; AOD
-current must be measured physically.
-
-- [ ] **Accept minimal/private AOD**
-- [ ] Show these additional AOD fields:
-- [ ] Turn AOD off by default in the family build
-
-The later wireframe—not D9 acceptance—must resolve these provisional
-destinations: Inbox from unseen counts/next family event, Prayer from next
-prayer, Tasks from task progress, and any additional gesture.
-
-### D10 — Weather on the Family face
-
-**Recommended:** omit weather from the first stable Family face while retaining
-the Weather app, BLE service, and existing/upstream-compatible behavior. Add a
-compact face field only after the weather path and Family physical/AOD gates
-pass.
-
-**Embedded tradeoff:** this recommendation does **not** remove weather
-parsing/model RAM or all weather risk, because the Weather app and Digital face
-remain. It only removes the Family face's always-live weather objects, layout,
-and update coupling. Current weather assets are compiled internally; external
-flash is not the reason for this choice.
-
-If weather is required initially, limit it to temperature + condition/stale
-indicator and update only on weather events/minute changes, not forecast rows or
-50-Hz polling.
-
-- [ ] **Omit weather from Family initially (recommended)**
-- [ ] Require compact current weather on the first Family face
-
-Removing Weather entirely is a launcher/service decision under D11, not D10.
-
-### D11 — Launcher profile and optional services
-
-**Recommended launcher order:** Schedule, Tasks, Prayer, MultiAlarm, Timer,
-Stopwatch, Steps, Heart Rate, Music, Weather.
-
-**Exclude:** Paint, Paddle, Twos, Dice, Metronome, Calculator, Navigation, and
-Motion. Keep Notifications, Flashlight, Quick Settings, Settings, Battery Info,
-Passkey, Sys Info, Firmware Update, and Firmware Validation as core screens.
-
-**Embedded tradeoff:** the profile is compile-time: excluded screens are not
-merely hidden. Linker section collection can save screen code/assets, and
-exclusion removes their open/switch allocation peaks and test paths. Closed
-LVGL screens are destroyed, so removing them does not magically recover their
-full heap during Family use. Controllers, GATT services, and external resource
-files must be separately proven absent; screen exclusion alone does not remove
-them.
-
-Motion is already absent from clean main's default launcher, so naming it as
-excluded prevents reintroduction but provides no new baseline saving.
-
-Navigation is the strongest exception: current clean-main code retains four
-GATT characteristics and persistent `std::string` state in addition to the
-screen/resources. Keeping it can therefore cost runtime memory as well as flash.
-Each retained optional app must pass the combined gate.
-
-Weather has a different coupling: current Digital directly owns weather objects
-and reads `SimpleWeatherService`. Removing only the Weather screen can save that
-screen path while retaining Digital/upstream compatibility. Removing the
-service requires a weather-free Digital refactor, new fallback RAM/object
-measurements, omission from Family regardless of D10, and removal of D14's
-Gadgetbridge-weather promise.
-
-- [ ] **Accept the recommended whitelist/order**
-- [ ] Keep Navigation and its service
-- [ ] Keep Calculator
-- [ ] Remove only the Weather screen; retain its service/Digital path
-- [ ] Remove weather entirely; override D10/D14 and refactor/remeasure Digital
-- [ ] Other change:
-
-If a persisted launcher target is excluded, fall back visibly to the launcher;
-if a face is excluded, D12 falls back to Digital.
-
-### D12 — Watchface availability
-
-**Recommended:** compile only Digital and Family. D9, not compile order, selects
-the normal fresh-install face. Digital is always available for first frame,
-invalid persisted settings, and safe mode.
-
-**Embedded tradeoff:** additional faces add flash and another selectable
-worst-screen/AOD/churn matrix; they do **not** create simultaneous LVGL object
-graphs because DisplayApp destroys one face before constructing another. Every
-compiled face must pass the same combined physical gate, so availability can
-block release even if the face is not the default.
-
-Persisted face IDs remain stable. Loading an excluded/invalid ID selects and
-persists Digital rather than repeatedly falling back on every boot.
-
-- [ ] **Accept Digital + Family only**
-- [ ] Also retain these official faces:
-
-### D13 — Clean data, settings, bonds, and rollback
-
-#### D13a — Family-domain data
-
-**Recommended:** firmware never parses blocked 2.x/3.x family files. It creates
-a new namespace/schema. Schedules, task definitions, alarms, and prayer
-settings are a companion deliverable, not a possibility: before the first
-firmware alpha, the matching PTC prerelease must convert its locally stored
-0.34.0 data into a range-validated read-only review draft, offer a user-exported
-backup, and require explicit approval per domain before sending the new schema.
-If a domain is absent from the companion, it is manually re-entered; firmware
-does not scrape the old watch. Task-day/streak/due-ledger state starts clean. No
-silent automatic migration.
-
-The owner designates exactly one phone as the migration source. A second phone
-may export legacy data for manual comparison/import into that source's review
-draft, but must not independently assign IDs or push a competing converted
-domain. After the designated source seeds and verifies the watch, every other
-companion quarantines its legacy draft, reads the watch's canonical IDs/
-generation, and adopts that state as its merge base. This prevents identical
-legacy records from becoming duplicate additions with unrelated random IDs.
-
-**Tradeoff:** this removes legacy parsers and corrupt-state ambiguity from boot,
-but adds a companion converter/export plus owner review. Companion-side
-conversion is safer than firmware-side import because conversion failure cannot
-prevent the clock from booting; data missing from the phone is not recoverable
-by this path. Single-source onboarding adds a deliberate setup step but avoids
-an unresolvable two-import merge.
-
-- [ ] **Accept reviewed PTC conversion/export and no watch-side legacy import**
-- [ ] Require migration of these domains and justify their failure behavior:
-
-#### D13b — Ordinary settings and resources
-
-**Recommended:** do not format the filesystem. Preserve valid official settings
-and external resources when their existing formats remain supported; invalid or
-excluded app/face selections fall back safely. Family reset is not a general
-factory reset.
-
-- [ ] **Accept preservation of unrelated official state**
-- [ ] Require a full factory reset/reinstall instead
-
-#### D13c — BLE bonds
-
-**Recommended:** explicitly forget the watch in each phone OS and re-pair after
-the clean rewrite. Official 1.16.1 and clean main use a compatible raw one-peer
-`/bond.dat`, but it is ABI-dependent, lacks trustworthy peer provenance, and
-baseline restore may delete it. A one-time importer is feasible only before
-normal restore touches the file and only with exact length/layout,
-key/address/flag, CCCD count/handle, and companion key-possession validation.
-Those checks limit corruption risk but cannot prove the file's provenance.
-
-**Tradeoff:** re-pairing costs setup time but guarantees fresh keys and a
-consistent two-peer registry. Import saves one pairing interaction while adding
-a security-sensitive boot parser and stale-OS-bond repair cases.
-
-- [ ] **Re-pair every phone (recommended)**
-- [ ] Import one proven official 1.16.1 bond, then pair the other phone
-
-#### D13d — Recovery/downgrade expectation
-
-Returning to official 1.16.1 is a recovery action, not a round-trip downgrade:
-it will not understand new family domains or the two-peer registry. Family data
-covered by the required companion export/resend path comprises schedules, task
-definitions, alarms, and prayer settings. Task-day completions, streak evidence,
-phone/watch inbox histories, and the due/handled ledger intentionally start
-clean and are not restored. BLE may require OS-side forget/re-pair. The rewrite
-must namespace its files so official firmware does not parse them incorrectly.
-
-- [ ] **Accept no family/bond round-trip guarantee through 1.16.1**
-- [ ] Require another downgrade behavior:
-
-### D14 — Companion ownership and supported platform matrix
-
-#### D14a — Product support promise
-
-**Recommended first stable release:**
-
-- `faisal-shah/PineTimeCompanion` is the only supported family-data editor;
-- ship a matching new companion prerelease before any owner-installable firmware
-  alpha; released 0.34.0 targets the incompatible old 3.x services/five-peer
-  model and must reject the rewrite rather than guess;
-- support is limited to the exact phone, Android, app, and watch versions in the
-  completed D14b qualification record until a broader range is physically
-  qualified;
-- within that matrix, Android supports family sync, notification forwarding,
-  resources, and DFU;
-- Gadgetbridge remains compatible for unchanged upstream-compatible time,
-  notification, and music flows, plus weather when D11 retains that service;
-  it cannot configure family domains;
-- web/desktop family configuration remains experimental until its passkey and
-  real-watch Web Bluetooth paths pass physical gates; browser DFU remains
-  unavailable;
-- no iOS support is promised in the first stable release.
-
-One active watch link means PineTimeCompanion and Gadgetbridge/background
-forwarders must alternate ownership; simultaneously reconnecting clients can
-starve each other. No client-specific compatibility code may consume watch RAM
-unless it is explicitly budgeted and gated.
-
-- [ ] **Accept this first-release support promise**
-- [ ] Require stable web/desktop family configuration
-- [ ] Require iOS support
-- [ ] Change app/repository responsibilities:
-
-#### D14b — Required physical matrix
-
-D14 cannot be closed by accepting every recommendation or with “test whatever
-is used.” At GATE-P0, record the real hardware and current third-party apps that
-will form the household test matrix. For recommended D1, the minimum is peers A
-and B plus a third C for replacement. If one durable peer is selected, the
-minimum becomes A plus replacement C, and all B/two-editor rows are not
-applicable. Either matrix includes the promised Gadgetbridge configuration and
-at least one contention test with the real background notification app.
-Blank/generic applicable owner inputs block D14 and GATE-P0; versions of
-artifacts that do not exist yet are recorded later and do not create a circular
-planning prerequisite.
-
-**Owner inputs required now:**
-
-- Watch hardware revision and current bootloader:
-- Phone A model / Android version:
-- Phone B model / Android version (two-peer D1 only):
-- Admission phone C model / OS version:
-- Designated D13 migration-source phone (A, or A/B with two peers):
-- Gadgetbridge version / phone:
-- Background notification app + version used for contention:
-- iOS device / OS / app version, only if iOS support is selected:
-- Desktop/web OS/browser/device, only if promoted from experimental:
-
-**Qualification record completed at the applicable physical gate:**
-
-- exact firmware identity/SHA and recovery image;
-- PineTimeCompanion version/commit on every applicable retained phone;
-- final Android patch/app versions and Gadgetbridge build actually tested;
-- dated result for pairing, replacement, reconnect contention, sync, forwarding,
-  resources, DFU, rollback, and recovery journeys.
-
-- [ ] **GATE-P0 owner device/app inputs completed**
-
-**Embedded tradeoff:** another app using only unchanged services need not add
-watch RAM. Additional peers, services, compatibility branches, or CCCDs can;
-the unavoidable cost is interoperability, reconnect behavior, generated-
-protocol parity, and a much larger physical regression matrix.
-
-#### D14c — Two-editor conflict policy
-
-**Recommended:** both retained PineTimeCompanion peers may edit family
-definitions. Before an edit, each companion reads the latest domain generation
-and retains its base snapshot. Merge granularity is explicit:
-
-- schedule/task records compare by stable ID; edit-versus-delete of the same
-  record is a conflict;
-- the task ordered-ID vector is a separate merge unit: a one-sided reorder can
-  merge with record-field edits, deletion removes that ID while preserving the
-  surviving relative order, and two different reorders require explicit choice;
-- alarms compare by fixed slot;
-- prayer compares individual fields, with latitude/longitude treated as one
-  coordinate pair;
-- on-watch alarm/prayer edits are an authoritative third change source and use
-  the same base/current/desired comparison;
-- watch-owned task completion/streak evidence is never in an editable merge.
-
-Non-overlapping changes may be three-way merged by the companion. If both sides
-changed the same unit since their common base, the companion must show an
-explicit choice; timestamps and silent last-writer-wins are forbidden. The
-watch's CAS generation check rejects a stale push and forces re-read/merge/
-review; a companion must never auto-resubmit its full stale snapshot.
-
-This keeps the watch protocol bounded—generation, checksum, and records rather
-than a resident conflict database—but requires base snapshots and merge UI in
-both companions. A designated single editor is simpler and reduces testing,
-but family edits on the second phone become read-only until designation changes;
-the designated phone must still reconcile intervening on-watch edits.
-
-- [ ] **Allow both PTC peers to edit with CAS + explicit three-way conflicts**
-- [ ] Designate one PTC peer as editor; the other is read-only
-- [ ] Use another conflict policy:
-
-### D15 — Version identity and release eligibility
-
-#### D15a — Version lineage and representation
-
-**Recommended:** use the release identity `4.0.0-alpha.1` for the first clean
-rewrite prerelease and `4.0.0` only for the eventual stable release.
-
-This requires engineering work before the first alpha: current CMake/artifact/
-BLE version plumbing is numeric `x.y.z`, and current MCUboot image creation is
-hard-coded to `1.0.0`. The prerelease/channel and exact commit must be visible in
-Sys Info, Device Information, filenames, DFU manifest, companion compatibility
-checks, and release metadata; the MCUboot header version must derive from the
-firmware build rather than stay constant.
-
-Version naming has negligible device RAM/flash impact. Its tradeoff is tooling
-work versus traceability and protection from installing the wrong schema/build;
-it does not itself cause re-pairing or migration—that is D13.
-
-- [ ] **Accept 4.0.0-alpha.1 → 4.0.0 and extend version plumbing**
-- [ ] Use another unique version/channel scheme:
-
-#### D15b — Eligibility
-
-**Mandatory:** development builds are never described as stable or distributed
-for normal owner use. Phase-limited developer images must have unique,
-traceable internal identities and may be installed only for a controlled,
-documented physical gate with the recovery image ready; they are not daily-use
-firmware. `4.0.0-alpha.1` is the feature-complete Phase 8 prerelease and the
-first rewrite image approved for normal owner installation, not an earlier
-phase-limited test build. The exact artifact later published must first pass the
-full prerelease gate: clean committed identity, MCUboot TEST swap/failure/
-revert/confirm trials, maximum combined stress, 100 boot/update cycles, 72-hour
-stress, and a subsequent seven-day soak. A rebuild or code/configuration change
-creates a new candidate and invalidates artifact-specific evidence. Only a
-separately qualified later candidate may be called `4.0.0` stable. Until the
-alpha is explicitly approved, use official InfiniTime 1.16.1 for daily use.
-
-- [ ] Request stricter additional gates:
-
-## Traceability after approval
-
-The selected answers will be reconciled into the proposal and requirements
-before implementation. Until then, `[D#]` requirements are conditional draft
-defaults rather than authorization to code. The untagged clauses listed in the
-mandatory reconciliation table below are also conditional where they assume a
-particular answer. “Planned” identifies a new decision part that needs its own
-requirement during P0-T3; it is not an omitted implementation contract.
-
-| Decision | Primary requirement areas |
-| --- | --- |
-| D1 | PAIR-001--009 (including A variants), PERF-005/010; planned selected-removal/filtered-handoff requirements |
-| D2 | INB-001/003--008, PERF-002; planned upstream-arrival identity requirement |
-| D3 | STO-004/006A/007, DUE-001--005 (including 004A), INB-002--008 |
-| D4 | SCH-001--007, PRO-001--010; planned 64-bit identity/collision requirement |
-| D5 | DUE-002/004/004A/005, SCH-004--006, ALM-004; planned common prayer late/missed requirement |
-| D6 | ALM-001--005, INB-003/007; planned overlap/ringing and editor-ownership requirements |
-| D7 | TASK-001--006 (including 001A), STO-004/007; planned exact streak/readback-ownership requirements |
-| D8 | PRAY-001--006; planned settings-ownership requirement |
-| D9 | FACE-001--008, PERF-003--005/010 |
-| D10 | FACE-002/005/007, PERF-003/010, VER-005/006 |
-| D11 | PROF-001, PERF-004/005/007 |
-| D12 | PROF-002, FACE-001, PERF-004/005/007/010 |
-| D13 | GOV-002/005, STO-004--006 (including 006A), PAIR-008; planned PTC conversion/export requirement |
-| D14 | PRO-001--010, PAIR-001--009 (including A variants), VER-004--009; add explicit COMP requirements after selection |
-| D15 | GOV-003/004/006, SAFE-008--010, VER-001--009 |
-
-## Mandatory P0-T3 reconciliation
-
-This is a tracked correction list, not permission to implement before approval.
-It enumerates known mismatches for the current recommendations. P0-T3 must also
-trace and reconcile every owner-selected deviation or filled-in alternative
-(for example snooze, durable phone history, extra faces, or iOS) before GATE-P0;
-the table is not permission to ignore consequences of a non-recommended answer.
-
-| Decision | Draft proposal/requirement correction after owner selection |
-| --- | --- |
-| D1 | Add selected-peer removal, 60-second best-effort unknown-peer admission/recovery (including one-peer replacement), and filtered retained-peer handoff; make only the handoff a bounded PAIR-004 exception; forbid the current CCCD stack array at 24 entries. |
-| D2 | Define the 32-bit ID as watch-local and each legacy/upstream write as a new immutable arrival; do not promise update/cancel semantics absent an ID-capable transport. |
-| D3 | Make A/B/C storage/aggregate guarantees conditional; define occurrence-only watch revisions/edit cutoffs; qualify DUE-004/005 and the proposal so an over-capacity burst has independent handled evidence but one batch presentation and only retained titles; standardize intended due time plus diagnostic presentation time. |
-| D4 | Change SCH-001 from 32-bit to 64-bit companion IDs; add secure-random/tombstone/fail-closed collision semantics, D3's occurrence revisions, and the complete ARM identity ledger. |
-| D5 | Add one common schedule/alarm/prayer grace, invalid-time cutoff, missed-summary, and Once/OneShot expiry contract with D3-dependent durability. |
-| D6 | Update ALM-002 from Daily/Once to the selected modes, define Once as next matching time rather than a stored one-shot date, condition cross-reboot once-per-date on D3, and add fixed non-extending overlap plus D6d/D14c editor-ownership behavior. |
-| D7 | Replace unresolved task text with the selected durable-first/coalesced policy, exact zero/skipped/clock-corrected streak semantics, 64-bit identity rule, and readback/write ownership in TASK-003/004/006. |
-| D8 | Make Middle-of-the-Night fixed unless another rule is fully selected; make PRAY-002's local latitude/longitude promise conditional on D8c and add the selected settings-ownership split. |
-| D9 | Reconcile upgrade/fresh default behavior and replace the proposal/FACE-006/INB-008 AOD wording with the exact normal-versus-AOD field contract. |
-| D11/D14 | If full weather removal is selected, remove Digital weather dependencies and the Gadgetbridge-weather promise; otherwise retain the unchanged service. |
-| D13/D14 | Make single-source reviewed PTC 0.34.0 conversion/export a prerequisite deliverable; specify task-order/scalar/watch-edit merges; add explicit companion (`COMP-*`) requirements and physical-matrix gates. |
-
-## Explicitly deferred, with consequences
-
-- Find My/beacon: absent from the first release.
-- More than two durable peers or simultaneous connections: no compatibility
-  promise or reserved RAM.
-- Signed firmware/key management: current update-authenticity limitations remain
-  a separate security project; CRC/hash integrity is not signer authenticity.
-- Remote per-peer unpair by identity: on-watch D1c removal is the supported
-  first-release path.
-- Weather on Family after D10 deferral: requires a later owner decision and the
-  same physical gates.
+# Minimum family firmware decision record
+
+<!-- markdownlint-disable MD013 MD024 -->
+
+**Status:** proposed for owner review; firmware implementation remains blocked
+**Last engineering review:** 2026-08-10
+**Evidence:** [EVIDENCE.md](EVIDENCE.md)
+**Scope fixed by owner:** two-phone-capable pairing, scheduler, daily tasks,
+prayer times, and a family variant of Digital
+
+This replaces the earlier broad rewrite decision sheet. The goal is not to
+redesign InfiniTime. It is to add the minimum family product in narrow,
+physically testable slices while preserving upstream behavior wherever it is
+not directly involved.
+
+The word **proposed** matters: these are the engineering recommendations to
+review, not hidden implementation choices. Every decision includes the
+embedded-system tradeoff, failure consequence, and a verification gate.
+
+## Decision summary
+
+| ID | Proposed decision | Principal cost accepted | Risk deliberately avoided |
+| --- | --- | --- | --- |
+| D0 | Integrate narrow slices on main, not a clean-room rewrite or 3.0.3 repair | More gates and intermediate artifacts | Reintroducing 16,000 lines of coupled old changes |
+| D1 | Correct/characterize the update journey before family code | Delays feature work | Debugging companion, platform, and features simultaneously |
+| D2 | Observe first; apply one locally proved liveness correction per gate | Several physical baseline flashes | Another speculative platform overhaul |
+| D3 | Freeze the minimum scope and preserve upstream Alarm/notifications | Defers desirable family features | RAM and interaction explosion |
+| D4 | One active RAM model plus one shared candidate; synchronous commits only if certified, otherwise a compact executor | Projected 4.3–4.9 KiB linked feature delta plus journal and measured runtime stack/executor | 8.6 KiB linked worker object (including its static 700-word stack/TCB) and uncertified feeder I/O |
+| D5 | Up to two durable peers, one link, transient third candidate | 256 B for 24 CCCDs and explicit pair mode | Five-peer state and pre-commit eviction |
+| D6 | Keep existing family GATT services/wire records | Carries a few legacy fields | New protocol and simultaneous companion rewrite |
+| D7 | Keep 32 schedule records and current recurrence behavior | About 1.4 KiB shared candidate buffer | Capacity migration and two resident schedule banks |
+| D8 | Keep 20 daily tasks and durable daily checks; no streak initially | Small flash write on a task toggle | Midnight/streak and multi-editor complexity |
+| D9 | Ship prayer calculation/display first; alerts off initially | Prayer alerts arrive in a later slice | Alert collision/timer risk in the first candidate |
+| D10 | Use a tiny volatile due queue; leave phone notifications upstream | Pending due alerts do not survive reboot | Replacing notification management in the minimum release |
+| D11 | Build a compact, opt-in Digital profile with full sleep and internal assets | Fewer fields; resource upload disabled in the first family RC | Resource-update concurrency, Family AOD, and high LVGL allocation count |
+| D12 | Retain the upstream app/face profile until measurement says otherwise | Extra flash remains compiled | Regression from unrelated pruning or arbitrary flash targets |
+| D13 | Release only through explicit resource, stack, rollback, and soak gates | Slower delivery | Another apparently valid but unbootable image |
+
+## D0 — Change strategy
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Technical cost/failure surface |
+| --- | --- | --- |
+| Repair 3.0.3 | Least apparent source churn | Retains 41,214 B linked RAM, StorageTask, double banks, five-peer machinery, and unknown boot defect |
+| Rewrite every subsystem | Clean conceptual ownership | Changes boot, display, BLE, storage, protocol, companion, and features at once; no physical bisection |
+| Integrate narrow vertical slices on main | Each linked/runtime delta and failure is attributable | Requires disciplined adapters and more release gates |
+
+### Proposed decision
+
+Use development main `8d7a04e9` as the source base. Port reviewed, bounded
+pieces from the old branch rather than cherry-picking feature commits. Each
+slice must boot, revert, reconnect, sleep/wake, and soak before the next slice
+is present.
+
+This is a **selective reimplementation**, not a complete overhaul. Upstream
+bootloader integration, DisplayApp, standard apps/faces, Alarm, and notification
+behavior remain unless evidence or focused review requires a local D2
+correction. BLE DFU keeps its wire protocol but receives the source-review-driven
+boundary hardening in D2 because it is the no-SWD recovery path.
+
+### Consequence and gate
+
+There will be intermediate diagnostic and feature artifacts. A regression that
+appears in slice N blocks N+1. No aggregate “all features” debug branch is
+owner-flashed to discover which subsystem broke it.
+
+## D1 — Control image, companion, and incident gate
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Technical cost/failure surface |
+| --- | --- | --- |
+| Treat official 1.16.1 as proven stable | Immediate start | Ignores the confirmed `wtdg` during the exact companion journey |
+| Repeatedly upload resources now | May reproduce quickly | Repeatedly exercises the riskiest path on the only recovered watch |
+| Fix the deterministic companion probe, then run a bounded matrix | Separates app error, GATT churn, and firmware stall | Requires companion work before family firmware |
+
+### Proposed decision
+
+Official 1.16.1 is the **recovery image**, not a demonstrated stable control for
+the resource/re-read workflow. Before family features:
+
+1. make DIS revision read independent of family capability discovery;
+2. report a missing family service as `unsupported`, preserving the revision;
+3. await a settled native disconnect before reopening or resuming forwarding;
+4. verify resource bytes/hashes rather than directory sizes alone;
+5. exercise the bounded matrix in EVIDENCE §7, stopping on the first failure.
+
+The first zero-family **diagnostic TEST probe** is development main plus the
+fixed journal, checked/bounded pre-scheduler failure exits, the
+host-fixture-qualified validator correction, and a strict no-format mount
+policy. It establishes whether main's AOD/display changes alter the control
+before any family code exists. It is deliberately rolled back and is not yet
+called or confirmed as a recovery anchor. A **fixed safety observer** earns that
+name only after every D2 slice and the final all-essential-path audit pass.
+
+There is an unavoidable first-hop asymmetry: official 1.16.1 and current main
+contain the same unsafe DFU receiver, so neither the diagnostic probe nor fixed
+safety observer can protect the transfer that installs itself. Every exact
+artifact/path must therefore run first on representative spare hardware.
+Hardened DFU applies only after the fixed observer is running. This reduces but
+does not erase first-hop residual risk; if no spare watch exists, the stated
+highest-practicable first-install confidence cannot be claimed.
+
+### Consequence and gate
+
+No family implementation begins until all read controls R1–R4 in EVIDENCE §7
+(40 forwarding-off and 20 forwarding-on reads across awake/asleep states)
+complete without reset/hang, and the update app correctly identifies official
+and family capability profiles. Resource-upload repetition remains limited,
+late in the matrix, and stops on the first anomaly.
+
+## D2 — Platform liveness hardening
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Technical cost/failure surface |
+| --- | --- | --- |
+| Preserve all upstream waits | Minimum diff | Known infinite waits remain on the sole watchdog-feeding path |
+| Feed or lengthen the watchdog around I/O | Masks false resets | Converts a detected deadlock into an indefinitely black watch |
+| Port all historical “hardening” | Many apparent protections | Some historical changes bootlooped hardware and obscured the measured defect |
+| Stage local invariants one at a time | Bounded failure behavior with bisection | More physical gates before features |
+
+### Proposed decision
+
+Observe before broad behavior changes. The diagnostic probe adds a three-slot,
+3×96 B versioned retained-RAM journal, two adjacent 32 B versioned
+clock-continuity slots, checked task/startup result codes, and the
+validator correction in item 1 because later confirming a recovery anchor with
+the known uint32 implementation is not acceptable. The correction must pass
+its production-format host fixture before the probe reaches the
+watch. The journal lives in one fixed linker-reserved `NOLOAD` RAM region shared
+by every observer/family image, not ordinary `.noinit` after variable-sized
+`.bss`. The heap implementation gains a fixed `__FreeRtosHeapEnd`, because it
+currently spans `__HeapLimit` through `__StackLimit`; assertions exclude the
+journal/clock region from heap and task/MSP-stack regions and count its 352 B
+once. Magic, schema,
+build ID, sequence, and CRC let a different recovery build accept compatible
+records. At earliest recovery startup, pin the newest valid prior-build failure
+in one slot until the on-watch diagnostic is viewed/exported and explicitly
+acknowledged; the other two slots ping-pong current-boot updates. Thus normal
+phase/high-water writes and two observer reboots cannot overwrite uninspected
+candidate evidence. It records reset reason,
+boot stage, last SystemTask message, Display queue pressure,
+DateTime/TWI/SPI/flash/NVMC phase and owner, heap minima, and task high-water
+marks. A pre-BLE on-watch System Info diagnostic pages through the prior slot's
+decoded fields, sequence, CRC/build match, and compact raw words so evidence is
+retrievable without a companion. It performs no filesystem crash logging and no
+automatic safe mode.
+
+Journal and clock updates use inactive-slot rollover: write payload/metadata,
+then CRC, then a final valid marker; never mutate the only valid slot in place.
+The clock slots are reset-retained convenience, not battery-backed truth. They
+publish at most once per minute and on editor CTS, can restore an approximate
+display after a compatible soft reset, but every boot/reset class starts Clock
+Untrusted until a fresh authorized CTS transaction. POR/brownout/invalid CRC
+discards them. True power loss and candidate↔observer swaps are explicit tests.
+This is an owner-visible safety tradeoff: after every reboot the designated
+family companion must be opened and complete the paired time transaction before
+family reminders, task rollover, or fresh-prayer claims resume. The second peer
+and native forwarding cannot restore trust. Upstream Alarm remains behaviorally
+unchanged and can still use the approximate/restored civil clock; the global
+Sync Time warning makes that limitation visible rather than silently changing
+Alarm in the minimum release.
+
+Official 1.16.1 cannot read this journal. The diagnostic probe first proves
+TEST rollback but is not confirmed. After every numbered D2 slice passes, the
+combined fixed safety observer is installed at the exact qualified hash,
+rollback-tested, reinstalled, soaked, and deliberately confirmed. Only then may
+a family candidate rely on post-revert journal evidence. A forced diagnostic WDT verifies fixed-address
+survival through the actual candidate→observer reverse swap before the journal
+is trusted. Application linker assertions cannot prove MCUboot preserves SRAM:
+inspect the exact installed bootloader binary/map if available and run a canary
+sweep across forward/reverse swap to select the region. If preservation cannot
+be demonstrated, retained cross-image evidence is unavailable and no conclusion
+may depend on it.
+
+Items 1–2 and the no-format subset of item 9 are diagnostic-probe
+prerequisites. They do not by themselves qualify a recovery anchor. Introduce
+all separately reviewable slices in this order, then build the combined fixed
+safety observer:
+
+Every diagnostic probe, D2 slice, and fixed safety observer compile-excludes
+BLE `FSService` construction/registration/source just like the first family RC;
+ordinary external-resource reads remain. The implicated writable host-task
+service is not needed for recovery and is not silently left in the anchor.
+
+1. correct the validator's one-byte `image_ok` semantics and characterize, then
+   bound every NVMC-ready phase only if target execution from a demonstrated
+   RAM-resident wait remains possible, returning typed status and retained phase
+   timing; otherwise rely on unconfirmed-image watchdog rollback and never claim
+   a software timeout that flash instruction-fetch stall cannot execute;
+   derive the trailer address from the image/partition manifest, accept only
+   erased→set or already-set transitions, preserve the adjacent trailer bytes,
+   restore read mode on every return path, and prove the operation first with
+   the exact production CMake/imgtool artifact plus a primary-slot trailer
+   fixture derived from the installed MCUboot TEST-swap semantics; record the configured
+   signing/acceptance policy and never call the artifact signed unless that path
+   is demonstrated. After host fixtures, exercise the corrected NVMC write by
+   deliberately validating this slice on sacrificial hardware, verify adjacent
+   bytes and confirmed reboot behavior indirectly through the exact trailer/
+   revision checks, then deliberately restore official. Early artifacts on the
+   owner's watch remain unconfirmed; the final safety observer is not the first
+   real target NVMC write;
+2. make startup capable of supporting a later recovery anchor: bound/record
+   pre-scheduler LFCLK startup and Display's operational `lv_task_handler()`
+   completion loop, check every task/timer/queue creation result, and start a
+   compiled clock or explicit recovery screen before external-flash mount and
+   after only minimum display hardware. Any failure before normal SystemTask
+   watchdog ownership must use a demonstrated independent deadline and retained
+   phase followed by software reset, or an equivalently demonstrated early-WDT
+   path; it may never spin before TEST rollback is possible. Defer/bound external
+   mount, optional BLE sync, settings restore, and motion/touch TWI. Replace
+   `RestoreBond()`'s
+   delete-on-read with strict bounded, non-destructive legacy restore. Make the
+   matching writer atomic/exact-length/truncating, index every CCCD correctly,
+   check each read/write/sync/close result, and mark persisted only after verified
+   durability so failures retry. For first observer→official rollback, reconnect
+   and verify official re-persist before a second reboot; only later
+   candidate→fixed-observer rollback must survive an immediate second reboot
+   before phone reconnect. Settings and Alarm loaders zero-initialize candidates
+   and require exact stat length, exact read, successful close, known version,
+   and field ranges before publication; short/corrupt input leaves compiled
+   defaults and cannot select face 7/8 by chance;
+3. make only idempotent `NotifyDeviceActivity` non-blocking/coalesced so a BLE
+   connection cannot wait forever behind Display; retain reliable delivery for
+   critical sleep, wake, alarm, and pairing messages;
+4. replace every SystemTask→Display critical `portMAX_DELAY` send with a bounded
+   desired-state generation or fixed reserved pending slot plus acknowledgement;
+   never drop a critical command, never disable sleep resources before the
+   matching Display acknowledgement, and enter a recorded controlled recovery
+   if the deadline expires; after persisting the retained phase record, a
+   deliberate software reset is safer than a live feeder/display deadlock, but
+   any such recovery during qualification is a no-go;
+5. port the hardware-evidenced flash tRES1 and bounded WEL/WIP behavior from
+   `816d4f94`, with typed errors and no watchdog feed inside polling;
+6. harden the recovery-critical `DfuService` boundary without redesigning its
+   wire protocol: replace the sleep poll with a bounded acknowledged flash
+   lease, flatten and length-check mbuf chains, cap image/init sizes, remove
+   input-sized stack arrays, propagate typed erase/write/read/CRC failures, and
+   prove abort cleanup plus a successful retry. Erase the staging trailer
+   sector first and read back the erased trailer range before any bulk erase or
+   data write, so reset cannot leave stale pending magic. Before bulk erase,
+   require the Start data packet to be exactly 12 bytes with SoftDevice and
+   bootloader sizes zero and application size in range. Accept exactly the
+   deployed 14-byte init schema: device type `0x0052`, revision `0xffff`, one
+   SoftDevice requirement `0xfffe`, application version `0xffffffff`, and
+   trailing CRC16; reject other counts/trailing bytes without a
+   VLA. Then
+   accept only an application artifact with `0 < size ≤ 474,704 B` (`0x73e50`)
+   in `[0x40000,0xB3E50)` of the 475,136 B slot; the remaining 432 B
+   `[0xB3E50,0xB4000)` is trailer space. PRN zero means disabled and must never
+   be used as a modulo divisor. Reject cumulative overrun, non-exact final length,
+   allocation/notify/timer failure, and unsupported types without ASSERT reset.
+   After exact transport CRC, validate MCUboot header/layout, vector bounds, and
+   SHA TLV, then write/read back pending magic last. Timer periods use
+   `pdMS_TO_TICKS` and every create/start/reset/stop command result is checked.
+   A timer callback may only set a generation-tagged atomic cancel request; it
+   cannot call Reset or mutate flash/state. Erase and validation are bounded
+   sector/phase steps, and both the step boundary and every bounded WIP poll
+   check that request. One serialized DFU owner applies flash mutation and
+   terminalization. One attempt/session generation owns both timers; every
+   terminal path cancels them, clears DfuImage ready/buffer state, and emits
+   exactly one balanced finished/lease release, while stale callbacks cannot
+   touch a later attempt or underflow wake locks. A whole-attempt deadline is
+   monitored outside the owner; if the owner fails to observe cancellation by
+   its bounded grace period, the retained phase is recorded and essential-
+   progress supervision deliberately stops watchdog feeding. Long work that
+   cannot meet these slice/poll bounds moves to the certified D4 executor.
+   Never queue to SystemTask while holding NOR/SPI ownership; disconnect at
+   erase/data/CRC, a deliberately stuck owner, watchdog recovery, and immediate
+   successful retry are mandatory host/spare tests because SystemTask can
+   otherwise keep feeding while the NimBLE host alone is wedged;
+7. replace DateTime's feeder-side `portMAX_DELAY` mutex read with a canonical
+   caller-owned immutable snapshot and bounded publication; set transition bits
+   under the writer guard and have SystemTask consume them directly, never queue
+   to itself. Audit every cross-task libc-time use, replace shared `localtime()`
+   state with `localtime_r`/pure integer conversion, and restore only approximate
+   display time from compatible fixed clock slots. Every boot remains Clock
+   Untrusted until a fresh authorized editor CTS transaction; suppress scheduler
+   fire, destructive task rollover, and fresh-prayer claims until then;
+8. serialize every LittleFS client—not only family files—through bounded
+   complete transactions and a global order of flash-awake lease → recursive
+   filesystem mutex when applicable → whole-NOR-operation lock → SPI-transfer
+   lock. DFU skips only the FS mutex; sleep/wake shares the same NOR owner. One
+   power coordinator serializes lease grant with the zero-lease transition to
+   sleep: a grant returns only after flash is awake; sleep owns a generation-
+   tagged transition, rechecks that the lease count is still zero before the
+   sleep command, and must cancel/finish then wake before a concurrent grant can
+   succeed. There is no check-zero/release-lock/sleep interval. A compound
+   WREN/WEL/command/WIP operation returns one typed result atomically;
+   never wait on a Display, SystemTask, or BLE queue while holding a resource.
+   Mutations lock through open/write/sync/close/rename/readback; long-lived LVGL
+   resource handles lock each bounded read/seek/close call, not the entire frame.
+   Add a checked file-sync boundary and make LVGL callbacks propagate short
+   reads, seek/close failures, and actual byte counts instead of reporting
+   success or the requested size unconditionally. Settings and Alarm saves use
+   atomic create/truncate/write/sync/close/rename/readback, retain their dirty
+   state until verified durability, and receive cut tests. While TEST, the
+   Settings serialization boundary always replaces transient face 8 with the
+   prior safe stored ID;
+9. from the first diagnostic probe onward, remove one-error auto-format and
+   return typed storage-unavailable on any mount failure without altering media.
+   After the first internal clock frame, support three explicit states: a bounded,
+   incremental post-UI full-volume scan may initialize media only after a valid
+   JEDEC/device identity, typed error-free flash lease, and two independent
+   complete reads agree that every byte is erased;
+   non-erased mount failure stays unavailable with bytes preserved; an
+   on-watch destructive repair requires owner confirmation;
+10. address raw SPIM/TWIM semaphore/event/disable waits only after
+   phase-specific host fault injection proves abort, peripheral reset,
+   chip-select, event clearing, mutex release, error propagation, and a
+   successful subsequent transaction. TWIM outer reads short-circuit if the
+   address-write fails and ERROR never maps to success; stuck SDA/SCL recovery
+   is then physically injected on sacrificial hardware.
+
+Every numbered item is its own implementation commit, artifact, and physical
+gate. Items may be reordered only when breadcrumbs/reproduction provide
+stronger evidence. The final all-essential-task/startup operational call-graph
+audit, rather than an arbitrary numbered item, is the release prerequisite: no
+finite transition with expected completion may retain an unbounded wait. This
+includes Display and pre-scheduler startup, not just the watchdog feeder;
+legitimate idle owner loops may block awaiting new work. A generic timeout is
+not allowed onto the watch merely to satisfy the checklist.
+
+### Explicit rejections
+
+- Do not increase the watchdog timeout.
+- Do not reload the watchdog merely because a filesystem operation reports
+  internal progress.
+- Do not port the old generic TWI timeout, blanket cache changes, crash-loop
+  safe mode, radio recovery state machine, display heartbeat redesign, or
+  600-word SystemTask stack by default.
+- Do not auto-format external flash as recovery.
+- Do not drop critical display commands or preserve them by blocking the sole
+  watchdog feeder forever; use bounded retained state plus acknowledgement.
+
+### Consequence and gate
+
+The extra artifacts and physical checks are accepted to avoid another
+all-at-once platform patch. Every timeout first passes deterministic fault
+injection and proves ownership cleanup plus post-fault recovery. Each local
+change then passes the applicable revision-read control, 20 physical
+sleep/wake cycles, task/heap ledger, and a 24-hour control soak before the next
+platform change. A newly required stack increase is based on `-fstack-usage`
+and physical high-water evidence and is charged to D12; it is never suppressed
+to preserve an arbitrary RAM number. A final all-essential-task/startup audit
+must find no unbounded queue, mutex, peripheral, readiness, LVGL-operation,
+startup-clock, or whole-transaction wait in any finite operation—not merely no
+new waits in edited code.
+
+Only that completed D2 build may be named the fixed safety observer and undergo
+the two-install confirmation sequence. Earlier probes/slices remain TEST and
+return to official 1.16.1; they are evidence artifacts, not recovery anchors.
+
+## D3 — Minimum product boundary
+
+### Options and embedded tradeoffs
+
+Adding multi-alarm, notification history, Find My, weather customization,
+streak editing, app pruning, multi-editor conflict resolution, and Family AOD
+at once improves feature completeness but adds persistent models, GATT state,
+LVGL objects, timers, and cross-feature presentation paths before the base is
+trusted.
+
+### Proposed decision
+
+The first complete candidate contains only:
+
+- up to two durable BLE peers with explicit third-phone replacement;
+- scheduler sync, list, recurrence, and reminders;
+- daily task definitions, list, durable checks, and count;
+- prayer settings, calculation, list, and next-time summary;
+- the compact Family Digital watchface.
+
+Preserve upstream single Alarm and upstream notification behavior unchanged.
+Existing external resources remain readable, but the family qualification and
+first-RC build profile excludes `FSService` construction, registration, and its
+source/object from the link. The companion capability profile hides resource
+write UI; DFU remains present. The minimum face uses internal assets and the
+release manifest requires no resource update. Re-enabling remote resource
+writes requires a separate recovery/resource build and qualification. This
+removes the highest-risk nonessential NimBLE-host filesystem path without
+changing ordinary resource reads.
+
+Defer:
+
+- multi-alarm;
+- replacement notification history/inbox;
+- Find My/beacon mode;
+- task streaks and companion streak override;
+- prayer vibration alerts (see D9 owner choice);
+- weather/heart-rate/step additions to Family Digital;
+- multi-editor merge guarantees;
+- launcher/app/watchface pruning;
+- Family AOD;
+- BLE resource upload in the first family RC.
+
+### Consequence and gate
+
+New deferred family code is absent rather than compiled “disabled.” Existing
+upstream capabilities remain unless this decision explicitly names a family
+build-profile exclusion. Each requested minimum feature has its own physical
+slice and can be removed without changing the others' persisted format.
+
+## D4 — Ownership, RAM, persistence, and filesystem execution
+
+### Options and embedded tradeoffs
+
+| Option | Static/runtime cost | Concurrency and failure behavior |
+| --- | --- | --- |
+| 3.0 double family banks + StorageTask | 8,624 B linked object containing its static 700-word stack/TCB, banks, buffers, queue, and semaphores | General worker isolates call depth but permanently consumes most of that linked RAM and couples all domains |
+| Flash-only active lists | Smallest model RAM | Display/BLE recurrence reads contend on LittleFS during ordinary use |
+| One active RAM model + shared candidate buffer | Projected 4.3–4.9 KiB feature delta including controllers/24 CCCDs, plus the separate 352 B journal/clock region, before any measured stack change | One mutation at a time; ordinary readers never touch flash |
+| Compact I/O executor contingency | Adds one measured stack/TCB but borrows the shared buffer and owns no model banks | Isolates LittleFS call depth from the watchdog feeder if synchronous latency/stack cannot be certified |
+
+### Proposed decision
+
+Use one SystemTask-owned `FamilyCore` with:
+
+- one active RAM copy of schedule definitions, task definitions/completions,
+  prayer settings, and derived summaries;
+- one shared fixed candidate buffer sized for the largest allowed transaction
+  (32 schedule records plus header, about 1.4 KiB);
+- no per-feature timer;
+- one queued commit at a time; other writes return a defined Busy response;
+- a 30-second receive-idle and two-minute absolute candidate-lease deadline;
+  disconnect, timeout, or owner Pair New aborts an unqueued lease, while an
+  already queued/write transaction is non-cancelable and Pair New reports Busy;
+- lease ownership is `(authenticated peer identity, monotonically changing
+  connection-session generation)`, never a reusable numeric connection handle;
+- Commit uses a nonblocking acknowledged handoff to SystemTask/commit owner. If
+  its queue is full, return Busy and retain the valid Receiving lease; never
+  report accepted before exclusive buffer ownership transfers;
+- BLE callbacks that validate/copy bounded bytes and queue work, never call
+  LittleFS;
+- DisplayTask that reads immutable/copy-out snapshots, never calls LittleFS for
+  family data.
+
+Bond security admission has priority over a family receive lease because the
+NimBLE store callback is synchronous and pairing must not depend on an
+unbounded retry. With one link, disconnect aborts an unqueued lease from the
+previous phone; on-watch approval of a new pairing explicitly aborts any
+remaining unqueued family lease, while a queued/durable commit makes pairing
+report Busy until it resolves. Mutating family GATT operations stay disabled
+for a newly secured peer until its security snapshot is durable. The callback
+streams bounded security fields into the same candidate and hands ownership off
+without filesystem I/O. Generated static assertions prove both the maximum bond
+encoding and 32-record schedule encoding fit the ~1.4 KiB buffer.
+
+The active arrays are not concurrently mutated in place. After durable commit,
+SystemTask copies the candidate and changes the published generation inside one
+short, measured critical publication section. BLE reads copy at most one fixed
+record/digest under the same bounded guard and restart indexed enumeration if
+the generation changes. Display receives only fixed summaries and bounded title
+copies. No task copies a whole schedule/task list onto its stack, and every
+record/page/queue/title copy is charged to the RAM and stack ledger.
+
+Persist domains independently:
+
+| File | Content | Publication rule |
+| --- | --- | --- |
+| `/.system/family-schedule.dat` | Header + 0–32 fixed records + CRC32 | temp write, sync, atomic rename, then publish active list |
+| `/.system/family-tasks.dat` | Header + 0–20 definitions + CRC32 | same |
+| `/.system/family-task-state.dat` | date key + sorted completed 16-bit IDs + CRC32 | same, on accepted toggle/day rollover |
+| `/.system/family-prayer.dat` | nine-byte settings + header/CRC32 | same |
+| `/.system/bonds.0.dat`, `.1.dat` | up to two versioned encoded security records, per-peer semantic CCCDs, LRU, optional family-editor identity + CRC32 | both copies verified before a pairing/forget/editor result is published; D5 ordering |
+
+Each resyncable family-domain header carries magic, domain, schema, payload
+length, a nonwrapping 32-bit generation, and CRC. That generation is exactly
+what existing Family State Status v1 exposes; silent low-32 truncation is
+forbidden. Bond copies alone use the 64-bit generation described in D5.
+Schedule/task headers also persist the greatest issued record ID and list
+version so app reinstall/editor takeover cannot reuse deleted identity or a
+status token. Domain-generation/ID/version exhaustion is visible and requires
+an explicit future migration; no counter wraps.
+LittleFS already provides power-loss-resilient metadata and rename; application
+CRC/versioning detects wrong/truncated content. Do not build application-level
+A/B banks for resyncable family domains unless exhaustive host cut-point tests prove
+temp+rename insufficient. Bonds are the deliberate exception because a corrupt
+single live file can lock out every phone or resurrect a forgotten peer.
+
+The feature projection is not permission to allocate 4.9 KiB blindly. Its core
+ledger is 1,376 B of schedules, 620 B of tasks, 192 B for parallel stable-ID/
+2000-based-`u32` last-fired arrays, no more than 320 B for prayer settings,
+completion IDs, the four-entry due queue and summaries, plus the roughly
+1.4 KiB shared candidate: about 3.9 KiB before controllers. The projection
+excludes the separately budgeted 352 B fixed journal/clock region and includes
+known controller/service deltas, the recursive FS mutex, and 24-CCCD static
+delta. Generated assertions cap every listed fixed object; final linked padding
+and compiler effects come from the target map. Recurrence computation still
+uses checked signed 64-bit intermediates; only the validated 2000–2099 ordinal
+key is stored as `u32`. Dynamic task stacks/TCBs, queues, timers, NimBLE state,
+and LVGL allocations have a separate startup/runtime-heap ledger: increasing
+SystemTask from 350 to 600 words, for example, costs about 1,000 B of runtime
+heap rather than linked `.bss`. Security records are encoded field-by-field;
+raw NimBLE structures, padding, pointers, and 24-entry stack arrays are
+forbidden at the persistence boundary.
+
+For a resyncable domain: validate candidate → write/sync/close/read back temp →
+rename over live → reopen and verify live generation/CRC → copy to active RAM →
+publish generation/status. A rename/timeout result is ambiguous until live is
+inspected: expected-new means publish, valid-old means retain old and report
+failure, neither means keep the current RAM snapshot for this boot but mark the
+domain/storage unavailable and accept no further mutation. A false “old file is
+intact” claim is forbidden.
+
+At boot, give the existing platform mount/settings path a bounded opportunity.
+If it succeeds, honor every valid upstream watchface setting; if it fails or
+times out, start standard Digital with compiled defaults and storage marked
+unavailable. In either case, do not delay the clock for family-domain load,
+repair, scan, or BLE readiness. An invalid resyncable schedule/prayer domain is
+empty/unconfigured with a diagnostic; invalid task-day state is unavailable,
+not silently unchecked. Bond recovery follows D5 and never converts corruption
+to an empty paired set.
+
+### Consequence and gate
+
+The design intentionally serializes family mutations. It spends bounded RAM to
+remove ordinary display/recurrence/task reads from the shared filesystem. Run
+the pinned production LittleFS against a command-aware NOR block emulator,
+cutting before/after every program/erase/sync then remounting on empty,
+fragmented, near-full, and GC-triggering volumes; unrelated files must remain
+byte-identical. Separate API mocks inject returned errors/short operations and
+verify typed propagation/cleanup. ARM stack-usage and physical
+high-water measurements size SystemTask with at least 25% and 256 B remaining,
+whichever is larger. Before the first SystemTask LittleFS commit, the historical
+1,308/1,400-byte `lfs_rename` watermark, recursive call depth, changed `.su`
+files, and near-full-volume latency are remeasured. The complete SystemTask
+transaction, from accepted handoff through live-file verification and resource
+release, has a provisional two-second wall-clock ceiling—well below the
+seven-second watchdog—and is never kept alive by progress feeds. Yielding to
+another task does not let SystemTask feed the watchdog before this call returns.
+Separately measure and bound the longest scheduler/interrupt-nonpreemptible
+critical section against control-build scheduling and display-latency evidence.
+
+Zero new tasks is an objective, not permission to put uncertified recursive I/O
+on the sole watchdog feeder. No FS-writing SystemTask image reaches hardware
+until the stack and end-to-end latency tests above pass. If either cannot be
+certified, stop and revise the architecture to one compact fixed I/O executor
+that borrows the shared candidate, owns no active/double model or general I/O
+buffer, and has a measured stack/completion deadline. It is accepted only by a
+new map/runtime decision and all D12 gates; the old 8,624 B StorageTask is still
+forbidden. Incremental orchestration is not claimed to bound an individual
+recursive `lfs_rename` call.
+
+## D5 — BLE peer topology and third-phone admission
+
+### Options and embedded tradeoffs
+
+| Option | RAM/UX benefit | Failure cost |
+| --- | --- | --- |
+| One bond | Upstream-simple | Does not meet family use |
+| Five retained peers | No frequent replacement | Old design grew static store, snapshots, resolving list, and policy surface |
+| Two durable + transient third | Bounded RAM and safe replacement | Requires an explicit admission transaction |
+| Only 16 CCCDs + block candidate subscriptions | Saves 128 B versus 24 | Cross-cuts all notifying services and companion retry behavior |
+| 24 CCCDs during admission | Ordinary phone behavior; no subscription barrier | Costs 256 B over upstream's eight-record store |
+
+### Proposed decision
+
+- Compile for one active BLE connection and **up to** two durable identities.
+- Use main's three security slots for durable A, durable B, and in-progress C.
+  Replace NimBLE's store-full/round-robin callback: it never auto-evicts a peer.
+- Reserve 24 CCCD records globally, enforce at most eight per peer, and reject a
+  ninth with a diagnostic rather than overwriting another peer.
+- Generate the first-RC CCCD manifest from the linked GATT profile. With
+  FSService compile-excluded, its complete retained notify/indicate set is
+  exactly eight: GATT Service Changed, Battery Level, Heart Rate Measurement,
+  Alert Notification Event, Music Event, Motion Step Count, Motion Raw Values,
+  and DFU Control Point. Family schedule/task/prayer/status characteristics add
+  no CCCD. CI asserts both that set and the coupled companion's desired/default
+  subscriptions fit the per-peer limit. Adding a ninth characteristic or
+  re-enabling FSService reopens D5 rather than silently relying on subscription
+  order; overflow preserves all existing entries and returns the named error.
+- Stream security/CCCD encoding into the shared candidate; never allocate a
+  24-entry array on the 2,880-byte NimBLE host stack.
+- Persist each CCCD as compact manifest-generated service/characteristic IDs,
+  instance, and validated notify/indicate flags under a GATT-layout/schema ID.
+  The generated manifest maps those IDs to the semantic `(service UUID,
+  characteristic UUID, instance)` tuple. Never persist a bare prior-build value
+  handle or raw compiler structure. Resolve only currently registered
+  characteristics on restore; drop unsupported entries and require client
+  resubscription after a layout change. Static assertions keep the worst-case
+  two-peer/24-record snapshot within the shared candidate; do not assume a
+  historical ~700 B size.
+- On the first family boot only, if no new slots exist, accept only the strict
+  allow-listed one-bond ABI used by the exact official/observer predecessors:
+  exact count-derived length and security invariants. The bytes have no
+  provenance field and legacy CCCDs are numeric handles, so import only matching
+  security halves and deliberately drop every legacy CCCD. Mark subscriptions
+  stale and require the coupled companion to perform full service discovery and
+  resubscribe; do not rely on delivering Service Changed because its own legacy
+  CCCD has also been discarded. Fail closed on ambiguous or truncated data and
+  never claim provenance the bytes cannot establish. Preserve the
+  verified legacy file unchanged while the family image is TEST/unconfirmed so
+  reverse swap retains one recovery phone; do not destructively retire it until
+  confirmation and an explicit downgrade-recovery decision.
+
+Both `/.system/bonds.0.dat` and `.1.dat` hold the same latest logical snapshot
+with copy identity, schema, 64-bit generation, count 0–2, explicit security fields,
+per-peer CCCDs/LRU, and CRC. A security-set change writes/verifies one older or
+empty slot first, then writes/verifies the other with the same logical
+snapshot. Only after both copies agree may the UI report success or a victim be
+deleted. If power fails after the first copy, boot selects its newer valid
+generation only when the two valid generations are equal or differ by exactly
+one; `G/G−1` is the sole normal interrupted-write gap and is repaired before
+advertising. Equal-generation/different-payload or a valid gap greater than one
+fails closed. If only one copy is valid, preserve it and require bounded repair
+before advertising. If no valid copy exists while nonempty bond artifacts
+exist, fail closed with a usable clock and on-watch `Forget all/repair`; never
+silently advertise an empty store.
+
+Admission behavior:
+
+1. With zero or one durable peer, normal connectable advertising may admit an
+   unknown phone only after the existing passkey/on-watch owner approval. The
+   completed bond remains provisional until the resolved identity has matching
+   our-security and peer-security halves, encrypted authenticated/MITM state and
+   accepted key size, and both durable copies. CCCDs are not a knowably complete
+   security prerequisite.
+   Storage failure removes its volatile keys and tells the owner to Forget the
+   stale phone-side bond before retrying.
+2. With two peers, only an explicit on-watch `Pair new phone` opens a two-minute
+   replacement window. It aborts an unqueued family candidate lease, waits or
+   reports Busy for a durable commit, disconnects the active phone, and
+   fast-advertises.
+3. Scanning, a connection, failed passkey, or NimBLE store pressure never evicts.
+4. After C has both security halves, choose authenticated-use LRU from A/B,
+   encode `{survivor,C}`, and verify both durable copies.
+5. Only then delete victim keys/CCCDs and admit C. Any earlier failure removes
+   only partial C; an ambiguous one-copy result enters a recoverable pending/
+   degraded state rather than claiming success.
+6. `Forget all phones` writes and verifies the empty set in both copies before
+   deleting volatile keys and reporting success, preventing later resurrection.
+
+An accepted CCCD change updates bounded in-RAM semantic state and schedules a
+redundant snapshot commit after five seconds of CCCD quiet or at clean
+disconnect, whichever comes first; a concurrent mandatory security transaction
+may bundle it. A crash can lose only the most recent subscription changes, not
+the durable security identity. On every reconnect the coupled companion performs
+capability discovery and rewrites its desired subscriptions, so this heals
+without pretending there is a detectable “complete CCCD set.” Persistence
+failure is surfaced as subscription-dirty while the secure bond remains usable.
+
+If the first new copy is valid but the second cannot be verified, immediately
+freeze pairing/family mutation, disconnect, and disable advertising. Attempt a
+bounded repair; on failure record the phase and deliberately reboot so boot can
+apply the `G/G−1` rule. Persistent repair failure leaves only clock/recovery UI.
+The watch never lingers indefinitely in Degraded, publishes the new set, deletes
+a victim, or claims the old set is certainly intact.
+
+Peer replacement and Forget All are disabled while the running image is
+unconfirmed because the rollback image depends on the preserved legacy recovery
+bond. After confirmation, they remain disabled until the owner explicitly
+retires the downgrade bridge and durable delete/sync/readback proves legacy
+`/bond.dat` absent. Replacement that can evict the legacy original and Forget
+All both require that proof. Keeping a separately qualified rollback bridge is
+an explicit alternative, but it continues to disable replacement and Forget
+All. Addition of a second peer may be exercised before retirement, but automatic
+rollback must still reconnect the original recovery peer. The exact artifact's
+destructive pairing matrix is completed on sacrificial hardware before it is
+ever offered for the owner's only watch.
+
+A later deliberate downgrade is supported only through on-watch **Prepare
+Official Downgrade** while the family image is confirmed, storage is healthy,
+and no commit is active:
+
+1. persist/read-verify standard Digital ID 0 and all main-compatible Settings;
+2. atomically write a CRC/schema `family-downgrade` marker in `Preparing`;
+3. commit/verify an empty bond generation to both family copies and record that
+   exact generation in the marker;
+4. durably delete/read-verify legacy `/bond.dat`, atomically publish marker
+   `Ready` last, and clear volatile security before reporting safe to flash;
+5. official may then pair a new phone and create a new `/bond.dat`;
+6. on re-upgrade, only `Ready` plus the exact expected empty generation
+   authorizes strict security-only import of that newer legacy file, superseding
+   the empty copies. Rebuild/verify both copies, drop CCCDs/resubscribe, then
+   delete marker and legacy last.
+
+`Preparing`, marker/copy mismatch, or downgrade without `Ready` fails closed
+and can never restore stale family peers or face 8. The coupled companion refuses
+an official downgrade unless it reads `Ready`. This is distinct from automatic
+TEST rollback, which preserves the original recovery legacy bond.
+
+LRU advances only on successful authenticated use and may coalesce hourly.
+CCCD writes use only the fixed five-second/disconnect debounce above; security
+admission/replacement/forget never coalesces. Counter wrap is handled by
+renormalizing the two entries.
+
+One active link means absolute radio fairness cannot be promised: an aggressive
+retained client can repeatedly win before C. The watch disconnects a resolved
+A/B identity and stays in Pair New mode. If C remains starved, the UI tells the
+owner to pause Bluetooth/forwarding on retained phones and retries without
+removing A/B. This is an explicit recovery path, not a false guarantee about an
+uncontrolled central.
+
+### Consequence and gate
+
+This spends 256 B of static CCCD capacity plus a second bounded, codec-asserted
+bond snapshot to avoid a cross-service subscription barrier and a single-point
+bond file. The
+A/B/C matrix covers first/second admission, no-space/storage-unavailable,
+failed security, per-peer CCCD overflow, every cut during both-copy writes,
+one-copy repair, equal-generation disagreement, legacy import, candidate phone
+retaining a stale bond, aggressive A/B reconnect, LRU rotation, and Forget All.
+At every reboot cut there is either the prior valid set or the new valid set.
+Zero usable peers is release-blocking except when both verified copies contain
+the intentionally committed empty Forget-All generation; resurrection after a
+reported Forget All is always release-blocking.
+
+## D6 — Family protocol and companion ownership
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Cost/risk |
+| --- | --- | --- |
+| New multiplex/CAS protocol | Uniform new abstraction | Rewrites firmware and companion transport while debugging hardware |
+| Existing schedule/task/prayer services | Already implemented and golden-vector tested | Retains some fields not needed by a single editor |
+| Multi-editor watch database | Flexible ownership | Tombstones, merge identity, conflict UX, and larger durable state |
+
+### Proposed decision
+
+Retain the current authenticated service UUIDs and byte layouts:
+
+- schedule protocol/record v3, 43-byte records;
+- task protocol/record v2, 31-byte records;
+- prayer-settings v2, nine bytes;
+- family-state status v1 for commit token/state/error;
+- companion-management status, revised for capacity two.
+
+Freeze the existing 16-byte Family State Status v1 semantics rather than
+silently squeezing a 64-bit bond generation into its `activeGeneration:u32`.
+That field is the exact nonzero 32-bit active generation only for resyncable
+schedule/task/prayer domains. It is zero/not-applicable for `BondStore` and
+every non-domain operation, and implementations may never expose the low 32
+bits of a bond generation there. Bond success is established by the bound
+operation token, cleared companion-management dirty/pending flags, expected
+bond count, and reconnect/security proof; the full 64-bit generation remains an
+internal/persisted diagnostic. Changing this rule requires a new status version.
+
+The schedule/task record, command, indexed-read, and existing digest layouts
+remain unchanged. Add one read-authenticated, read-only **List Metadata v1**
+characteristic to each of those two existing services; it has no notify flag or
+CCCD. Its exact eight little-endian bytes are `version:u8=1`, `reserved:u8=0`,
+`greatestIssuedId:u16`, and `greatestListVersion:u32`. The generated capability
+manifest advertises it. This narrow additive protocol change is required because
+active indexed records and the existing 7/9-byte digests cannot reveal a deleted
+ID high-water to a reinstalled/replacement editor.
+
+Retain current 16-bit record IDs, 32-bit list versions, and `lastModified`
+fields for wire compatibility. Designate one PineTimeCompanion installation as
+the family editor/time authority for the minimum release. Other retained phones
+may forward notifications, read status, and use nonmutating upstream services,
+but cannot change the trusted clock/offset or family lists.
+
+Make the constraint enforceable: the bond snapshot carries an optional editor
+peer identity. Only that authenticated peer may mutate schedule, tasks, or
+prayer settings; the other gets a defined NotOwner status. The owner assigns
+the currently connected peer from an on-watch `Set family editor` confirmation.
+If replacement evicts the editor, the durable new bond set clears the role and
+the watch keeps all family data. C does not silently inherit authority; after
+explicit reassignment its companion reads the complete current lists/settings
+before offering replacement sync. If the editor survives, its role survives.
+
+In the family profile, Current Time/Local Time writes require an encrypted,
+bonded connection resolved to that editor. Validate exact mbuf lengths and every
+date/time/offset/range, including product civil years 2000–2099; never normalize
+malformed input with `mktime`. Stage the
+Local Time offset first, bound it to the editor identity and monotonically
+changing connection-session generation, and expire/erase it after ten seconds
+or disconnect. A valid Current Time write in that same session atomically
+publishes the paired clock/offset and Clock Trusted generation. Reversed order,
+partial, stale, or expired pairs publish neither. Before an editor exists, the
+owner must assign the connected peer on-watch; unauthenticated/nonowner writes
+are rejected and cannot establish trust.
+
+SystemTask is the sole DateTime/trust/due-cursor writer. BLE callbacks only
+validate/copy the immutable paired Local+Current candidate and make a bounded,
+acknowledged handoff tagged with peer/session generation; SystemTask rechecks
+the tag and atomically applies civil time, offset, trust generation, and the D7
+cursor transition in one ordered action. Queue-full, disconnect, editor change,
+or stale generation mutates nothing and returns the defined error. The upstream
+CurrentTimeClient/native-forwarder path and on-watch manual setters also hand
+off through SystemTask, may update approximate display time, and always demote
+or keep Clock Untrusted; they cannot race the paired editor transaction or
+establish family time trust. Tests cover simultaneous sources, every ordering,
+queue saturation, disconnect, and stale-session reuse.
+
+Local Time is exactly two bytes: timezone quarters `[-48,56]` (unknown rejected)
+and DST enum `{0,2,4,8}`; their checked sum must remain `[-48,56]`. Current Time
+is exactly ten bytes: valid 2000–2099 Gregorian date, 00–23:00–59:00–59,
+day-of-week zero/unknown or the correct 1–7 value, any fractions byte, and only
+defined adjustment-reason bits. The app cannot use a short write or normalized
+calendar overflow to establish trust.
+
+The unchanged record-write values are 46 bytes for schedule and 34 bytes for
+tasks. With the three-byte ATT write header, 49 is the protocol minimum; keep
+PineTimeCompanion's deliberate compatibility gate at negotiated MTU 50. The
+designated companion checks before `Begin` and shows an explicit unsupported
+transport error below 50; it never attempts a partial write. Supporting MTU 23
+would require a separately versioned fragmentation protocol and is deferred.
+
+Maintain a single protocol manifest that generates firmware constants,
+companion constants, documentation vectors, and a manifest hash. Firmware and
+app release jobs fail if generated outputs or capacities differ. The hash is
+release/CI evidence; it is not claimed as an existing on-watch GATT field.
+
+### Companion compatibility requirements
+
+- DIS revision is always returned even if family probing is unsupported.
+- Capability discovery, not a guessed version string alone, controls family
+  reads.
+- The app has explicit official/recovery and family capability profiles.
+- The first-RC family profile explicitly reports no BLE filesystem service and
+  hides every resource-upload action.
+- A commit is reported successful only after status-token success and digest or
+  settings readback. Schedule/task commits additionally receive full canonical
+  indexed readback and app-side content-hash comparison; no new runtime hash
+  characteristic is implied.
+- Every status/operation token is bound to domain, authenticated peer identity,
+  and connection-session generation, plus submitted list version where the
+  domain has one or a canonical payload token/digest otherwise; a reused handle
+  or stale reconnect cannot observe success from an earlier transaction.
+- Schedule/task sync starts only after authenticated connection and verified
+  ATT MTU ≥50.
+- Before creating or replacing either list, a newly installed/assigned editor
+  reads and validates List Metadata v1; absence is a capability mismatch, not
+  permission to guess an ID/version.
+- PineTimeCompanion 0.34 local data used random/opaque IDs and versions. On app
+  upgrade, if and only if the new watch reports empty lists and metadata
+  high-waters zero, the app exports a backup and shows an owner-confirmed import
+  preview. It deterministically remaps current schedules/tasks to IDs `1…N`,
+  task order `0…N−1`, and list version 1; daily completion is not migrated. The
+  old local database remains untouched until durable commit plus full canonical
+  readback succeeds. A nonzero watch high-water disables remap and requires
+  explicit read/takeover; silent overwrite or deletion is forbidden.
+- Companion comments, guards, tests, and UI all use MTU 50; no stale 48/49
+  threshold remains.
+- Every post-DFU readiness/family foreground session performs an authenticated
+  Current Time Service write before enabling due evaluation. Native notification
+  forwarding alone is not assumed to set time; Clock Untrusted remains visible
+  until this succeeds.
+- Prayer UTC-offset confirmation happens in that coordinated foreground family
+  session, not on every native forwarder reconnect. If the phone's checked
+  Local-Time total differs from durable prayer settings, the app first commits
+  and fully reads back the prayer offset, then stages Local Time and writes
+  Current Time. Firmware independently keeps `PrayerOffsetStale` and suppresses
+  fresh-prayer claims whenever durable prayer offset does not match the trusted
+  Local-Time total. An identical prayer/list/bond snapshot is a no-op and cannot
+  cause a flash commit.
+- Each bounded DFU/readiness transaction owns one forwarding pause, awaits a
+  settled disconnect, and resumes forwarding before a soak; a later rollback,
+  reinstall, confirmation read, or reboot session pauses again explicitly.
+
+### Consequence and gate
+
+One editor is an intentional product constraint, not silent last-writer-wins.
+Tests rotate editor/survivor/victim roles and exercise explicit takeover. All
+old golden vectors plus the exact List Metadata vectors are rerun from the
+generated manifest, and official 1.16.1 absence tests are mandatory. No new
+GATT notification/CCCD is added for family data.
+
+## D7 — Scheduler contract
+
+### Options and embedded tradeoffs
+
+Reducing from 32 to 16 saves about 688 B in the shared candidate buffer but
+forces an existing companion cutover and halves the killer feature's capacity.
+Keeping 32 no longer creates two 1,376-byte resident banks because D4 has one
+active list and one buffer shared with every other domain.
+
+### Proposed decision
+
+Keep 32 events, each with the existing:
+
+- one-shot, every-N-days, weekly bitmask, and monthly recurrence;
+- local anchor date/time, optional inclusive end date, enabled flag;
+- 23 usable UTF-8 title bytes;
+- full-list atomic replacement and read-only on-watch list.
+
+Reject zero/duplicate IDs or list version, civil dates outside 2000–2099, end before
+anchor, reserved nonzero fields, weekly masks with no day/bits outside 0–6,
+Every-N values below one, monthly days outside 1–31, and invalid/noncanonical
+UTF-8/NUL padding. `lastModified` is either zero or a u32 Unix timestamp within
+that same product range. The watch persists/exposes the greatest issued record ID and
+list version. IDs already active may remain; an ID absent from the active set is
+new only if all new IDs form the contiguous sequence `highWater+1…+N`. Thus a
+deleted ID cannot reappear. The first changed list uses version 1 and every later
+changed list uses exactly `activeVersion+1`; reinstall/takeover reads those
+high-water values before editing. This deliberately trades arbitrary version/
+ID jumps for simple single-editor recovery and prevents one buggy write from
+jumping to the maximum. Exhaustion is explicit rather than wrapped.
+
+If a submitted list version equals active, byte-identical content is a no-op and
+same-version/different-content is VersionConflict. Changed content requires the
+exact next nonzero version; gaps and wrap are rejected. Full indexed byte readback,
+not count/version digest alone, closes stale-token ambiguity.
+
+Drive all due work from one civil-minute change detected in SystemTask's
+existing 100 ms loop. Add no FreeRTOS timer. Cache the next occurrence and face
+summary in RAM. Use checked signed 64-bit minute ordinals/intermediates over the
+2000–2099 range and pure integer civil-date arithmetic; the watch has no
+timezone database and evaluates the civil clock currently set on the watch.
+Clock Untrusted suppresses firing and shows a sync-time state; an authenticated
+CTS write establishes a new cursor at the current minute without replay.
+
+Due behavior:
+
+- boot is untrusted; the **Untrusted→Trusted** transition and a list commit seed
+  the cursor to the current civil minute and intentionally do not fire “due
+  now” retroactively;
+- a **Trusted→Trusted** authorized CTS correction does not reseed the cursor:
+  it follows the same small-forward/large-forward/backward rules below, so a
+  foreground sync crossing a due minute cannot silently suppress it;
+- normal progression evaluates the exact interval
+  `(lastEvaluatedMinute, currentMinute]`;
+- a forward clock step of at most five minutes evaluates that crossed interval and
+  combines simultaneous items;
+- a larger forward step, including a typical spring DST jump, evaluates the new
+  current minute only and deliberately skips the crossed interval;
+- a backward step evaluates nothing and immediately relocates
+  `lastEvaluatedMinute` to the new current minute; the last-fired table is
+  retained, so subsequent forward ticks resume normally without waiting to
+  catch the old cursor or replaying a repeated civil occurrence;
+- a fixed 32-entry table stores the last-fired civil occurrence for each active
+  stable record ID, so a backward step/fall DST repeat cannot replay it;
+- replacing a record preserves that key only when its due semantics are
+  unchanged; changed timing/recurrence clears it without replaying a past
+  minute, and deleting/reusing an ID cannot inherit an unrelated occurrence;
+- boot starts at the current minute and does not replay time while powered off;
+- the first release does not promise exactly-once delivery across reboot.
+
+### Consequence and gate
+
+The five-minute policy favors useful short catch-up over durable event-ledger
+complexity. Host tests exhaust leap years, month ends, end dates, clock jumps,
+simultaneous items, capacity, corrupt records, and UTF-8 truncation. Physical
+tests schedule real reminders across sleep, disconnect, reboot, and time sync.
+
+## D8 — Daily tasks
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Cost/risk |
+| --- | --- | --- |
+| Volatile checks | No flash writes | Reboot silently loses the day's work |
+| Durable checks | Expected task UX | One small atomic commit per accepted toggle |
+| Streak in first release | Preserves old reward feature | Adds missed-day/clock-change/parent-override semantics |
+
+### Proposed decision
+
+Keep up to 20 companion-owned definitions with unique stable nonzero 16-bit IDs,
+canonical unique order exactly `0…count−1`, canonical title, and nonzero
+full-list version. `lastModified` is zero or a u32 Unix timestamp in 2000–2099.
+The watch persists/
+exposes greatest issued ID/version and applies D7's active-ID retention,
+contiguous-new-ID, exact-next-version, deleted-ID rejection, and exhaustion
+rules after reinstall or takeover. It rejects duplicate/zero IDs,
+reserved nonzero fields, and invalid UTF-8/NUL padding. The watch owns today's
+completion state:
+
+Task-list versions follow D7's identical-no-op, same-version conflict,
+exact-next changed-content, exhaustion, and full-byte readback rules.
+
+- toggle from the on-watch Tasks list;
+- persist local date plus a sorted set of completed stable IDs atomically;
+- publish a check only after the small state commit succeeds; show a bounded
+  pending/error state rather than claiming an undurable check; while one toggle
+  is pending, further taps return Busy and are not silently coalesced;
+- at a trusted civil-date change, durably commit the new date and empty ID set
+  before publishing rollover; a failure keeps the prior day visibly stale and
+  offers bounded retry rather than displaying unchecked tasks;
+- on every boot, display the retained prior task date/state but keep Clock
+  Untrusted and perform no destructive rollover until a fresh authenticated
+  editor CTS transaction; same-day/one-day continuity is diagnostic/display
+  context only, never authority to clear checks;
+- while Clock Untrusted, task state is visibly read-only: toggles and missing-
+  state creation return SyncTime/Unavailable. After trust, first verify the
+  stored date or durably complete rollover before enabling toggles;
+- on definition replacement, retain checks for IDs that still exist and prune
+  removed IDs;
+- expose completed/total as an immutable face snapshot.
+
+A missing state file on first trusted use creates today's empty set through the
+same durable path. A nonempty corrupt/unsupported state file makes today's completion
+unavailable until explicit on-watch Reset Today/repair; it never silently means
+“all unchecked.”
+
+Definition replacement commits/publishes the new definitions first. Every
+load/count/toggle intersects completion IDs with that active definition set, so
+stale deleted IDs are invisible but harmless. A bounded later state repair
+prunes them; repair failure retains the superset and retries. Never clear
+completion first, because a subsequent definition-commit failure would uncheck
+still-active tasks. Host cuts cover the boundary between both files.
+
+Do not implement a streak, parent override, historical completion, or phone-side
+completion editor in the first candidate.
+
+Task protocol v2 still returns its required nine-byte digest: the trailing
+streak u16 is always zero. `SetStreak` returns a defined Request Not Supported
+result, and the coupled companion hides/disables the streak editor from the
+generated first-RC capability profile. The field is preserved for wire
+compatibility, not silently implemented.
+
+### Consequence and gate
+
+Task toggles can take the measured storage commit latency rather than appearing
+instantaneous. The UI must remain responsive and provide feedback. Tests cover
+reorder/rename/delete, midnight, forward/backward date changes, reset at every
+commit step, full capacity, and storage failure.
+
+## D9 — Prayer times and alerts
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Cost/risk |
+| --- | --- | --- |
+| Times/display only | Meets the stated “prayer time” need with pure math | No prayer vibration in first candidate |
+| Add prayer alerts immediately | More complete old behavior | Adds due collisions, settings semantics, and presentation tests |
+| Full on-watch settings editor | Phone independence | Several screens and validation paths |
+
+### Proposed decision
+
+For the minimum candidate:
+
+- treat the archived prayer astronomy as a candidate, not validated truth;
+  correct its Julian-day noon-boundary offset before reuse and freeze it only
+  after independent vectors agree; replace truncation-biased `hours*60+0.5`
+  conversion with sign-correct rounding and include negative pre-midnight
+  raw-time vectors;
+- keep the existing nine-byte companion-owned settings: method, madhab,
+  latitude, longitude, UTC quarter-hour offset, and the byte-3 alert flags;
+- calculate and display today's times and the next prayer/window;
+- support MWL, ISNA, Egyptian, Karachi, and an explicitly labeled
+  `Umm al-Qura (fixed 90-minute Isha)` profile;
+- preserve high-latitude fallback/invalid-state indications;
+- default unconfigured/corrupt settings to no location and no alert;
+- provide no full on-watch coordinate/method editor;
+- do not vibrate for prayer in the first candidate.
+
+The UTC quarter-hour field is a fixed offset, not a timezone rule. The
+designated companion compares it during each authenticated foreground family
+session and rewrites only when the phone offset/timezone changed; the native
+forwarder is not assumed to access prayer settings. Offline, the watch continues
+using and displaying the last fixed offset with an explicit “sync after
+timezone/DST change” limitation; it cannot know the transition date and may be
+one hour wrong until the next foreground family session. It never writes a daily
+confirmation marker or commits flash for an identical setting.
+
+Clock Trusted and Prayer Ready are distinct. Prayer becomes ready only when the
+verified durable prayer offset equals the Local-Time total associated with the
+current trusted-clock generation. A mismatch/failure/reboot displays
+`Prayer offset stale`, suppresses current/next freshness claims, and cannot be
+cleared by CTS alone; the coordinated companion commit/readback closes it.
+
+Validate version 2 and the exact nine-byte integer encoding: signed i16
+latitude×100 in `[-9000,9000]`, signed i16 longitude×100 in
+`[-18000,18000]`, signed i8 BLE quarter-hour offset `[-48,56]`, known
+method/madhab values, and first-RC flags zero. There is no floating-point/NaN
+wire encoding; unknown sentinel, reserved, or out-of-range integer input is
+rejected without mutation. Prayer date/JDN arithmetic uses checked signed
+64-bit intermediates for civil years 2000–2099.
+
+The minimum Umm al-Qura profile does not claim the Ramadan 120-minute Isha
+variant because the watch has no reviewed Hijri calendar. Adding that variant
+requires its own calendar/rule slice; silently returning 90 minutes year-round
+under an unlabeled full-method promise is not acceptable.
+
+Byte 3 is not reserved: bit 0 means alerts enabled and bit 1 means skip Fajr
+when alerts are enabled. For the display-only release, the generated capability
+profile disables those companion controls, the companion writes zero, and
+firmware rejects nonzero (`0x01`/`0x03`) with Request Not Supported. It never
+stores a setting it will silently ignore.
+
+### Owner choice still open
+
+The recommendation is display-only for the first candidate. If prayer
+vibration is a minimum requirement, it becomes a separate slice after
+scheduler alerts pass, reusing D10 rather than adding a timer.
+
+### Consequence and gate
+
+Golden vectors are checked against a separately sourced implementation or
+published tables—not the same ported `PrayerRules` code. Pin npm package
+`adhan` 4.4.4 (adhan-js) with integrity
+`sha512-6KmAwLtk2ZU0hLdMR3HofOuoEMa76mKv75Bknv8OEwquIGGNUFabWZna+dJI3gEuS7TqUw62Ro5PkwccgW19zw==`
+as the primary oracle with
+matching angles (MWL 18/17, ISNA 15/15, Egyptian 19.5/17.5, Karachi 18/18,
+Umm al-Qura 18.5/fixed 90), Standard/Hanafi shadow 1/2, −0.833° sunrise,
+Middle-of-the-Night high-latitude rule, and sign-correct nearest-minute
+rounding. Across equatorial/mid/high/polar coordinates, solstices/equinoxes,
+leap day, negative pre-midnight raw values, and offsets −48…56, validity masks
+must agree and ordinary valid times must be within two minutes; fixed-90 Isha is
+exactly Maghrib+90 after rounding. A larger difference blocks the slice.
+Published local timetables are secondary evidence only because they may include
+manual adjustments. Physical face/list values are compared with the designated
+companion for at least seven days.
+
+## D10 — Due presentation and phone notifications
+
+### Options and embedded tradeoffs
+
+Replacing notification management now would address an older desired feature,
+but phone notifications lack stable identity in the current upstream payload.
+Deducating retries/deletes would merge legitimate identical messages. A durable
+unified inbox also expands storage, boot recovery, and UI scope.
+
+### Proposed decision
+
+- Preserve upstream phone notification manager and screens unchanged.
+- Route scheduler due events through a fixed volatile queue of four entries.
+- Combine schedule items due in the same minute into one entry with bounded
+  title formatting.
+- If the full-screen presenter is busy, retain queued due entries and present
+  them in order; never overwrite the current entry.
+- Define overflow as coalescing the newest scheduler entries into one “N
+  reminders” summary and increment a diagnostic counter.
+- Queue contents need not survive reboot in the first candidate.
+- Use one existing-style vibration/display presenter; no new task or timer.
+
+### Consequence and gate
+
+This prevents simultaneous scheduler reminders from silently replacing each
+other without claiming durable delivery. Tests inject five-plus simultaneous
+items, dismiss/queue races, notifications arriving during a reminder, sleep,
+and reboot. Notification-history redesign remains a later project.
+
+## D11 — Family Digital face, resources, and AOD
+
+### Options and embedded tradeoffs
+
+| Option | Benefit | Cost/risk |
+| --- | --- | --- |
+| Port old standalone Family face | Maximum visual continuity | About 5.3 KiB/167 modeled allocations, weather churn, many objects |
+| Construct Digital then replace it | Easy code reuse | Transient double construction and ownership complexity |
+| One Digital implementation with standard/family profiles | Lowest steady/transient footprint and one redraw path | Requires a small clean refactor and per-profile AOD capability |
+
+### Proposed decision
+
+Use one Digital implementation with standard and family construction profiles,
+exposed as separate face choices; never construct both at runtime. The family
+profile shows only:
+
+- large time and date using the selected 12/24-hour format;
+- battery/BLE status icons;
+- next schedule time plus truncated title;
+- current/next prayer label and time;
+- tasks completed/total;
+- the upstream new-notification indicator.
+
+Omit Family weather, heart rate, steps, alarm summary, custom notification
+count, and decorative external glyphs from the first candidate. Use compiled
+fonts/symbols only. The firmware archive therefore requires **no resource
+package update**.
+
+Standard Digital is the default for fresh, invalid, or legacy-Family settings;
+valid stored main IDs 0–6 remain selected across upgrade. Family Digital is
+opt-in after the baseline health check. Add a small per-face AOD-capability
+flag: selecting Family Digital converts a `GoToAOD` request to normal full
+sleep without changing the owner's global setting. Other upstream faces retain
+main's AOD behavior and external-flash fix, and regression tests exercise face
+switches in both directions.
+
+Preserve existing main watchface numeric IDs 0–6. Reserve stored value 7 as
+`LegacyFamily` and migrate it visibly to standard Digital; assign Family Digital
+a new stable ID 8. This prevents a value left by 2.x/3.x from silently selecting
+the new face before the baseline health check. Validate exact settings file
+length/schema and use explicit enum assignments. While the image is TEST,
+selecting ID 8 is RAM-only; persistence requires confirmation and a second
+explicit opt-in. Every unrelated settings save while TEST substitutes the prior
+safe face for RAM-selected 8, so an incidental write cannot persist it. The
+observer normalizes/persists unknown 8 to Digital where storage is healthy.
+Tests cover all old IDs, 7, 8, unknown values, TEST-select8→unrelated settings
+save→rollback→second reboot→reinstall, post-confirm second opt-in/persist/reboot,
+and the D5 prepared-downgrade normalization. Unmodified official is never
+assumed to sanitize stored 8; direct unprepared downgrade is unsupported.
+Before any confirmed family image accepts a DFU Start, persisted Settings must
+already contain a read-verified main-compatible face ID. If it contains 8, DFU
+returns `UnsafeStoredFace`; an explicit **Prepare Firmware Update** action first
+atomically persists/read-verifies standard Digital ID 0. This applies even to a
+family-to-family update because the receiver cannot trust an incoming image's
+face enum. An official downgrade additionally requires D5's `Ready` marker.
+After a successful family upgrade and confirmation, the owner may perform the
+separate second opt-in to persist ID 8 again.
+
+The family qualification/first-RC build profile does not compile, construct, or
+register BLE `FSService`. Existing external resource files remain readable by
+upstream faces, but the companion capability profile hides upload/replace UI.
+Retained notifying characteristics have asserted layout IDs; stored CCCDs are
+resolved through generated semantic IDs and unsupported entries are dropped/
+resubscribed, never replayed by stale numeric handle. This is a deliberate reliability trade: the
+minimum Family Digital profile needs no resource package, while resource upload
+is the largest nonessential NimBLE-host filesystem/stack surface implicated by
+I-3.
+
+Update labels only when their immutable snapshot changes (normally once per
+minute or feature mutation). Do not run a 20 ms feature comparison/redraw loop.
+
+### Consequence and gate
+
+The first face is intentionally less dense than the old one. Its provisional
+feasibility target is no more than same-build Digital plus 1 KiB and 24 live
+allocations; the release-hard limits are the global physical heap/largest-block
+gates. This baseline-relative target replaces the misleading 3.5 KiB/120 limit,
+which allowed only about 260 B/nine allocations over the model. Screenshot tests
+cover empty, full, long-title, 12/24-hour, unconfigured-prayer, and disconnected
+states; physical allocation/largest-block and 100 sleep/wake cycles are
+mandatory.
+
+## D12 — Product profile and resource budgets
+
+### Options and embedded tradeoffs
+
+Removing apps/faces saves flash and eliminates paths that cannot be opened, but
+closed screens do not consume their full LVGL heap. Pruning before profiling
+touches launcher generation, recovery builds, settings indices, screenshots,
+and user expectations without solving 3.0.3's resident-RAM defect.
+
+### Proposed decision
+
+Retain the upstream main app/watchface profile for the first candidate. Consider
+compile-time pruning only if the final linked flash gate fails, and then remove
+one independently tested item at a time. Never count removed closed-screen heap
+as steady-state RAM savings.
+
+Provisional gates, all measured on the exact release configuration:
+
+| Resource | Gate | Rationale |
+| --- | ---: | --- |
+| Linker `TotalFlashUsed` including `.data` load image | ≤ 441,864 B | Conservative policy ceiling; CI separately derives the exact content ceiling from `474,704 - header - all TLV/signature overhead` for that release and inspects final artifact length. The historical 474,632 B ceiling is keyless-format-specific. |
+| Entire allocatable linked writable address span plus fixed retained region | ≤ 29,696 B | Gate the full address span below `__HeapLimit` plus the 352 B journal/clock region exactly once, including static task stacks/TCBs, sections, alignment, and padding |
+| Raw heap interval `__HeapLimit`…new `__FreeRtosHeapEnd` | ≥ 34,816 B (34 KiB) | Excludes the fixed journal and 1 KiB MSP stack; prevents 3.0.3-scale linked growth but is not runtime margin |
+| New RTOS tasks | Target 0; maximum 1 compact I/O executor only under D4 contingency | Avoid resident cost without forcing recursive I/O onto an uncertified feeder stack |
+| Family Digital construction | Provisional ≤ same-build Digital +1 KiB and +24 live allocations | Feasibility stop; global physical heap gates remain release-hard |
+| Startup/runtime allocation ledger | Every task stack/TCB, queue, timer, NimBLE, LVGL, and candidate allocation itemized | Dynamically created stacks consume heap; statically created stacks/TCBs stay in the linked-span term |
+| Minimum-ever free heap after combined stress | ≥ 10 KiB | Material margin above 2.0.2's photographed 6,568 B |
+| Largest free block after combined stress | ≥ 8 KiB | Detect fragmentation hidden by aggregate free bytes |
+| Task stack margin | ≥ 25% and ≥ 256 B | Protect recursive/library worst cases |
+| MSP/interrupt stack margin | ≥ 25% and ≥ 256 B untouched canary in the 1,024 B reservation | Linker non-overlap alone does not detect IRQ/pre-scheduler stack pressure into retained RAM |
+| Allocation/stack failures | 0 | Any failure is release-blocking |
+| Stable-workload heap behavior | After 100-cycle warm-up, 1,000 named feature/face/reconnect cycles plus 24 h: quiescent live-allocation count returns exactly, final free/largest block are within 256 B of checkpoint, and fitted loss slope is <1 B/cycle | Makes “no monotonic loss” reproducible while allowing allocator quantization |
+| Family full-sleep current, AOD off | ≤ `max(main-Digital p95 × 1.10, main-Digital p95 + 10 µA)` | Detects a leaked flash/wake lease while allowing fixture noise |
+| Connected screen-off current | ≤ `max(main control p95 × 1.10, main control p95 + 25 µA)` | Bounds BLE/profile idle regression |
+| Quiescent awake Family current | ≤ same-build Digital p95 × 1.15 | Ensures minute-driven UI actually quiesces |
+| Flash/wake ownership after non-rebooting terminal paths | Exact pre-operation inhibitor count and current plateau restored within 2 s | Catches success/error/timeout lease leaks; rebooting paths use the post-boot readiness gate instead |
+| Logical write amplification | 1,000 identical family syncs cause zero domain/bond commits; CCCD debounce ≤5 s/disconnect; LRU-only persistence ≤ once/hour | Prevents reconnect-driven wear and battery churn |
+| Endurance projection | Five-year worst-case erase use < 20% of flash datasheet minimum | Keeps design margin explicit rather than assuming LittleFS solves wear |
+
+The RAM address-space gate is closed algebra, not a sum of convenient section
+names: `(__HeapLimit - ORIGIN(RAM)) + 352 +
+(__FreeRtosHeapEnd - __HeapLimit) + 1,024 ≤ 65,536`. With the table ceilings it
+is `29,344 + 352 + 34,816 + 1,024 = 65,536 B`. Map tooling must account for
+alignment, anonymous allocatable sections, and padding in the first term; it
+must not count the retained region again there. Any alignment gap between heap,
+retained region, and MSP is charged to one term unless the linker asserts exact
+adjacency. An instrumented build fills/checks the MSP reservation after early
+startup and under worst-case nested IRQ activity; static analysis separately
+covers pre-instrumentation startup depth.
+
+The photographed 2.0.2 Idle task had only 53 free words (212 B), so the new
+256-byte absolute floor is not falsely labeled baseline-compatible. Provision a
+32-word (128 B) Idle-stack increase as the initial measured hypothesis, charge
+it to the ledger, and retain or revise it only from target high-water evidence.
+Do not achieve that by blindly raising `configMINIMAL_STACK_SIZE`: current main
+also defines NimBLE LL and host depths as `configMINIMAL_STACK_SIZE + 200` and
+`+ 600`, so a 32-word global increase would spend 384 B across three tasks.
+Decouple those two NimBLE depths at their existing explicit 320/720 words, then
+raise the Idle allocation from 120 to 152 words, so the provisional cost is
+128 B rather than 384 B. Compile-time constants plus the startup allocation
+ledger must prove LL/host did not shrink or grow accidentally; all three tasks
+still pass their own physical high-water gates.
+
+The static ceilings are planning constraints, not permission to undersize a
+task. Zero allocation/stack failures, measured stack margin, and physical
+minimum/largest heap are release-hard. If an evidence-based stack increase
+would cross the static ceiling, reduce model/UI/cache cost or capacity and
+rerun the owner contract; never shave a stack, draw buffer, or timeout to make
+the table green. Any changed number requires a recorded map/profile rationale,
+not silent relaxation.
+
+“Named cycles” are not an informal soak. Freeze a machine-readable 100-cycle
+supercycle and its SHA-256 in release evidence, then repeat it ten times after a
+100-cycle warm-up. Every cycle performs an externally observed full-sleep wake,
+Digital↔Family construction, open/close of Schedule/Tasks/Prayer, alternating
+authenticated A/B reconnect with discovery/resubscription, indexed reads plus
+byte-identical no-op sync, one notification receive/dismiss, disconnect, and
+return to full sleep. Every fourth cycle overlaps a scheduler due item; every
+fifth performs a durable task toggle; every tenth changes then restores one
+schedule and prayer method; every twentieth begins then disconnect-aborts a
+candidate; every twenty-fifth changes/restores one upstream setting; every
+fiftieth opens/cancels Pair New. The trace fixes payload bytes, event order,
+delays, and expected durable writes, and the 24-hour continuation crosses a
+trusted date boundary. Live-allocation count must equal its boundary baseline
+after every cycle. For both free heap and largest block, fit boundary loss versus
+cycle and use a predeclared 10-cycle moving-block bootstrap (10,000 resamples);
+the one-sided 95% upper confidence bound must be below 1 B/cycle, in addition to
+the exact final 256 B and zero-failure gates. Archive raw samples and analysis.
+
+Security admission, replacement, Forget All, and accepted task toggles remain
+immediately durable; the write-rate limit never weakens those guarantees.
+Identical schedule/task/prayer payloads are acknowledged as no-ops. LRU changes
+coalesce, persist at most hourly unless bundled with another bond transaction,
+and may be conservatively stale after reset. Pair-window timeout and every
+non-rebooting injected storage/DFU failure must return power/current to its
+control plateau. A terminal intentionally transferring control to reset releases
+logical ownership exactly once and must reach the named post-boot clock/
+readiness plateau within its bounded boot gate with no retained-count leak.
+
+Those boot gates are explicit. For deliberate software reset, confirmed reboot,
+and an injected WDT, the first externally observed clock frame is due within
+5 s after bootloader handoff/reset-screen disappearance, recovery diagnostics
+are navigable within 10 s, advertising is observable within 15 s, and an
+already bonded control phone completes DIS/capability read by 30 s. For each
+TEST forward or reverse swap, externally recorded time from the first Pinecone
+frame through the final application clock frame is at most 180 s, and the clock
+frame is still due within 5 s after the final bootloader handoff; both paths are
+timed separately. Within 10 s of the first frame, power-coordinator counts are
+at baseline and the appropriate current plateau begins. Qualification first
+records at least 30 official/observer control samples for each applicable reset
+class; exceeding a hard deadline fails even if the control distribution is
+slower. A reset, missing frame, or BLE timeout is never converted into a retry
+loop that masks the failure.
+
+Current gates use paired runs on the same watch/instrument, battery SOC within
+5%, temperature within 2 °C, identical brightness/radio/connection interval and
+data. Sample at ≥1 kHz, discard 15 minutes of warm-up, form one-second mean
+samples for 30 minutes, and compare their p95; record raw traces and uncertainty.
+Endurance instrumentation counts physical erases by block for the accepted
+JEDEC part/datasheet. The five-year model states at least 20 task toggles/day,
+24 alternating peer authentications/day, four changed family syncs/week, ten
+upstream settings writes/day, four alarm writes/day, and four DFUs/year, then
+applies 2× margin. Before final acceptance, a seven-day official-control erase/
+write trace must show those upstream rates are conservative; otherwise the model
+is updated upward and remains blocked. The
+hottest block, not logical commit count, must remain below the table gate.
+The endurance driver is likewise a versioned, seeded, frozen event trace with
+an archived SHA-256 and expected logical-commit vector. Release evidence stores
+the observed per-erase-block count vector, not only its maximum or an aggregate.
+
+## D13 — Versioning, validation, and release eligibility
+
+### Options and embedded tradeoffs
+
+Automatically confirming the image improves upgrade convenience but destroys
+the strongest recovery mechanism. Confirming too early can make a bootable but
+unstable image permanent. Never confirming causes a normal later reboot to
+roll back.
+
+### Proposed decision
+
+- Use a unique 4.0.0-alpha/beta lineage and show exact Git revision/artifact
+  hash in release metadata. Never reuse 3.0.0–3.0.3 identities.
+- Generate DIS revision, artifact/package name and manifest, companion profile,
+  and MCUboot header version from one release source; CI inspects the built
+  header so CMake's historical hard-coded `1.0.0` cannot drift from 4.0 lineage.
+- Derive the linked-content maximum for every release from the exact generated
+  header and complete TLV/signature set; inspect the final artifact is no larger
+  than 474,704 B. The 441,864 B policy gate remains conservative but never
+  substitutes for this inspection, and 474,632 B is not assumed after signing
+  or manifest changes.
+- Preserve MCUboot TEST behavior; never auto-confirm merely because the first
+  frame appeared.
+- The companion waits for disconnect, candidate boot, repeated DIS readiness,
+  and capability/status readback before offering validation.
+- Validation is a deliberate owner action after a defined on-watch checklist
+  and no-reset trial. The on-watch validator reads MCUboot's alignment-one
+  `image_ok` by its low byte and writes that byte through an aligned word while
+  preserving the adjacent trailer bytes. The companion only rechecks the exact
+  running revision/capabilities; it cannot read the trailer and never infers
+  confirmation from `Image OK` transfer text.
+- The Family Digital candidate is firmware-only. A release manifest explicitly
+  says resources are unchanged/not required.
+- Any persisted Family face ID 8 must pass D11 **Prepare Firmware Update** and
+  read back as Digital ID 0 before DFU Start; the receiver never assumes the
+  incoming image understands ID 8.
+- Publish firmware, companion, protocol-manifest, toolchain, bootloader, and
+  resource identities together.
+
+The two-install rollback/then-validation qualification applies to the combined
+fixed observer and later feature/RC artifacts whose confirmed persistence must
+be exercised: (A) install unconfirmed, capture first frame/status, then tap the
+on-watch **Rollback** control without a side-button hold; (B) reinstall the exact
+same hash, run the defined hands-off trial unconfirmed, then deliberately
+validate before reboot/persistence/long-soak tests. The diagnostic probe and
+ordinary individual D2 slices remain TEST evidence and are rolled back without
+validation; the validator slice is the one exception deliberately confirmed on
+sacrificial hardware and then restored to official. A TEST image cannot both be
+reboot-tested and remain installed; the plan never conflates those states.
+After the observer is the confirmed anchor, one diagnostic candidate also
+proves that a deliberate WDT record survives reverse swap before retained-RAM
+breadcrumbs are trusted.
+
+The first observer Trial A is asymmetric: rollback reaches unmodified official
+1.16.1, whose restore deletes `/bond.dat`. On spare hardware, reconnect the
+original phone, use official FSService read-only stat/read to verify exact file
+length plus a strict structural/security-identity parse of the new `/bond.dat`,
+then cleanly disconnect before the second reboot. Where that observation is not
+permitted on the owner's path, explicitly forget/re-pair and prove reconnect
+after a reboot; a UI “connected” indication alone is not persistence evidence.
+After the fixed observer is confirmed, candidate→observer rollback must instead
+survive an immediate second reboot before phone reconnect.
+
+Trailer tests combine the exact align-one production artifact with a primary
+slot trailer fixture derived from installed MCUboot semantics/physical TEST
+swap; current keyless `imgtool create` does not itself emit that trailer. They
+prove the validator changes only `image_ok`, preserves adjacent trailer
+bytes, reports validated after the tap, and still lets an untouched TEST image
+revert. Record the exact installed bootloader and acceptance behavior. The
+present keyless artifact is unsigned and must not be called “signed” without a
+separately demonstrated key/verification path. The current uint32 equality/write
+implementation is not accepted as-is.
+
+Every implementation artifact from observer through G8 runs first on
+representative second/sacrificial PineTime hardware; exhaustive reset/cut-point,
+destructive bond, and raw-peripheral recovery tests never debut on the owner's
+watch. The owner's recovered watch is offered only the exact G8 hash already
+qualified there. If no second watch is available, the recovered watch is
+explicitly experimental hardware, physical gates remain incomplete, and this
+plan cannot claim its highest-practicable first-install confidence.
+
+For the owner's watch, recommend the **fixed-observer bridge** after it passes
+G2: official→exact observer, deliberate observer validation, then hardened
+observer→exact RC. It adds one old-receiver transfer/confirmation, but the larger
+RC is received by hardened DFU and a rollback returns to a journal reader. The
+direct official→RC route minimizes flashes, but official's unsafe receiver
+handles the RC and an early rollback returns to an image that cannot expose the
+retained journal. Both exact routes must pass G8; this recommendation is a
+diagnostic/recovery tradeoff, not a probability claim.
+
+### Ordered physical gates
+
+1. **G0 companion/control:** corrected official read journey and bounded I-3
+   matrix.
+2. **G1 diagnostic TEST probe:** no family code; no-format policy,
+   boot/revert/read/sleep and unconfirmed 24-hour soak, then rollback—never
+   confirmation as an anchor.
+3. **G2 local safety:** each D2 correction independently fault-injected and
+   physically soaked; corrected validator is deliberately exercised/confirmed
+   on sacrificial hardware and official restored. After every slice passes,
+   qualify the combined fixed safety observer with its two-install sequence and
+   confirm it; only then run the canary/forced-WDT reverse-swap candidate.
+4. **G3 pairing:** A/B persistence, C success/cancel/host cut-point matrix,
+   selected injected resets on sacrificial hardware, and Forget All.
+5. **G4 scheduler:** sync/readback/recurrence/reminder/host cut points/48-hour
+   soak.
+6. **G5 tasks:** definitions/checks/date change/host cut points/48-hour soak.
+7. **G6 prayer display:** vectors, companion settings, face/list seven-day
+   comparison.
+8. **G7 Family Digital:** screenshots, allocations, 100 sleep/wake cycles.
+9. **G8A observer-path RC:** from the exact confirmed observer, exact-hash
+   rollback drill; reinstall; unconfirmed
+   24-hour no-reset trial; deliberate validation; post-confirm second Family
+   face opt-in/persistence; maximum records, active face,
+   notifications, reconnect, reboot/downgrade recovery, and seven-day confirmed
+   soak.
+10. **G8B owner-path RC:** on spare hardware reproduce official 1.16.1 plus the
+    owner's bond/resources/face/settings, install the same RC hash, perform the
+    two-install rollback/reconnect-before-second-reboot and validate sequence,
+    perform the post-confirm second Family-face opt-in, then repeat the combined
+    soak. This exact path qualifies the owner's first
+    family installation; observer-only evidence is insufficient. Official's
+    old DFU receiver necessarily handles that first RC transfer, so this
+    owner-path rehearsal mitigates rather than removes its residual risk.
+
+Each candidate records link map, raw/free/min/largest heap, every task high-water
+mark, reset/breadcrumb state, SPI timeout counts, filesystem errors, and bond
+generation. Any unexplained reset, rollback, invalid flash ID, storage loss, or
+inability to reconnect is an immediate no-go. Normal full sleep is not a black
+failure. Wake qualification uses an external, timestamped stimulus rig and an
+external panel/frame observer (photodiode or frame-resolved video), not an
+internal IRQ log as its denominator. Before candidate testing, collect at least
+1,000 valid official-control stimuli for every qualified source/state stratum
+and freeze that stratum's deadline as
+`min(5 s, max(2 s, 5 × official-control p99))`. The rig counts every delivered
+touch/button/charger stimulus. Each must map to either an admitted IRQ or an
+enumerated, specification-valid debounce rejection; a missing internal record
+is itself a failure. Qualification stimuli are spaced outside debounce windows,
+so an unexpected rejection is also a failure. An admitted wake must produce
+both the internal first-frame acknowledgement and the externally observed
+panel/frame by the frozen deadline. Each slice runs at least 100 stratified
+stimuli and G8 runs 1,000; zero unexplained losses are allowed. The five-second
+cap keeps the gate below the seven-second watchdog.
+
+## Owner decisions requested
+
+Six contract choices remain open; the engineering defaults above minimize
+first-candidate risk:
+
+1. **Prayer alerts:** accept display-only initially (recommended), or require
+   vibration as a separate post-scheduler slice before the first RC?
+2. **Task streak:** accept daily durable checks only (recommended), or require a
+   streak in the first RC?
+3. **Family face density:** accept the five compact rows in D11 (recommended),
+   or identify one omitted field that is mandatory enough to trade against the
+   allocation budget?
+4. **Post-reboot time trust:** accept that the designated family app must be
+   opened after every reboot before family due/rollover/prayer resumes
+   (recommended for the first RC), or accept a separately designed and tested
+   same-build soft-reset continuity policy with greater wrong-time risk?
+5. **Owner install route:** use the recommended fixed-observer bridge for
+   hardened RC reception/rollback diagnostics, or direct official→RC to minimize
+   flashes while accepting the stated unsafe-receiver/no-journal first-hop risk?
+6. **Multi-alarm scope:** accept upstream Alarm unchanged and defer family
+   multi-alarm (recommended, matching the owner's latest explicit minimum
+   list), or make multi-alarm mandatory as its own post-scheduler slice before
+   the first RC?
+
+All other recommendations can be reviewed, but these six change the promised
+minimum behavior rather than only its implementation.
+
+## Explicit non-goals for the first candidate
+
+- simultaneous active BLE connections;
+- more than two durable peers;
+- phone-selection/filter UX outside Pair New Phone and Forget All;
+- notification history/reliable phone-notification identity;
+- multi-alarm;
+- Find My/beacon advertising;
+- weather on Family Digital;
+- Family AOD;
+- on-watch schedule/task/prayer editors;
+- multi-editor conflict guarantees;
+- data migration from 2.x/3.x family snapshots;
+- BLE filesystem/resource upload in the first family RC;
+- recovery by automatically formatting external flash;
+- the old general StorageTask/double-bank architecture, a new family protocol,
+  bootloader, or display state machine. A compact D4 contingency executor is
+  allowed only if synchronous SystemTask I/O fails certification.
